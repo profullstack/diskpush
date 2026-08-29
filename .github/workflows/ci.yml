@@ -27,9 +27,20 @@ jobs:
         run: rsync --version | head -1
 
       - run: pnpm install --frozen-lockfile
+
+      # The engine and the CLI first: the app builds and the typechecks below
+      # consume their emitted types.
       - run: pnpm build
       - run: pnpm typecheck
       - run: pnpm test
+
+      # The two apps are built separately from `pnpm build` because neither is
+      # needed to run the tests, but both have to compile before a release.
+      - name: Build the marketing site
+        run: pnpm --filter @diskpush/web build
+
+      - name: Build the desktop app
+        run: pnpm --filter @diskpush/desktop build
 
   integration:
     runs-on: ubuntu-latest
