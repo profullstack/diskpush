@@ -51,6 +51,25 @@ install is a plain Node program and needs Node 24 or newer.
 
 Nothing outside your home directory.
 
+## Updating
+
+Both the CLI and the desktop app check for a newer release on start and
+install it.
+
+The CLI checks at most once every six hours, then re-runs your command on the
+version it just installed. It stays quiet when there is nothing to do, when
+you are offline, and when output is machine-readable — `--json` never carries
+update chatter into something's stdin.
+
+The desktop app applies an update on launch but waits to restart while a
+transfer is running; a version bump is not worth abandoning a transfer for.
+
+Turn it off with `DISKPUSH_NO_AUTO_UPDATE=1`.
+
+```sh
+diskpush update      # or check now, explicitly
+```
+
 ## Updating and removing
 
 ```sh

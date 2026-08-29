@@ -117,6 +117,55 @@ the connection.
 a large tree, rsync is still building the file list, so the counter can sit at
 zero for a while. `--stats` at the end gives exact totals.
 
+## "The SUID sandbox helper binary was found, but is not configured correctly"
+
+```text
+FATAL:setuid_sandbox_host.cc(163)] The SUID sandbox helper binary was found,
+but is not configured correctly. Rather than run without sandboxing I'm
+aborting now.
+```
+
+Chromium wants one of two sandboxes and this machine can provide neither:
+
+- The **namespace sandbox** needs unprivileged user namespaces. Recent kernels
+  restrict them (`kernel.apparmor_restrict_unprivileged_userns=1` on Ubuntu
+  24.04+).
+- The **SUID helper** needs `chrome-sandbox` owned by root with mode 4755,
+  which only root can set.
+
+Check which applies:
+
+```sh
+unshare --user true && echo "namespaces work" || echo "namespaces denied"
+ls -l /path/to/DiskPush/chrome-sandbox   # -rwsr-xr-x is right, -rwxr-xr-x is not
+```
+
+**The installed app handles this itself** — its launcher probes both and falls
+back to `--no-sandbox` only when neither is available, telling you it did.
+
+**A bare AppImage does not.** Run it with `--no-sandbox`, or install the
+`.deb`, whose postinst sets the SUID bit as root and installs an AppArmor
+profile granting the namespace sandbox:
+
+```sh
+./DiskPush-0.1.0-linux-x86_64.AppImage --no-sandbox
+sudo dpkg -i DiskPush-0.1.0-linux-amd64.deb    # sandboxed, needs root
+```
+
+## "Cannot find package '@diskpush/database'"
+
+```text
+Error [ERR_MODULE_NOT_FOUND]: Cannot find package '@diskpush/database'
+imported from .../app/resources/cli/dist/bin.js
+```
+
+A packaging bug in 0.1.0's first artifacts: the CLI inside the desktop bundle
+shipped an empty `node_modules`. Update, or reinstall:
+
+```sh
+curl -fsSL https://diskpush.com/install.sh | sh
+```
+
 ## Seeing what is actually run
 
 ```bash
