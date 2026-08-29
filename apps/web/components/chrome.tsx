@@ -6,9 +6,8 @@ export function Header() {
   return (
     <header className="sticky top-0 z-40 border-b border-line bg-ink/85 backdrop-blur">
       <div className="mx-auto flex max-w-6xl items-center gap-6 px-5 py-3.5">
-        <Link href="/" className="flex items-center gap-2 font-semibold tracking-tight">
+        <Link href="/" className="flex items-center" aria-label={SITE.name}>
           <Logo />
-          <span>{SITE.name}</span>
         </Link>
         <nav className="ml-auto flex items-center gap-1 text-sm">
           {NAV.filter((item) => item.label !== 'Download').map((item) => (
@@ -23,7 +22,7 @@ export function Header() {
           ))}
           <Link
             href="/download"
-            className="ml-2 rounded-md bg-accent px-3 py-1.5 font-medium text-ink transition-opacity hover:opacity-90"
+            className="ml-2 rounded-md bg-accent-strong px-3 py-1.5 font-medium text-white transition-opacity hover:opacity-90"
           >
             Download
           </Link>
@@ -49,12 +48,28 @@ export function Footer() {
   )
 }
 
+/**
+ * The wordmark, in both variants. Which one shows is decided by CSS rather
+ * than JavaScript, so it is correct in the first paint and needs no client
+ * component.
+ *
+ * Not Tailwind's `dark:`, deliberately: that matches an explicit dark
+ * preference, while this palette treats dark as the default and light as the
+ * override. A visitor with no preference set would otherwise get a dark page
+ * and the dark-text logo on it.
+ */
 function Logo() {
   return (
-    <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true" className="text-accent">
-      <circle cx="10" cy="10" r="8.25" fill="none" stroke="currentColor" strokeWidth="1.5" />
-      <path d="M6 10h8M10.5 6.5 14 10l-3.5 3.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
+    <>
+      <img
+        src="/logo.dark.png"
+        alt="DiskPush"
+        width={2172}
+        height={724}
+        className="logo-dark h-7 w-auto"
+      />
+      <img src="/logo.png" alt="DiskPush" width={2172} height={724} className="logo-light h-7 w-auto" />
+    </>
   )
 }
 

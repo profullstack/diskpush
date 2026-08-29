@@ -106,7 +106,7 @@ function Hero() {
           <div className="mt-8 flex flex-wrap gap-3">
             <Link
               href="/download"
-              className="rounded-md bg-accent px-5 py-2.5 font-medium text-ink transition-opacity hover:opacity-90"
+              className="rounded-md bg-accent-strong px-5 py-2.5 font-medium text-white transition-opacity hover:opacity-90"
             >
               Download DiskPush
             </Link>
@@ -125,6 +125,7 @@ function Hero() {
         </div>
 
         <div className="min-w-0 space-y-3">
+          <Code label="install — desktop app and CLI">{`curl -fsSL https://diskpush.com/install.sh | sh`}</Code>
           <Code label="local → server">{`diskpush ./dist/ production:/srv/app/`}</Code>
           <Code label="server → server, directly">{`diskpush media:/srv/media/ backup:/data/media/`}</Code>
         </div>

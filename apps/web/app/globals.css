@@ -1,14 +1,19 @@
 @import 'tailwindcss';
 
+/* Sampled from the logo: primary blue #0054fc-#006cfc, cyan #009cfc, and the
+   navy #001830 of the wordmark. */
 @theme {
-  --color-ink: #0a0c10;
-  --color-surface: #11141b;
-  --color-raised: #171b24;
-  --color-line: #232936;
-  --color-text: #e7ebf2;
-  --color-muted: #96a0b5;
-  --color-accent: #4ade80;
-  --color-accent-dim: #22c55e;
+  --color-ink: #070c16;
+  --color-surface: #0e1522;
+  --color-raised: #141d2c;
+  --color-line: #1f2a3c;
+  --color-text: #e8edf6;
+  --color-muted: #93a1b8;
+  /* Lifted from the logo's #0054fc so it stays legible as text on the dark
+     ground; --color-accent-strong is the logo blue itself, used behind white. */
+  --color-accent: #3d86ff;
+  --color-accent-strong: #0b62fd;
+  --color-cyan: #21b9fb;
   --color-warn: #fbbf24;
   --font-mono: ui-monospace, 'SFMono-Regular', 'JetBrains Mono', Menlo, Consolas, monospace;
 }
@@ -33,13 +38,13 @@ body {
   :root {
     color-scheme: light;
     --color-ink: #ffffff;
-    --color-surface: #f6f7f9;
+    --color-surface: #f5f7fa;
     --color-raised: #ffffff;
-    --color-line: #e3e6ec;
-    --color-text: #10131a;
-    --color-muted: #5b6577;
-    --color-accent: #16a34a;
-    --color-accent-dim: #15803d;
+    --color-line: #dfe4ed;
+    --color-text: #001830;
+    --color-muted: #55627a;
+    --color-accent: #0b62fd;
+    --color-accent-strong: #0b62fd;
   }
 }
 
@@ -82,3 +87,13 @@ body {
 .prose-docs th, .prose-docs td { border: 1px solid var(--color-line); padding: 0.5rem 0.75rem; text-align: left; vertical-align: top; }
 .prose-docs th { background: var(--color-surface); font-weight: 600; }
 .prose-docs hr { border: 0; border-top: 1px solid var(--color-line); margin: 2rem 0; }
+
+/* Logo variant switching, mirroring the palette above: dark by default, the
+   light wordmark only when the visitor actually asks for a light scheme. */
+.logo-dark { display: block; }
+.logo-light { display: none; }
+
+@media (prefers-color-scheme: light) {
+  .logo-dark { display: none; }
+  .logo-light { display: block; }
+}

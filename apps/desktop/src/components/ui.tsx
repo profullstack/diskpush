@@ -25,7 +25,7 @@ export function Button({
 }) {
   const styles = {
     default: 'border border-line bg-raised hover:bg-surface',
-    primary: 'bg-accent text-ink font-medium hover:opacity-90',
+    primary: 'bg-accent-strong text-white font-medium hover:opacity-90',
     danger: 'border border-danger/50 text-danger hover:bg-danger/10',
     ghost: 'text-muted hover:bg-surface hover:text-text',
   }[variant]

@@ -6,6 +6,8 @@ const nextConfig = {
   outputFileTracingIncludes: {
     '/docs/[slug]': ['../../docs/**/*.md'],
     '/docs': ['../../docs/**/*.md'],
+    // The installer is served from the repository's own copy.
+    '/install.sh': ['../../scripts/install.sh'],
   },
 }
 

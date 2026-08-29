@@ -26,6 +26,36 @@ export default async function DownloadPage() {
       </p>
 
       <section className="mt-10">
+        <h2 className="text-lg font-semibold">Install</h2>
+        <p className="mt-2 text-sm text-muted">
+          Installs the CLI, and the desktop app when this machine has a desktop to run it on.
+          Everything lands under your home directory: no root, no package manager, no system files
+          touched.
+        </p>
+        <div className="mt-4">
+          <Code label="linux and macos">{`curl -fsSL https://diskpush.com/install.sh | sh`}</Code>
+        </div>
+        <ul className="mt-4 space-y-1.5 text-sm text-muted">
+          <li>
+            <code className="font-mono text-xs">--cli-only</code> skips the desktop app; a server
+            gets the CLI and nothing else.
+          </li>
+          <li>
+            <code className="font-mono text-xs">diskpush update</code> upgrades in place,{' '}
+            <code className="font-mono text-xs">diskpush uninstall</code> removes it and keeps your
+            connections.
+          </li>
+          <li>
+            Piping a script into a shell is a real decision. It is short enough to read first:{' '}
+            <a className="text-accent hover:underline" href="/install.sh">
+              read install.sh
+            </a>
+            .
+          </li>
+        </ul>
+      </section>
+
+      <section className="mt-10">
         <h2 className="text-lg font-semibold">Requirements</h2>
         <p className="mt-2 text-sm leading-relaxed text-muted">
           DiskPush drives rsync and SSH rather than reimplementing them, so both need to exist on
@@ -63,9 +93,9 @@ pnpm build
 node apps/cli/dist/bin.js --help`}</Code>
         </div>
         <p className="mt-3 text-xs text-muted">
-          A shell installer will be offered once binaries are published. It will be short enough to
-          read, will verify checksums, and manual instructions will always be documented alongside
-          it, because nobody should have to pipe an unread script into a shell.
+          A desktop install already contains the CLI and runs it on the Node inside Electron, so
+          nothing else is needed. A CLI-only install is a plain Node program and needs Node 24 or
+          newer.
         </p>
       </section>
 

@@ -35,8 +35,87 @@
   "build": {
     "appId": "com.profullstack.diskpush",
     "productName": "DiskPush",
-    "files": ["dist-electron/**/*", "out/**/*", "package.json"],
-    "linux": { "category": "Utility", "target": ["AppImage", "deb"] },
-    "mac": { "category": "public.app-category.utilities", "target": ["dmg"] }
+    "executableName": "diskpush-desktop",
+    "copyright": "Copyright (c) 2026 Profullstack, Inc.",
+    "directories": {
+      "output": "../../release",
+      "buildResources": "resources"
+    },
+    "files": [
+      "dist-electron/**/*",
+      "out/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "resources/cli",
+        "to": "cli"
+      }
+    ],
+    "linux": {
+      "category": "Utility;FileTransfer;Network",
+      "synopsis": "Push files fast. Sync only what changed.",
+      "description": "A desktop app and CLI for rsync. Browse servers like FileZilla and transfer with rsync, with resumable incremental sync and direct server-to-server transfers.",
+      "target": [
+        "AppImage",
+        "deb",
+        "tar.gz"
+      ],
+      "icon": "resources/icon.png",
+      "desktop": {
+        "entry": {
+          "Keywords": "rsync;sftp;ssh;sync;transfer;backup;"
+        }
+      },
+      "artifactName": "${productName}-${version}-linux-${arch}.${ext}"
+    },
+    "deb": {
+      "depends": [
+        "libgtk-3-0",
+        "libnotify4",
+        "libnss3",
+        "libxss1",
+        "libxtst6",
+        "xdg-utils",
+        "libatspi2.0-0",
+        "libsecret-1-0",
+        "rsync",
+        "openssh-client"
+      ],
+      "afterInstall": "resources/after-install.sh",
+      "afterRemove": "resources/after-remove.sh",
+      "artifactName": "${productName}-${version}-linux-${arch}.${ext}"
+    },
+    "mac": {
+      "category": "public.app-category.utilities",
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "icon": "resources/icon.png",
+      "artifactName": "${productName}-${version}-mac-${arch}.${ext}"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "resources/icon.png"
+    },
+    "npmRebuild": false,
+    "asarUnpack": [
+      "**/*.node",
+      "**/node_modules/@libsql/**"
+    ],
+    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}"
+  },
+  "author": {
+    "name": "Profullstack, Inc.",
+    "email": "hello@profullstack.com"
+  },
+  "description": "Push files fast. Sync only what changed.",
+  "homepage": "https://diskpush.com",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/profullstack/diskpush.git"
   }
 }
