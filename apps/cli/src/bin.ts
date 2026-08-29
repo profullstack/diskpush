@@ -3,14 +3,15 @@ import { DiskPushStore } from '@diskpush/database'
 import { EndpointParseError } from '@diskpush/rsync-core'
 import { ZodError } from 'zod'
 import { runConnections } from './commands/connections.js'
-import { runJob, runJobs } from './commands/jobs.js'
+import { runJob, runJobs, runRetry } from './commands/jobs.js'
 import { runLs } from './commands/ls.js'
 import { runProfiles } from './commands/profiles.js'
 import { runTransfer, TRANSFER_ALIASES } from './commands/transfer.js'
 import { EXIT } from './exit-codes.js'
 import { HELP, VERSION } from './help.js'
 import { Output } from './output.js'
-import { ArgvError, hasFlag, parseArgv } from './parse-argv.js'
+import { ArgvError, hasFlag, looksLikeEndpoint, parseArgv } from './parse-argv.js'
+import { existsSync } from 'node:fs'
 
 async function main(argv: readonly string[]): Promise<number> {
   let parsed
@@ -36,11 +37,24 @@ async function main(argv: readonly string[]): Promise<number> {
     return EXIT.ok
   }
 
-  // The bare `diskpush SOURCE DESTINATION` form.
-  const command = parsed.command ?? (parsed.positionals.length >= 2 ? 'sync' : null)
+  // The bare `diskpush SOURCE DESTINATION` form, but only when both arguments
+  // actually look like endpoints. Otherwise a mistyped subcommand would be
+  // read as a transfer between two files named after it.
+  const bareEndpoints =
+    parsed.positionals.length >= 2 && parsed.positionals.slice(0, 2).every((value) => looksLikeEndpoint(value, existsSync))
+
+  const command = parsed.command ?? (bareEndpoints ? 'sync' : null)
   if (!command) {
+    if (parsed.positionals.length > 0) {
+      output.error(
+        `Unknown command ${JSON.stringify(parsed.positionals[0])}.\n` +
+          'If you meant to transfer between two paths, write them as paths ' +
+          '(./src/, /srv/app/, host:/srv/app/). Run `diskpush --help` for the command list.',
+      )
+      return EXIT.usage
+    }
     process.stdout.write(HELP)
-    return parsed.positionals.length === 0 ? EXIT.ok : EXIT.usage
+    return EXIT.ok
   }
 
   const store = await DiskPushStore.open()
@@ -56,6 +70,8 @@ async function main(argv: readonly string[]): Promise<number> {
         return await runJobs(parsed, store, output)
       case 'job':
         return await runJob(parsed, store, output)
+      case 'retry':
+        return await runRetry(parsed, store, output)
       case 'ls':
         return await runLs(parsed, store, output)
       default:

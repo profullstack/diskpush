@@ -4,6 +4,7 @@ import { EXIT } from '../exit-codes.js'
 import { formatBytes, table } from '../format.js'
 import { failure, type Output } from '../output.js'
 import { flagValue, numberFlag, type ParsedArgv } from '../parse-argv.js'
+import { runTransfer } from './transfer.js'
 
 export async function runJobs(parsed: ParsedArgv, store: DiskPushStore, output: Output): Promise<number> {
   const stateFlag = flagValue(parsed, '--state')
@@ -60,4 +61,26 @@ export async function runJob(parsed: ParsedArgv, store: DiskPushStore, output: O
 function render(endpoint: import('@diskpush/schemas').Endpoint): string {
   if (endpoint.type === 'local') return endpoint.path
   return `${endpoint.host}:${endpoint.path}`
+}
+
+/**
+ * Re-runs a recorded job. Nothing special happens here: rsync's partial file
+ * is what makes it a resume rather than a restart, so retrying is running the
+ * same job again.
+ */
+export async function runRetry(parsed: ParsedArgv, store: DiskPushStore, output: Output): Promise<number> {
+  const id = parsed.positionals[0]
+  if (!id) return failure(output, 'Usage: diskpush retry ID', EXIT.usage)
+
+  const jobs = await store.listJobs(500)
+  const job = jobs.find((candidate) => candidate.id === id || candidate.id.startsWith(id))
+  if (!job) return failure(output, `No job matching ${JSON.stringify(id)}.`, EXIT.configuration)
+
+  const forwarded: ParsedArgv = {
+    ...parsed,
+    command: job.options.deleteMode === 'off' ? 'sync' : 'mirror',
+    positionals: [render(job.source), render(job.destination)],
+  }
+  output.line(`Retrying ${job.id.slice(0, 8)}: ${render(job.source)} -> ${render(job.destination)}`)
+  return runTransfer(forwarded.command!, forwarded, store, output)
 }

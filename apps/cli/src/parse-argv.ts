@@ -76,7 +76,6 @@ const KNOWN_COMMANDS = new Set([
   'profile',
   'jobs',
   'job',
-  'cancel',
   'retry',
   'help',
   'version',
@@ -164,4 +163,20 @@ export function numberFlag(parsed: ParsedArgv, name: string): number | undefined
 
 export function isKnownCommand(name: string): boolean {
   return KNOWN_COMMANDS.has(name)
+}
+
+/**
+ * Does this positional look like an endpoint at all?
+ *
+ * The bare `diskpush SOURCE DESTINATION` form is convenient but it will
+ * happily accept anything, so a mistyped subcommand (`diskpush conections
+ * list`) becomes a request to sync a file called `conections` into one called
+ * `list`. Requiring endpoint-shaped arguments turns that into an error
+ * instead.
+ */
+export function looksLikeEndpoint(value: string, exists: (path: string) => boolean = () => false): boolean {
+  if (value.includes('/') || value.includes(':') || value.includes('\\')) return true
+  if (value === '.' || value === '..' || value.startsWith('~')) return true
+  // A bare name is only an endpoint if something by that name is really there.
+  return exists(value)
 }

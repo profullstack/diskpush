@@ -94,7 +94,16 @@ Something saved in one is immediately usable from the other.
 ```bash
 diskpush jobs [--limit N] [--state STATE]
 diskpush job ID
+diskpush retry ID
 ```
+
+`retry` re-runs a recorded job from its stored endpoints and options. Nothing
+special happens: rsync's partial file is what makes it a resume rather than a
+restart, so retrying is running the same job again.
+
+There is no `diskpush cancel`. A CLI transfer runs in the foreground, where
+Ctrl+C stops it and leaves the partial data intact; cancelling someone else's
+job would need a background daemon, which does not exist yet.
 
 ## Options
 

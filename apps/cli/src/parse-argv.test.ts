@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ArgvError, flagValue, flagValues, hasFlag, numberFlag, parseArgv } from './parse-argv.js'
+import { ArgvError, flagValue, flagValues, hasFlag, looksLikeEndpoint, numberFlag, parseArgv } from './parse-argv.js'
 
 describe('the -- boundary', () => {
   it('splits DiskPush options from rsync arguments', () => {
@@ -78,6 +78,23 @@ describe('flags', () => {
 
   it('treats a bare - as a positional, not a flag', () => {
     expect(parseArgv(['sync', '-', './b/']).positionals).toEqual(['-', './b/'])
+  })
+})
+
+describe('looksLikeEndpoint', () => {
+  it('accepts anything path-shaped', () => {
+    for (const value of ['./dist/', '/srv/app', '~/media', '.', '..', 'prod:/srv/', 'a/b']) {
+      expect(looksLikeEndpoint(value)).toBe(true)
+    }
+  })
+
+  it('rejects a bare word that is not a real path', () => {
+    expect(looksLikeEndpoint('cancel')).toBe(false)
+    expect(looksLikeEndpoint('conections')).toBe(false)
+  })
+
+  it('accepts a bare word when something by that name exists', () => {
+    expect(looksLikeEndpoint('dist', (path) => path === 'dist')).toBe(true)
   })
 })
 

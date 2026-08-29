@@ -39,6 +39,7 @@ COMMANDS
   profile run NAME        run a saved profile
   jobs                    recent transfer jobs
   job ID                  one job in detail
+  retry ID                run a recorded job again (resumes from its partial file)
 
 DEFAULTS
   Every transfer runs with archive metadata, resumable partial files,
