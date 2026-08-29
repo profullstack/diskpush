@@ -15,6 +15,7 @@ export type DocMeta = { slug: string; title: string; description: string }
 
 /** Ordered so the sidebar reads as a path through the product, not alphabetically. */
 const ORDER = [
+  'install',
   'getting-started',
   'defaults',
   'cli',
@@ -29,6 +30,7 @@ const ORDER = [
 ]
 
 const DESCRIPTIONS: Record<string, string> = {
+  install: 'The one-line installer, what it decides, and how to remove it.',
   'getting-started': 'From an empty config to a working transfer.',
   defaults: 'What DiskPush does when you tell it nothing, and why.',
   cli: 'The full command grammar, options and exit codes.',
