@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      # The live tests drive the real rsync binary. Assert the version so a
+      # runner image change that moves across the 3.2.4 secluded-args boundary
+      # shows up here rather than as a mystery later.
+      - name: rsync version
+        run: rsync --version | head -1
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: pnpm typecheck
+      - run: pnpm test
+
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+
+      - name: Generate a throwaway key for the test containers
+        run: ssh-keygen -t ed25519 -N '' -f docker/test-ssh-server/test_key
+
+      - name: Start the test SSH servers
+        run: docker compose -f docker/test-ssh-server/compose.yml up -d --build
+
+      - name: Wait for sshd
+        run: |
+          for i in $(seq 1 30); do
+            if nc -z localhost 2222; then echo "up"; exit 0; fi
+            sleep 1
+          done
+          echo "sshd never came up"; exit 1
+
+      - name: Integration tests
+        env:
+          DISKPUSH_TEST_SSH: '1'
+          DISKPUSH_TEST_SSH_HOST: localhost
+          DISKPUSH_TEST_SSH_PORT: '2222'
+          DISKPUSH_TEST_SSH_USER: diskpush
+          DISKPUSH_TEST_SSH_KEY: docker/test-ssh-server/test_key
+        run: pnpm vitest run --config vitest.integration.config.ts
+
+      - name: Server logs
+        if: failure()
+        run: docker compose -f docker/test-ssh-server/compose.yml logs

@@ -1,0 +1,13 @@
+services:
+  sshd:
+    build:
+      context: .
+    ports:
+      - '2222:22'
+    # A second host, so the direct server-to-server path can be exercised for
+    # real rather than only asserted about.
+  sshd-b:
+    build:
+      context: .
+    ports:
+      - '2223:22'

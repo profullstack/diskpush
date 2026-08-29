@@ -9,3 +9,7 @@ coverage/
 release/
 .data/
 .shots/
+docker/test-ssh-server/test_key
+docker/test-ssh-server/test_key.pub
+apps/desktop/dist-electron/
+apps/desktop/out/

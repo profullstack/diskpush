@@ -1,0 +1,45 @@
+@import 'tailwindcss';
+
+@theme {
+  --color-ink: #0a0c10;
+  --color-surface: #11141b;
+  --color-raised: #171b24;
+  --color-line: #232936;
+  --color-text: #e7ebf2;
+  --color-muted: #8e99ae;
+  --color-accent: #4ade80;
+  --color-danger: #f87171;
+  --color-warn: #fbbf24;
+  --font-mono: ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+}
+
+:root { color-scheme: dark; }
+
+html, body, #__next {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-ink);
+  color: var(--color-text);
+  font-size: 13px;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+  /* A file manager is a chrome-less surface; nothing here should feel like a
+     web page you can accidentally select and drag. */
+  user-select: none;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    color-scheme: light;
+    --color-ink: #ffffff;
+    --color-surface: #f4f6f8;
+    --color-raised: #ffffff;
+    --color-line: #dfe3ea;
+    --color-text: #11141a;
+    --color-muted: #5d6779;
+    --color-accent: #16a34a;
+  }
+}
