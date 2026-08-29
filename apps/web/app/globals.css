@@ -1,0 +1,84 @@
+@import 'tailwindcss';
+
+@theme {
+  --color-ink: #0a0c10;
+  --color-surface: #11141b;
+  --color-raised: #171b24;
+  --color-line: #232936;
+  --color-text: #e7ebf2;
+  --color-muted: #96a0b5;
+  --color-accent: #4ade80;
+  --color-accent-dim: #22c55e;
+  --color-warn: #fbbf24;
+  --font-mono: ui-monospace, 'SFMono-Regular', 'JetBrains Mono', Menlo, Consolas, monospace;
+}
+
+:root {
+  color-scheme: dark;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background: var(--color-ink);
+  color: var(--color-text);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Light mode is supported, not an afterthought, but the product is a terminal
+   adjacent tool and dark is the first-class look. */
+@media (prefers-color-scheme: light) {
+  :root {
+    color-scheme: light;
+    --color-ink: #ffffff;
+    --color-surface: #f6f7f9;
+    --color-raised: #ffffff;
+    --color-line: #e3e6ec;
+    --color-text: #10131a;
+    --color-muted: #5b6577;
+    --color-accent: #16a34a;
+    --color-accent-dim: #15803d;
+  }
+}
+
+.prose-docs h1 { font-size: 1.875rem; font-weight: 700; margin: 2rem 0 1rem; letter-spacing: -0.02em; }
+.prose-docs h2 { font-size: 1.375rem; font-weight: 650; margin: 2.25rem 0 0.75rem; letter-spacing: -0.01em; }
+.prose-docs h3 { font-size: 1.075rem; font-weight: 600; margin: 1.75rem 0 0.5rem; }
+.prose-docs p { margin: 0.9rem 0; line-height: 1.7; color: var(--color-text); }
+.prose-docs ul, .prose-docs ol { margin: 0.9rem 0 0.9rem 1.25rem; line-height: 1.7; }
+.prose-docs ul { list-style: disc; }
+.prose-docs ol { list-style: decimal; }
+.prose-docs li { margin: 0.35rem 0; }
+.prose-docs a { color: var(--color-accent); text-decoration: underline; text-underline-offset: 3px; }
+.prose-docs strong { font-weight: 650; }
+.prose-docs blockquote {
+  border-left: 3px solid var(--color-accent);
+  padding: 0.25rem 0 0.25rem 1rem;
+  margin: 1.25rem 0;
+  color: var(--color-muted);
+}
+.prose-docs code {
+  font-family: var(--font-mono);
+  font-size: 0.875em;
+  background: var(--color-surface);
+  border: 1px solid var(--color-line);
+  border-radius: 4px;
+  padding: 0.1em 0.35em;
+}
+.prose-docs pre {
+  background: var(--color-surface);
+  border: 1px solid var(--color-line);
+  border-radius: 8px;
+  padding: 1rem;
+  overflow-x: auto;
+  margin: 1.25rem 0;
+  font-size: 0.85rem;
+  line-height: 1.6;
+}
+.prose-docs pre code { background: none; border: none; padding: 0; font-size: inherit; }
+.prose-docs table { width: 100%; border-collapse: collapse; margin: 1.25rem 0; font-size: 0.9rem; display: block; overflow-x: auto; }
+.prose-docs th, .prose-docs td { border: 1px solid var(--color-line); padding: 0.5rem 0.75rem; text-align: left; vertical-align: top; }
+.prose-docs th { background: var(--color-surface); font-weight: 600; }
+.prose-docs hr { border: 0; border-top: 1px solid var(--color-line); margin: 2rem 0; }

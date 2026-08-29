@@ -1,0 +1,76 @@
+import Link from 'next/link'
+import { NAV, SITE } from '@/lib/site'
+
+/** Server components: the navigation needs no JavaScript to work. */
+export function Header() {
+  return (
+    <header className="sticky top-0 z-40 border-b border-line bg-ink/85 backdrop-blur">
+      <div className="mx-auto flex max-w-6xl items-center gap-6 px-5 py-3.5">
+        <Link href="/" className="flex items-center gap-2 font-semibold tracking-tight">
+          <Logo />
+          <span>{SITE.name}</span>
+        </Link>
+        <nav className="ml-auto flex items-center gap-1 text-sm">
+          {NAV.filter((item) => item.label !== 'Download').map((item) => (
+            <Link
+              key={item.href}
+              href={item.href}
+              className="hidden rounded-md px-2.5 py-1.5 text-muted transition-colors hover:bg-surface hover:text-text sm:block"
+              {...('external' in item && item.external ? { rel: 'noreferrer', target: '_blank' } : {})}
+            >
+              {item.label}
+            </Link>
+          ))}
+          <Link
+            href="/download"
+            className="ml-2 rounded-md bg-accent px-3 py-1.5 font-medium text-ink transition-opacity hover:opacity-90"
+          >
+            Download
+          </Link>
+        </nav>
+      </div>
+    </header>
+  )
+}
+
+export function Footer() {
+  return (
+    <footer className="border-t border-line">
+      <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-x-6 gap-y-2 px-5 py-8 text-sm text-muted">
+        <span className="font-medium text-text">{SITE.name}</span>
+        <Link href="/docs" className="hover:text-text">Docs</Link>
+        <a href={SITE.repo} className="hover:text-text" rel="noreferrer" target="_blank">GitHub</a>
+        <a href={SITE.releases} className="hover:text-text" rel="noreferrer" target="_blank">Releases</a>
+        <Link href="/security" className="hover:text-text">Security</Link>
+        <Link href="/privacy" className="hover:text-text">Privacy</Link>
+        <span className="ml-auto">MIT licensed</span>
+      </div>
+    </footer>
+  )
+}
+
+function Logo() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true" className="text-accent">
+      <circle cx="10" cy="10" r="8.25" fill="none" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M6 10h8M10.5 6.5 14 10l-3.5 3.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
+export function Code({ children, label }: { children: string; label?: string }) {
+  return (
+    // `min-w-0` matters: without it this block is a grid child with
+    // min-width:auto, and the pre below widens the page rather than scrolling.
+    <div className="min-w-0 overflow-hidden rounded-lg border border-line bg-surface">
+      {label ? (
+        <div className="border-b border-line px-4 py-2 font-mono text-[11px] uppercase tracking-wider text-muted">
+          {label}
+        </div>
+      ) : null}
+      <pre className="overflow-x-auto p-4 font-mono text-[13px] leading-relaxed">
+        <code>{children}</code>
+      </pre>
+    </div>
+  )
+}
