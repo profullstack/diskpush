@@ -116,6 +116,41 @@ if [ "$WANT_DESKTOP" = yes ]; then
     tar -xzf "$WORK/app.tar.gz" -C "$SHARE/app" --strip-components=1
     METHOD=linux-app
 
+    # Chromium wants one of two sandboxes. The namespace sandbox needs
+    # unprivileged user namespaces; the fallback SUID helper needs
+    # chrome-sandbox owned by root with mode 4755, which an install without
+    # root cannot set. Where a kernel denies the first and we cannot provide
+    # the second, Electron aborts on launch:
+    #
+    #   FATAL:setuid_sandbox_host.cc(163) The SUID sandbox helper binary was
+    #   found, but is not configured correctly.
+    #
+    # So the launcher decides at run time rather than the installer guessing,
+    # and only drops the sandbox when neither option is actually available.
+    cat > "$SHARE/app/launch.sh" <<'LAUNCH'
+#!/bin/sh
+set -eu
+here="$(cd "$(dirname "$0")" && pwd)"
+app="$here/diskpush-desktop"
+
+# Is the SUID helper correctly configured? (A .deb install sets this up.)
+if [ -u "$here/chrome-sandbox" ]; then
+  exec "$app" "$@"
+fi
+
+# Can Chromium use the namespace sandbox instead?
+if unshare --user true >/dev/null 2>&1; then
+  exec "$app" "$@"
+fi
+
+echo "diskpush: this kernel denies unprivileged user namespaces, and the SUID" >&2
+echo "          sandbox helper needs root to configure, which this install does" >&2
+echo "          not have. Starting without Chromium's sandbox." >&2
+echo "          For a sandboxed install, use the .deb: https://diskpush.com/download" >&2
+exec "$app" --no-sandbox "$@"
+LAUNCH
+    chmod 0755 "$SHARE/app/launch.sh"
+
     # A launcher, an icon, and a menu entry. This is what a .deb would give
     # you; done by hand because doing it by hand needs no root.
     mkdir -p "$PREFIX/share/applications" "$PREFIX/share/icons/hicolor/512x512/apps"
@@ -128,7 +163,7 @@ Type=Application
 Name=DiskPush
 GenericName=File Transfer
 Comment=Push files fast. Sync only what changed.
-Exec=$SHARE/app/diskpush-desktop %U
+Exec=$SHARE/app/launch.sh %U
 Icon=diskpush
 Terminal=false
 Categories=Utility;FileTransfer;Network;

@@ -12,6 +12,7 @@ import { EXIT } from './exit-codes.js'
 import { HELP, VERSION } from './help.js'
 import { Output } from './output.js'
 import { ArgvError, hasFlag, looksLikeEndpoint, parseArgv } from './parse-argv.js'
+import { autoUpdate, reexec } from './self-update.js'
 import { existsSync } from 'node:fs'
 
 async function main(argv: readonly string[]): Promise<number> {
@@ -57,6 +58,12 @@ async function main(argv: readonly string[]): Promise<number> {
     process.stdout.write(HELP)
     return EXIT.ok
   }
+
+  // Check for a newer release before running the command, so it runs on the
+  // version just installed. Rate-limited, silent when offline, and skipped
+  // entirely for --json, for the self-management commands, and when
+  // DISKPUSH_NO_AUTO_UPDATE is set.
+  if (await autoUpdate(command, output) === 'updated') reexec()
 
   const store = await DiskPushStore.open()
   try {

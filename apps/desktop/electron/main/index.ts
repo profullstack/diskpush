@@ -1,8 +1,9 @@
 import { join } from 'node:path'
 import { app, BrowserWindow, shell } from 'electron'
 import { registerIpc } from './ipc'
+import { checkForUpdates } from './services/updater'
 import { closeAllSessions } from './services/sessions'
-import { cancelAll } from './services/transfers'
+import { cancelAll, hasActiveTransfer } from './services/transfers'
 
 const isDev = !app.isPackaged && process.env.DISKPUSH_DEV === '1'
 const DEV_URL = 'http://localhost:3210'
@@ -74,6 +75,9 @@ function createWindow(): BrowserWindow {
 app.whenReady().then(() => {
   registerIpc()
   createWindow()
+
+  // Not awaited: a slow or unreachable GitHub must not delay the window.
+  void checkForUpdates(hasActiveTransfer)
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

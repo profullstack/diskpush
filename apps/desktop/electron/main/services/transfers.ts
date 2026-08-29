@@ -237,6 +237,11 @@ export function cancelTransfer(jobId: string): boolean {
   return true
 }
 
+/** True while any transfer is in flight; the updater defers a restart on it. */
+export function hasActiveTransfer(): boolean {
+  return running.size > 0
+}
+
 export function cancelAll(): void {
   for (const job of running.values()) job.cancel()
 }
