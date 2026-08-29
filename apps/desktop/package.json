@@ -50,6 +50,10 @@
       {
         "from": "resources/cli",
         "to": "cli"
+      },
+      {
+        "from": "resources/icon.png",
+        "to": "icon.png"
       }
     ],
     "linux": {

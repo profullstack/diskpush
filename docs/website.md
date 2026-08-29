@@ -65,17 +65,26 @@ resources, and this is a shared project that also runs other production
 services. Applying it risks pruning services this repository did not create.
 The Railpack variables above are service-scoped and carry no such risk.
 
+## The installer
+
+`/install.sh` is a route, not a static file: it reads the repository's own
+`scripts/install.sh` and rewrites the site URL baked into it to this
+deployment's. So the script people pipe into a shell is the one in version
+control that they can read on GitHub, and an installer served from a preview
+installs from that preview rather than silently from production.
+
+It is `force-static`, so the read happens at build time and
+`outputFileTracingIncludes` carries the script into the deployment.
+
 ## Custom domain
 
-The site is served from Railway's generated domain. `diskpush.com` is not
-attached yet; the canonical URLs, sitemap and Open Graph metadata in
-`apps/web/lib/site.ts` already point at it, so those are correct in advance of
-the DNS change rather than after it.
+`diskpush.com` and `www.diskpush.com` are attached and serving.
 
-To attach it:
+DNS is at Porkbun. The apex is an **ALIAS** rather than a CNAME, because a
+CNAME cannot coexist with the other records at a zone apex; `www` is an
+ordinary CNAME, which also has to exist explicitly because the zone has a
+`*.diskpush.com` wildcard that would otherwise keep sending it to the parking
+page. Both have a `_railway-verify` TXT beside them.
 
-```bash
-railway domain diskpush.com
-```
-
-then add the CNAME Railway prints at the registrar.
+The MX records for Porkbun's email forwarding and the SPF record were left
+alone; repointing the apex must not take the domain's mail with it.

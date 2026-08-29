@@ -46,6 +46,14 @@ and `diskpush --print-args` will always show you exactly what it is about to run
 
 ## Install
 
+```bash
+curl -fsSL https://diskpush.com/install.sh | sh
+```
+
+Installs the CLI, and the desktop app when the machine has a desktop to run it
+on. Everything lands under your home directory: no root, no package manager.
+Add `-s -- --cli-only` for a server. See [docs/install.md](docs/install.md).
+
 DiskPush needs `rsync` and an SSH client on the machine it runs on, and `rsync`
 on any server it talks to.
 
@@ -107,6 +115,7 @@ to make that flag hard to trigger by accident.
 
 | Document | Contents |
 | --- | --- |
+| [docs/install.md](docs/install.md) | Installing, updating and removing |
 | [docs/getting-started.md](docs/getting-started.md) | First connection to first transfer |
 | [docs/defaults.md](docs/defaults.md) | What DiskPush does when you tell it nothing |
 | [docs/cli.md](docs/cli.md) | Full command grammar and exit codes |
