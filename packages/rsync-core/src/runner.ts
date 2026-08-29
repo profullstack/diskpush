@@ -27,6 +27,10 @@ export function runPlan(plan: ExecutionPlan, options: RunOptions = {}): RsyncRun
   const queue: RsyncEvent[] = []
   const waiters: Array<(value: IteratorResult<RsyncEvent>) => void> = []
   let finished = false
+  // A failed spawn emits both `error` and `close`. Without this, the second
+  // one pushes a duplicate exit event whose generic message overwrites the
+  // useful one ("could not find rsync") that the first produced.
+  let settled = false
 
   const push = (event: RsyncEvent) => {
     const waiter = waiters.shift()
@@ -93,6 +97,8 @@ export function runPlan(plan: ExecutionPlan, options: RunOptions = {}): RsyncRun
   options.signal?.addEventListener('abort', cancel, { once: true })
 
   child.on('error', (error) => {
+    if (settled) return
+    settled = true
     const message =
       (error as NodeJS.ErrnoException).code === 'ENOENT'
         ? `DiskPush could not find ${plan.binary} on this computer.`
@@ -103,6 +109,8 @@ export function runPlan(plan: ExecutionPlan, options: RunOptions = {}): RsyncRun
   })
 
   child.on('close', (code, signal) => {
+    if (settled) return
+    settled = true
     if (stdoutRest.trim() !== '') handleStdout(stdoutRest)
     if (stderrRest.trim() !== '') {
       stderrLines.push(stderrRest)

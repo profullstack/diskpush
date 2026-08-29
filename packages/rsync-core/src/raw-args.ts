@@ -11,6 +11,11 @@
 export type RawArgIssue = {
   arg: string
   severity: 'blocked' | 'conflict'
+  /**
+   * What the flag does. Only `destination-delete` can be waived, and only by a
+   * confirmed mirror: nothing waives deleting the source.
+   */
+  kind: 'destination-delete' | 'source-delete' | 'transport'
   reason: string
 }
 
@@ -69,6 +74,7 @@ export function analyzeRawArgs(rawArgs: readonly string[]): RawArgAnalysis {
         issues.push({
           arg,
           severity: 'blocked',
+          kind: 'destination-delete',
           reason:
             `${candidate} deletes files at the destination. Enable Mirror mode (CLI: \`diskpush mirror\`) ` +
             'so the delete list is previewed and confirmed first.',
@@ -79,6 +85,7 @@ export function analyzeRawArgs(rawArgs: readonly string[]): RawArgAnalysis {
         issues.push({
           arg,
           severity: 'blocked',
+          kind: 'source-delete',
           reason: `${candidate} deletes files from the source after transfer. DiskPush does not move files.`,
         })
       }
@@ -87,6 +94,7 @@ export function analyzeRawArgs(rawArgs: readonly string[]): RawArgAnalysis {
         issues.push({
           arg,
           severity: 'conflict',
+          kind: 'transport',
           reason:
             `${candidate} replaces the SSH transport DiskPush configured for this connection. ` +
             'Set it on the connection instead.',

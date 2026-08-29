@@ -75,6 +75,30 @@ export async function runTransfer(
     ...transportFor(source, destination, topology),
   }
 
+  // --- print-args -----------------------------------------------------------
+  // Handled before the preview: showing the command is not running it, so
+  // there is nothing to confirm, and making someone approve a delete list to
+  // read a command line would be theatre.
+  if (hasFlag(parsed, '--print-args')) {
+    try {
+      const shown = planTransfer({ ...planInput, deletesConfirmed: true })
+      output.line(shown.display)
+      if (shown.controlDisplay) output.line(`# control session: ${shown.controlDisplay}`)
+      if (output.isJson) {
+        output.json({
+          status: 'ok',
+          command: shown.display,
+          control: shown.controlDisplay ?? null,
+          args: shown.rsyncArgs,
+          warnings: shown.warnings,
+        })
+      }
+      return EXIT.ok
+    } catch (error) {
+      return reportPlanError(error, output)
+    }
+  }
+
   // --- preview ------------------------------------------------------------
   // Mirror always previews before it can run. A plain sync previews only when
   // asked, because its dry run costs a full scan for no safety benefit.
@@ -129,13 +153,6 @@ export async function runTransfer(
     plan = planTransfer({ ...planInput, deletesConfirmed })
   } catch (error) {
     return reportPlanError(error, output)
-  }
-
-  if (hasFlag(parsed, '--print-args')) {
-    output.line(plan.display)
-    if (plan.controlDisplay) output.line(`# control session: ${plan.controlDisplay}`)
-    if (output.isJson) output.json({ status: 'ok', command: plan.display, control: plan.controlDisplay ?? null, args: plan.rsyncArgs })
-    return EXIT.ok
   }
 
   for (const warning of plan.warnings) output.warn(`warning: ${warning}`)

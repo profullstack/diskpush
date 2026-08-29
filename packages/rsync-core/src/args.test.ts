@@ -153,6 +153,17 @@ describe('raw pass-through arguments', () => {
     )
   })
 
+  it('still blocks --remove-source-files even when a mirror was confirmed', () => {
+    // Confirming a destination delete list says nothing about deleting the
+    // source, so the waiver must not extend to it.
+    expect(() =>
+      build({
+        options: defaultRsyncOptions({ deleteMode: 'delay', rawArgs: ['--delete', '--remove-source-files'] }),
+        deletesConfirmed: true,
+      }),
+    ).toThrow(/deletes files from the source/i)
+  })
+
   it('permits a raw delete flag once mirror mode is on and confirmed', () => {
     const { args } = build({
       options: defaultRsyncOptions({ deleteMode: 'delay', rawArgs: ['--delete-excluded'] }),

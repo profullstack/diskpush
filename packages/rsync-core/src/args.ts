@@ -68,8 +68,17 @@ export function buildRsyncArgs(input: BuildArgsInput): BuildArgsResult {
   }
 
   const raw = analyzeRawArgs(options.rawArgs)
-  const blocked = raw.issues.filter((issue) => issue.severity === 'blocked')
-  if (blocked.length > 0 && !(raw.requestsDelete && options.deleteMode !== 'off' && input.deletesConfirmed)) {
+
+  // A confirmed mirror waives the destination-delete flags, because the user
+  // has just been shown exactly what they would delete. It waives nothing
+  // else: in particular `--remove-source-files` stays blocked, since no
+  // amount of confirming a *destination* delete list says anything about
+  // deleting the source.
+  const mirrorConfirmed = options.deleteMode !== 'off' && input.deletesConfirmed === true
+  const blocked = raw.issues.filter(
+    (issue) => issue.severity === 'blocked' && !(mirrorConfirmed && issue.kind === 'destination-delete'),
+  )
+  if (blocked.length > 0) {
     throw new RsyncArgError(
       `These pass-through arguments were rejected:\n${blocked.map((i) => `  ${i.arg}: ${i.reason}`).join('\n')}`,
       blocked,

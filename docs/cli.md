@@ -146,6 +146,11 @@ Two families are refused rather than passed through:
 - `--remove-source-files`, `--remove-sent-files`. These delete the *source*.
   DiskPush copies; it does not move.
 
+A confirmed mirror waives the first group, because you have just been shown
+exactly what it would delete. It waives nothing else: confirming a
+*destination* delete list says nothing about deleting the source, so
+`--remove-source-files` stays refused either way.
+
 `-e`, `--rsh`, `--rsync-path`, `--daemon`, `--config` and `--password-file`
 produce a warning, because they replace transport DiskPush configured from the
 connection.
