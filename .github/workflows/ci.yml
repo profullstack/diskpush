@@ -11,9 +11,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # No `version:` input: the action reads `packageManager` from
+      # package.json, and specifying both is an error. The pinned
+      # pnpm@11.18.0 there is the more precise source anyway.
       - uses: pnpm/action-setup@v4
-        with:
-          version: 11
 
       - uses: actions/setup-node@v4
         with:
@@ -47,9 +48,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # No `version:` input: the action reads `packageManager` from
+      # package.json, and specifying both is an error. The pinned
+      # pnpm@11.18.0 there is the more precise source anyway.
       - uses: pnpm/action-setup@v4
-        with:
-          version: 11
 
       - uses: actions/setup-node@v4
         with:
