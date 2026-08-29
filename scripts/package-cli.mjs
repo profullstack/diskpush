@@ -77,7 +77,18 @@ try {
   const stage = join(work, 'cli')
   // --legacy because these are ordinary workspace links rather than injected
   // dependencies; --prod so devDependencies stay out of the artifact.
-  run('pnpm', ['deploy', '--filter', '@diskpush/cli', '--prod', '--legacy', stage], checkout)
+  //
+  // node-linker=hoisted is load-bearing. pnpm's default layout links each
+  // package from node_modules/.pnpm, and those symlinks do not survive the
+  // trip into an Electron bundle: electron-builder's extraResources copy drops
+  // them, and the app ships an empty node_modules that fails at first run with
+  // "Cannot find package '@diskpush/database'". A hoisted tree is plain
+  // directories, the same 33MB, and survives any copy.
+  run(
+    'pnpm',
+    ['deploy', '--filter', '@diskpush/cli', '--prod', '--legacy', '--config.node-linker=hoisted', stage],
+    checkout,
+  )
 
   writeFileSync(join(stage, 'diskpush'), LAUNCHER, { mode: 0o755 })
 
@@ -88,7 +99,10 @@ try {
   // The desktop build embeds this same tree, so both surfaces ship one build.
   const embedded = join(root, 'apps/desktop/resources/cli')
   rmSync(embedded, { recursive: true, force: true })
-  cpSync(stage, embedded, { recursive: true })
+  // verbatimSymlinks: without it Node's cp resolves relative symlinks to
+  // absolute paths, which would point into this script's temp directory - the
+  // one deleted in the finally block below.
+  cpSync(stage, embedded, { recursive: true, verbatimSymlinks: true })
   console.log(`embedded a copy at ${embedded}`)
 
   console.log(`\n${join(outDir, `${name}.tar.gz`)}`)
