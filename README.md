@@ -117,6 +117,7 @@ to make that flag hard to trigger by accident.
 | [docs/security.md](docs/security.md) | Threat model and the decisions that follow from it |
 | [docs/architecture.md](docs/architecture.md) | Packages, processes and boundaries |
 | [docs/troubleshooting.md](docs/troubleshooting.md) | What the errors mean |
+| [docs/website.md](docs/website.md) | diskpush.com architecture and deployment |
 
 ## Repository layout
 

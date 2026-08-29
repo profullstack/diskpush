@@ -1,0 +1,10 @@
+node_modules
+.git
+.shots
+apps/*/node_modules
+packages/*/node_modules
+apps/*/.next
+apps/desktop/out
+apps/desktop/dist-electron
+packages/*/dist
+apps/cli/dist
