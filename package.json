@@ -1,0 +1,23 @@
+{
+  "name": "diskpush",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.18.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "pnpm -r --filter './packages/**' build && pnpm --filter @diskpush/cli build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "cli": "node apps/cli/dist/bin.js"
+  },
+  "devDependencies": {
+    "@types/node": "^24.3.0",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.5",
+    "@diskpush/schemas": "workspace:*",
+    "@diskpush/rsync-core": "workspace:*"
+  }
+}

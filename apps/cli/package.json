@@ -1,0 +1,21 @@
+{
+  "name": "@diskpush/cli",
+  "version": "0.1.0",
+  "type": "module",
+  "bin": { "diskpush": "./dist/bin.js" },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "start": "node dist/bin.js"
+  },
+  "dependencies": {
+    "@diskpush/database": "workspace:*",
+    "@diskpush/rsync-core": "workspace:*",
+    "@diskpush/schemas": "workspace:*",
+    "@diskpush/ssh-core": "workspace:*",
+    "zod": "^3.24.1"
+  }
+}

@@ -1,0 +1,12 @@
+packages:
+  - 'apps/*'
+  - 'packages/*'
+
+allowBuilds:
+  # esbuild ships prebuilt binaries; its postinstall just selects one.
+  esbuild: true
+  # ssh2's native crypto binding and cpu-features are optional speedups.
+  # Declined so that installing DiskPush never needs a C++ toolchain; ssh2
+  # falls back to its pure-JS implementation.
+  ssh2: false
+  cpu-features: false
