@@ -5,7 +5,7 @@ import { NAV, SITE } from '@/lib/site'
 export function Header() {
   return (
     <header className="sticky top-0 z-40 border-b border-line bg-ink/85 backdrop-blur">
-      <div className="mx-auto flex max-w-6xl items-center gap-6 px-5 py-3.5">
+      <div className="mx-auto flex max-w-6xl items-center gap-6 px-5 py-2.5">
         <Link href="/" className="flex items-center" aria-label={SITE.name}>
           <Logo />
         </Link>
@@ -66,9 +66,9 @@ function Logo() {
         alt="DiskPush"
         width={2172}
         height={724}
-        className="logo-dark h-7 w-auto"
+        className="logo-dark h-14 w-auto"
       />
-      <img src="/logo.png" alt="DiskPush" width={2172} height={724} className="logo-light h-7 w-auto" />
+      <img src="/logo.png" alt="DiskPush" width={2172} height={724} className="logo-light h-14 w-auto" />
     </>
   )
 }
