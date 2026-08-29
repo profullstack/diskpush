@@ -41,6 +41,11 @@ COMMANDS
   job ID                  one job in detail
   retry ID                run a recorded job again (resumes from its partial file)
 
+  doctor                  check rsync, ssh and the install
+  update                  upgrade to the latest release  [alias: upgrade]
+  uninstall               remove DiskPush, keeping your connections and profiles
+                          [alias: remove]
+
 DEFAULTS
   Every transfer runs with archive metadata, resumable partial files,
   incremental skipping of unchanged files, and no destination deletes:

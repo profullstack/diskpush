@@ -77,6 +77,11 @@ const KNOWN_COMMANDS = new Set([
   'jobs',
   'job',
   'retry',
+  'update',
+  'upgrade',
+  'uninstall',
+  'remove',
+  'doctor',
   'help',
   'version',
 ])

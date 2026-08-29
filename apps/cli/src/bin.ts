@@ -4,6 +4,7 @@ import { EndpointParseError } from '@diskpush/rsync-core'
 import { ZodError } from 'zod'
 import { runConnections } from './commands/connections.js'
 import { runJob, runJobs, runRetry } from './commands/jobs.js'
+import { runDoctor, runUninstall, runUpdate } from './commands/self.js'
 import { runLs } from './commands/ls.js'
 import { runProfiles } from './commands/profiles.js'
 import { runTransfer, TRANSFER_ALIASES } from './commands/transfer.js'
@@ -72,6 +73,14 @@ async function main(argv: readonly string[]): Promise<number> {
         return await runJob(parsed, store, output)
       case 'retry':
         return await runRetry(parsed, store, output)
+      case 'update':
+      case 'upgrade':
+        return await runUpdate(parsed, output)
+      case 'uninstall':
+      case 'remove':
+        return await runUninstall(parsed, output)
+      case 'doctor':
+        return await runDoctor(parsed, output)
       case 'ls':
         return await runLs(parsed, store, output)
       default:
