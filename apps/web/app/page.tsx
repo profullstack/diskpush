@@ -54,6 +54,33 @@ export default function HomePage() {
           __html: JSON.stringify({
             '@context': 'https://schema.org',
             '@graph': [
+              // The maker, as an entity a knowledge graph can resolve. Without
+              // this the schema described an application that nothing published:
+              // the only trace of who builds DiskPush was a GitHub URL and the
+              // domain on the security address.
+              {
+                '@type': 'Organization',
+                '@id': `${SITE.url}/#organization`,
+                name: 'Profullstack, Inc.',
+                url: 'https://profullstack.com',
+                logo: `${SITE.url}/logo.png`,
+                sameAs: ['https://github.com/profullstack'],
+                contactPoint: {
+                  '@type': 'ContactPoint',
+                  contactType: 'security',
+                  email: 'security@profullstack.com',
+                  url: `${SITE.url}/security`,
+                },
+              },
+              {
+                '@type': 'WebSite',
+                '@id': `${SITE.url}/#website`,
+                name: SITE.name,
+                url: SITE.url,
+                description: SITE.description,
+                publisher: { '@id': `${SITE.url}/#organization` },
+                inLanguage: 'en',
+              },
               {
                 '@type': 'SoftwareApplication',
                 name: 'DiskPush',
@@ -61,6 +88,11 @@ export default function HomePage() {
                 operatingSystem: 'Linux, macOS',
                 description: SITE.description,
                 url: SITE.url,
+                downloadUrl: `${SITE.url}/download`,
+                license: 'https://opensource.org/licenses/MIT',
+                isAccessibleForFree: true,
+                publisher: { '@id': `${SITE.url}/#organization` },
+                author: { '@id': `${SITE.url}/#organization` },
                 offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
               },
               {

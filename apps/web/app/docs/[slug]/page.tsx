@@ -6,6 +6,12 @@ import { listDocs, readDoc } from '@/lib/docs'
 
 type Params = { params: Promise<{ slug: string }> }
 
+/**
+ * Docs that are also published at a shorter, promoted URL. The promoted page is
+ * canonical; this one keeps its place in the docs tree without competing with it.
+ */
+const PROMOTED: Record<string, string> = { security: '/security' }
+
 /** Pre-rendered at build time: the docs are static files, so the pages are too. */
 export async function generateStaticParams() {
   const docs = await listDocs()
@@ -20,7 +26,12 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
   return {
     title: doc.title,
     description: meta?.description || `${doc.title} — DiskPush documentation.`,
-    alternates: { canonical: `/docs/${slug}` },
+    // A doc with a promoted page of its own is the same bytes at two URLs —
+    // same markdown, same rendered HTML, same title. Point the canonical at the
+    // promoted one rather than letting a crawler pick, and rather than dropping
+    // either URL: /security is linked from every footer, and /docs/security is
+    // where the docs sidebar goes.
+    alternates: { canonical: PROMOTED[slug] ?? `/docs/${slug}` },
   }
 }
 
