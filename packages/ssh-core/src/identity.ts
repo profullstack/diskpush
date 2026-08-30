@@ -34,9 +34,21 @@ export function defaultIdentityPaths(home: string = homedir()): string[] {
   return DEFAULT_IDENTITY_FILES.map((name) => join(home, '.ssh', name))
 }
 
+/**
+ * Every default identity that exists, in ssh's order.
+ *
+ * All of them, not the first: ssh(1) offers each identity in turn until the
+ * server accepts one, and a host that takes id_rsa but not id_ed25519 is
+ * ordinary. Offering only the first key made such a host reject us outright
+ * while `ssh` to the same host from a terminal succeeded.
+ */
+export function findDefaultIdentities(exists: (path: string) => boolean, home: string = homedir()): string[] {
+  return defaultIdentityPaths(home).filter((path) => exists(path))
+}
+
 /** The first default identity that exists, or null when the user has no keys. */
 export function findDefaultIdentity(exists: (path: string) => boolean, home: string = homedir()): string | null {
-  return defaultIdentityPaths(home).find((path) => exists(path)) ?? null
+  return findDefaultIdentities(exists, home)[0] ?? null
 }
 
 /**

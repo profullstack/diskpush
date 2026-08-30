@@ -4,6 +4,7 @@ import {
   defaultIdentityPaths,
   expandTilde,
   findAgentSocket,
+  findDefaultIdentities,
   findDefaultIdentity,
 } from './identity.js'
 
@@ -89,5 +90,36 @@ describe('findAgentSocket', () => {
 
   it('offers nothing to guess at when there is no runtime directory and no uid', () => {
     expect(agentSocketCandidates({}, null)).toEqual([])
+  })
+})
+
+describe('findDefaultIdentities', () => {
+  /**
+   * The bug this exists to prevent: only the first existing key was offered.
+   * A host that accepts id_rsa but not id_ed25519 — seed1, in the report that
+   * prompted this — rejected the connection outright, while `ssh` to the same
+   * host from a terminal succeeded, because ssh offers each identity in turn.
+   */
+  it('returns every key that exists, in ssh order', () => {
+    expect(findDefaultIdentities(() => true, HOME)).toEqual([
+      '/home/you/.ssh/id_ed25519',
+      '/home/you/.ssh/id_ecdsa',
+      '/home/you/.ssh/id_rsa',
+      '/home/you/.ssh/id_dsa',
+    ])
+  })
+
+  it('keeps id_rsa when ed25519 also exists, because the server chooses', () => {
+    const present = ['/home/you/.ssh/id_ed25519', '/home/you/.ssh/id_rsa']
+    expect(findDefaultIdentities((path) => present.includes(path), HOME)).toEqual(present)
+  })
+
+  it('is empty when the user has no keys', () => {
+    expect(findDefaultIdentities(() => false, HOME)).toEqual([])
+  })
+
+  it('still reports the first one for callers that want just one', () => {
+    const only = '/home/you/.ssh/id_rsa'
+    expect(findDefaultIdentity((path) => path === only, HOME)).toBe(only)
   })
 })
