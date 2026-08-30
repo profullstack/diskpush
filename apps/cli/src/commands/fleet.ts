@@ -135,24 +135,70 @@ async function resolveTargets(parsed: ParsedArgv, store: DiskPushStore, fallback
 
 // --- prompts ---------------------------------------------------------------
 
-/** Reads a line without echoing it. Used for a sudo password and nothing else. */
+/**
+ * Reads a line without echoing it. Used for a sudo password and nothing else.
+ *
+ * Raw mode and a manual read, rather than readline with its `_writeToOutput`
+ * overridden. That override is the widely-copied recipe for this and it does
+ * not work on current Node — the interface writes the refreshed line straight
+ * to the output, so the password appears on screen and stays in the
+ * terminal's scrollback. Verified by driving this under a pty; the recipe
+ * echoed `hunter2` in full.
+ *
+ * In raw mode the tty does no echoing of its own, so nothing can leak by
+ * default rather than by our getting the interception right.
+ */
 async function readSecret(promptText: string): Promise<string> {
-  if (!process.stdin.isTTY) throw new ArgvError('A sudo password can only be asked for on a terminal.')
+  const stdin = process.stdin
+  if (!stdin.isTTY) throw new ArgvError('A sudo password can only be asked for on a terminal.')
 
-  const rl = createInterface({ input: process.stdin, output: process.stderr, terminal: true })
-  const asAny = rl as unknown as { output: NodeJS.WriteStream; _writeToOutput?: (text: string) => void }
-  asAny._writeToOutput = (text: string) => {
-    // Echo the prompt itself, then nothing: the password must not be visible
-    // and must not survive in the terminal's scrollback.
-    if (text.includes(promptText)) asAny.output.write(promptText)
-  }
-  try {
-    const value = await rl.question(promptText)
-    process.stderr.write('\n')
-    return value
-  } finally {
-    rl.close()
-  }
+  process.stderr.write(promptText)
+  const wasRaw = stdin.isRaw
+  stdin.setRawMode(true)
+  stdin.resume()
+  stdin.setEncoding('utf8')
+
+  return new Promise<string>((resolve, reject) => {
+    let value = ''
+
+    /** `leftover` is anything after the newline: it belongs to whoever reads next. */
+    const restore = (leftover: string) => {
+      stdin.removeListener('data', onData)
+      if (!wasRaw) stdin.setRawMode(false)
+      stdin.pause()
+      if (leftover) stdin.unshift(leftover)
+    }
+
+    const onData = (chunk: string) => {
+      for (let index = 0; index < chunk.length; index += 1) {
+        const character = chunk[index]!
+        switch (character) {
+          case '\r':
+          case '\n':
+          case '\u0004': // Ctrl-D
+            restore(chunk.slice(index + 1))
+            process.stderr.write('\n')
+            resolve(value)
+            return
+          case '\u0003': // Ctrl-C. Raw mode swallows the signal, so honour it here.
+            restore('')
+            process.stderr.write('\n')
+            reject(new ArgvError('Cancelled.'))
+            return
+          case '\u007f': // Backspace
+          case '\b':
+            value = value.slice(0, -1)
+            break
+          default:
+            // Control characters are not part of a password; dropping them
+            // keeps an arrow key from ending up in what is sent to sudo.
+            if (character >= ' ') value += character
+        }
+      }
+    }
+
+    stdin.on('data', onData)
+  })
 }
 
 async function confirm(output: Output, question: string): Promise<boolean> {
