@@ -16,6 +16,10 @@ export type FileEntry = {
   size: number
   modifiedAt: string
   mode: number
+  /** Where a symlink points, when the server could tell us. */
+  linkTarget?: string
+  /** What it points at. Absent on a broken link, which is why it is optional. */
+  targetType?: 'file' | 'directory' | 'symlink' | 'other'
 }
 
 export type Connection = {

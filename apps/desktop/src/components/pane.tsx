@@ -18,6 +18,7 @@ import {
   Trash2,
 } from 'lucide-react'
 import { api, unwrap, type Connection, type FileEntry } from '@/lib/api'
+import { isNavigable } from '@/lib/entries'
 import { formatBytes, formatDate, formatMode, joinPath, parentPath } from '@/lib/format'
 import { EndpointSelect, type PaneEndpoint } from '@/components/endpoint-select'
 import { DeleteDialog, NameDialog } from '@/components/entry-dialogs'
@@ -208,6 +209,7 @@ export function Pane({
   onNavigate,
   onEndpointChange,
   onAddServer,
+  onRefreshHosts,
 }: {
   role: 'Source' | 'Destination'
   state: PaneState
@@ -219,6 +221,7 @@ export function Pane({
   onNavigate: (path: string) => void
   onEndpointChange: (endpoint: PaneEndpoint) => void
   onAddServer: () => void
+  onRefreshHosts?: () => void
 }) {
   const [filter, setFilter] = useState('')
   const [showHidden, setShowHidden] = useState(false)
@@ -247,7 +250,8 @@ export function Pane({
         .filter((entry) => filter === '' || entry.name.toLowerCase().includes(filter.toLowerCase()))
         .sort((a, b) => {
           // Directories first, then by name: the order every file manager uses.
-          if ((a.type === 'directory') !== (b.type === 'directory')) return a.type === 'directory' ? -1 : 1
+          // A link to a directory sorts as one, because that is what it opens as.
+          if (isNavigable(a) !== isNavigable(b)) return isNavigable(a) ? -1 : 1
           return a.name.localeCompare(b.name)
         }),
     [state.entries, filter, showHidden],
@@ -287,7 +291,10 @@ export function Pane({
 
   const open = useCallback(
     (entry: FileEntry) => {
-      if (entry.type === 'directory') onNavigate(joinPath(state.path, entry.name))
+      // The link's own path is what we navigate to: the server resolves it when
+      // it lists, so there is no need to send the target and no risk of leaving
+      // the path the user can see in the breadcrumbs.
+      if (isNavigable(entry)) onNavigate(joinPath(state.path, entry.name))
     },
     [onNavigate, state.path],
   )
@@ -406,6 +413,7 @@ export function Pane({
           sshConfig={sshConfig}
           onChange={onEndpointChange}
           onAddServer={onAddServer}
+          onOpen={onRefreshHosts}
         />
         <span
           className={cn(
@@ -548,21 +556,30 @@ export function Pane({
                     {entry.type === 'directory' ? (
                       <Folder className="size-[15px] shrink-0 fill-primary/20 text-primary" />
                     ) : entry.type === 'symlink' ? (
-                      <Link2 className="size-[15px] shrink-0 text-cyan" />
+                      // A link that opens as a folder is drawn as one, tinted to
+                      // keep it distinguishable from a real directory.
+                      isNavigable(entry) ? (
+                        <Folder className="size-[15px] shrink-0 fill-cyan/20 text-cyan" />
+                      ) : (
+                        <Link2 className="size-[15px] shrink-0 text-cyan" />
+                      )
                     ) : (
                       <FileText className="size-[15px] shrink-0 text-faint" />
                     )}
-                    <span className={cn('truncate', isSelected ? 'font-medium text-foreground' : 'text-dim')}>
+                    <span
+                      className={cn('truncate', isSelected ? 'font-medium text-foreground' : 'text-dim')}
+                      title={entry.linkTarget ? `${entry.name} → ${entry.linkTarget}` : undefined}
+                    >
                       {entry.name}
                     </span>
                   </span>
                   <span
                     className={cn(
                       'numeric text-right text-[11.5px]',
-                      entry.type === 'directory' ? 'text-faint' : 'text-muted-foreground',
+                      isNavigable(entry) ? 'text-faint' : 'text-muted-foreground',
                     )}
                   >
-                    {entry.type === 'directory' ? '—' : formatBytes(entry.size)}
+                    {isNavigable(entry) ? '—' : formatBytes(entry.size)}
                   </span>
                   <span className="numeric text-right text-[11.5px] text-muted-foreground" title={formatMode(entry.mode)}>
                     {formatDate(entry.modifiedAt)}
