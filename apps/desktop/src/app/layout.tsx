@@ -2,6 +2,7 @@ import type { Metadata } from 'next'
 import { IBM_Plex_Mono, IBM_Plex_Sans, Geist } from 'next/font/google'
 import './globals.css'
 import { cn } from "@/lib/utils";
+import Script from "next/script";
 
 /**
  * Self-hosted at build time by next/font, which matters here: the renderer
@@ -25,7 +26,8 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className={cn(mono.variable, "font-sans", geist.variable)}>
-      <body className="h-full font-[family-name:var(--font-sans)]">{children}</body>
+      <body className="h-full font-[family-name:var(--font-sans)]">{children}        <Script data-site="4f356371-83a0-4cb2-b570-75b961e6ddcb" src="https://crawlproof.com/stats.js" strategy="afterInteractive" />
+      </body>
     </html>
   )
 }
