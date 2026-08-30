@@ -9,9 +9,20 @@ export const metadata: Metadata = {
   alternates: { canonical: '/download' },
 }
 
-// Release metadata is fetched server-side and revalidated hourly rather than
-// embedded in the client or stored in a database.
-export const revalidate = 3600
+// Release metadata is fetched server-side rather than embedded in the client
+// or stored in a database.
+//
+// Rendered per request, NOT prerendered. With a `revalidate` alone this page
+// is generated at BUILD time, so the version and the download links freeze to
+// whatever was latest when the site was last built -- and because that HTML
+// ships inside the image, every container restart reverts to it. The site sat
+// on v0.1.3 through four releases that way, offering downloads four versions
+// old while `install.sh`, which asks the GitHub API at run time, was handing
+// out the current one.
+//
+// The fetch in latestRelease() keeps its own hourly cache, so per-request
+// rendering costs a render and not a GitHub call.
+export const dynamic = 'force-dynamic'
 
 export default async function DownloadPage() {
   const release = await latestRelease()
