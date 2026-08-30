@@ -166,6 +166,7 @@ Icon=diskpush
 Terminal=false
 Categories=Utility;FileTransfer;Network;
 Keywords=rsync;sftp;ssh;sync;transfer;backup;
+StartupWMClass=DiskPush
 DESKTOP
 
     command -v update-desktop-database >/dev/null 2>&1 &&
