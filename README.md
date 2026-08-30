@@ -20,8 +20,8 @@ diskpush ./data/ prod:/data/ -- --checksum # your own rsync flags
 - **Never deletes** destination-only files unless you explicitly enable Mirror,
   and Mirror always shows you the delete list first.
 - **One command, many servers.** Package upgrades, a health sweep, or a script
-  you already have — run across a whole tagged fleet, each server reported
-  separately.
+  you already have — run across a whole tagged fleet from the Fleet tab or the
+  CLI, each server reported separately.
 - **No cloud account, no relay.** For a server-to-server job the payload moves
   directly between the two servers; DiskPush only orchestrates.
 

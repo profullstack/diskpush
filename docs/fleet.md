@@ -13,9 +13,9 @@ diskpush fleet run "systemctl reload nginx" --on 'web-*' --sudo
 diskpush fleet script ./rotate-keys.sh --on all '!db-01'
 ```
 
-In the desktop app it is the **Fleet** button in the header: tick the servers
-on the left, type a command or pick a recipe, watch each host report on its
-own.
+In the desktop app it is the **Fleet** tab, beside **Transfer**: tick the
+servers on the left, type a command or pick a recipe, watch each host report
+on its own. See [desktop.md](desktop.md#fleet).
 
 ## Choosing servers
 
