@@ -50,6 +50,7 @@
   --color-info-surface: #12244a;
   --color-info-line: #2f5fd0;
   --color-info-ink: #9dc0ff;
+
 }
 
 /*
@@ -59,6 +60,25 @@
 :root {
   color-scheme: dark;
   --radius: 0.625rem;
+
+  /*
+   * The control scale. Every toolbar button, field and rail action picks a
+   * height from these rather than inventing one -- which is what left the rail
+   * stacking a 64px button on a 50px button with two different corner radii.
+   */
+  --control-sm: 26px;
+  --control: 30px;
+  --control-lg: 34px;
+  --row: 32px;
+
+  /*
+   * Elevation. A panel used to be a 1px border and nothing else, which on the
+   * light theme meant a white card on a white window: the panes had no
+   * presence at all. Depth is a token so both themes get a considered version
+   * rather than a shadow someone guessed at inline.
+   */
+  --shadow-panel: 0 1px 2px rgb(0 0 0 / 0.3), 0 8px 24px -14px rgb(0 0 0 / 0.6);
+  --shadow-armed: 0 1px 0 rgb(255 255 255 / 0.1) inset, 0 6px 18px -6px rgb(11 98 253 / 0.55);
 
   --background: #070c16;
   --foreground: #e8edf6;
@@ -91,7 +111,13 @@
 @media (prefers-color-scheme: light) {
   :root {
     color-scheme: light;
-    --background: #ffffff;
+    /*
+     * The window ground is deliberately NOT white. It used to be, and so did
+     * the panes sitting on it, so a pane was a hairline rectangle around
+     * nothing and the whole app read as an unstyled document. The panes keep
+     * white; the ground steps back so they read as panels.
+     */
+    --background: #eef1f6;
     --foreground: #001830;
     --card: #ffffff;
     --card-foreground: #001830;
@@ -110,15 +136,25 @@
     --input: #dfe4ed;
     --ring: #0b62fd;
 
-    --color-ink: #ffffff;
-    --color-chrome: #f7f9fc;
+    /*
+     * Chrome sits a step off card in BOTH themes, so a pane header and a pane
+     * footer read as chrome rather than as more list. Light had them both at
+     * pure white, which left only the hairline border to say where the toolbar
+     * ended -- the same mistake as the ground being white.
+     */
+    --color-ink: #eef1f6;
+    --color-chrome: #f8fafc;
     --color-surface: #ffffff;
-    --color-raised: #f2f5fa;
-    --color-sunken: #f7f9fc;
-    --color-line: #dfe4ed;
+    --color-raised: #f4f7fb;
+    --color-sunken: #f4f7fa;
+    --color-line: #e2e7ef;
     --color-line-strong: #cbd4e2;
     --color-dim: #35435c;
     --color-faint: #7a869c;
+
+    /* Depth is subtler on white than it can afford to be on near-black. */
+    --shadow-panel: 0 1px 2px rgb(16 32 64 / 0.06), 0 6px 20px -12px rgb(16 32 64 / 0.28);
+    --shadow-armed: 0 1px 0 rgb(255 255 255 / 0.25) inset, 0 6px 16px -6px rgb(11 98 253 / 0.45);
 
     /* tints, not near-blacks, so they read as a highlight on a white window */
     --color-danger-surface: #fef2f2;
@@ -176,6 +212,39 @@ body {
 
 .selectable {
   user-select: text;
+}
+
+/* Elevation as a class rather than a Tailwind shadow utility, so the light
+   theme's override of --shadow-panel actually reaches it. */
+.elevation-panel {
+  box-shadow: var(--shadow-panel);
+}
+.elevation-armed {
+  box-shadow: var(--shadow-armed);
+}
+
+/*
+ * Sizes, dates and counts are compared down a column, so their glyphs have to
+ * occupy the same width. Without this the mono column still jitters, because
+ * IBM Plex Mono's proportional fallback wins for any digit it does not cover.
+ */
+.numeric {
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+}
+
+/*
+ * One focus ring for the whole app. shadcn's own controls already draw this;
+ * the hand-rolled toolbar buttons did not, so tabbing through a pane went
+ * invisible halfway across.
+ */
+.focus-ring {
+  outline: none;
+}
+.focus-ring:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
 }
 
 /* A scrollbar that does not shout inside a dark pane. */
