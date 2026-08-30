@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import Image from 'next/image'
 import {
+  ArrowLeftRight,
   CircleAlert,
   CircleCheck,
   ExternalLink,
@@ -15,7 +16,7 @@ import {
   X,
 } from 'lucide-react'
 import { ConnectionDialog } from '@/components/connection-dialog'
-import { FleetDialog } from '@/components/fleet-dialog'
+import { FleetView } from '@/components/fleet-view'
 import { endpointLabel, loadPane, Pane, type PaneEndpoint, type PaneState } from '@/components/pane'
 import { TransferRail } from '@/components/transfer-rail'
 import { MirrorPreviewDialog, TransferBand, type ActiveJob } from '@/components/transfer-panel'
@@ -34,6 +35,32 @@ function MenuItem({ icon, label, onClick }: { icon: React.ReactNode; label: stri
     >
       <span className="text-faint">{icon}</span>
       {label}
+    </button>
+  )
+}
+
+/** One of the two top-level views. A segmented control, not a link. */
+function TabButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean
+  onClick: () => void
+  children: React.ReactNode
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-current={active ? 'page' : undefined}
+      className={`focus-ring flex items-center gap-1.5 rounded-[7px] px-2.5 py-1 text-[12px] transition-colors ${
+        active
+          ? 'bg-background text-foreground shadow-sm'
+          : 'text-muted-foreground hover:text-foreground'
+      }`}
+    >
+      {children}
     </button>
   )
 }
@@ -62,7 +89,7 @@ export default function Workspace() {
   const [job, setJob] = useState<ActiveJob | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [showConnection, setShowConnection] = useState(false)
-  const [showFleet, setShowFleet] = useState(false)
+  const [tab, setTab] = useState<'transfer' | 'fleet'>('transfer')
   const [outsideShell, setOutsideShell] = useState(false)
 
   const refreshConnections = useCallback(async () => {
@@ -278,20 +305,23 @@ export default function Workspace() {
             <span>No servers yet</span>
           )}
         </div>
-        <div className="ml-auto flex items-center gap-2">
-          {/*
-            Fleet sits beside "New server" rather than inside the menu: it is
-            the other half of what this app does with a list of servers, and
-            a feature nobody can find is a feature nobody has.
-          */}
-          <Button
-            variant="outline"
-            onClick={() => setShowFleet(true)}
-            className="h-[var(--control)] gap-2 border-line-strong text-[12px]"
-          >
+        {/*
+          Two views, not a dialog. Fleet is somewhere you work for minutes with
+          a long script in front of you, which is the opposite of what a modal
+          is for -- and as a modal its Run button ended up below the fold.
+        */}
+        <nav className="flex items-center gap-0.5 rounded-lg bg-secondary p-0.5">
+          <TabButton active={tab === 'transfer'} onClick={() => setTab('transfer')}>
+            <ArrowLeftRight className="size-3.5" />
+            Transfer
+          </TabButton>
+          <TabButton active={tab === 'fleet'} onClick={() => setTab('fleet')}>
             <Server className="size-3.5" />
             Fleet
-          </Button>
+          </TabButton>
+        </nav>
+
+        <div className="ml-auto flex items-center gap-2">
           <Button
             variant="outline"
             onClick={() => setShowConnection(true)}
@@ -356,83 +386,92 @@ export default function Workspace() {
         </div>
       ) : null}
 
-      <div className="flex min-h-0 flex-1 gap-0 p-3.5">
-        <Pane
-          role="Source"
-          state={left}
-          saved={saved}
-          sshConfig={sshConfig}
-          onRefreshHosts={refreshConnections}
-          active={active === 'left'}
-          onFocus={() => setActive('left')}
-          onChange={(patch) => setLeft((current) => ({ ...current, ...patch }))}
-          onNavigate={(path) => void navigate('left', left.endpoint, path)}
-          onEndpointChange={(endpoint) => setLeft(blankPane(endpoint, defaultPathFor(endpoint, allConnections)))}
-          onAddServer={() => setShowConnection(true)}
-        />
-
-        <TransferRail
-          direction={direction}
-          mirror={mirror}
-          busy={job !== null && !job.finished}
-          leftLabel={railLabel(left.endpoint, allConnections)}
-          rightLabel={railLabel(right.endpoint, allConnections)}
-          onDirection={setDirection}
-          onToggleMirror={() => setMirror((value) => !value)}
-          onPreview={runPreview}
-          onRun={run}
-        />
-
-        <Pane
-          role="Destination"
-          state={right}
-          saved={saved}
-          sshConfig={sshConfig}
-          onRefreshHosts={refreshConnections}
-          active={active === 'right'}
-          onFocus={() => setActive('right')}
-          onChange={(patch) => setRight((current) => ({ ...current, ...patch }))}
-          onNavigate={(path) => void navigate('right', right.endpoint, path)}
-          onEndpointChange={(endpoint) => setRight(blankPane(endpoint, defaultPathFor(endpoint, allConnections)))}
-          onAddServer={() => setShowConnection(true)}
-        />
-      </div>
-
-      <TransferBand
-        job={job}
-        route={route}
-        mirror={mirror}
-        onCancel={() => {
-          if (job) void api()?.transfers.cancel(job.jobId)
-        }}
-      />
-
       {/*
-        This line used to be a fixed string that read like the command being
-        run but could not change -- turn Mirror on and it still claimed no
-        deletes. A command line nobody can trust is worse than none, so it is
-        built from the same state the transfer is.
+        One view or the other, never both. The transfer side keeps its own
+        footer and status band; Fleet brings its own, pinned so the action
+        it exists for cannot scroll out of reach.
       */}
-      <footer className="flex h-[28px] shrink-0 items-center gap-2.5 border-t border-line bg-background px-4 text-[11px] text-faint">
-        <span>Incremental</span>
-        <span className="text-line-strong">·</span>
-        <span>Archive metadata</span>
-        <span className="text-line-strong">·</span>
-        <span>Resume</span>
-        <span className="text-line-strong">·</span>
-        <span className={mirror ? 'font-medium text-destructive' : 'text-ok'}>Deletes {mirror ? 'ON' : 'off'}</span>
-        {/*
-          The command used to run flush to the window edge and get sliced
-          mid-token by the truncation, so the last thing in the footer was
-          always half a word. It keeps a gutter now, and the full string is in
-          the tooltip.
-        */}
-        <span className="selectable numeric ml-auto min-w-0 max-w-[54%] truncate pl-4 text-[10.5px]" title={rsyncFlags}>
-          {rsyncFlags}
-        </span>
-      </footer>
+      {tab === 'transfer' ? (
+        <>
+        <div className="flex min-h-0 flex-1 gap-0 p-3.5">
+          <Pane
+            role="Source"
+            state={left}
+            saved={saved}
+            sshConfig={sshConfig}
+            onRefreshHosts={refreshConnections}
+            active={active === 'left'}
+            onFocus={() => setActive('left')}
+            onChange={(patch) => setLeft((current) => ({ ...current, ...patch }))}
+            onNavigate={(path) => void navigate('left', left.endpoint, path)}
+            onEndpointChange={(endpoint) => setLeft(blankPane(endpoint, defaultPathFor(endpoint, allConnections)))}
+            onAddServer={() => setShowConnection(true)}
+          />
 
-      <FleetDialog open={showFleet} onClose={() => setShowFleet(false)} />
+          <TransferRail
+            direction={direction}
+            mirror={mirror}
+            busy={job !== null && !job.finished}
+            leftLabel={railLabel(left.endpoint, allConnections)}
+            rightLabel={railLabel(right.endpoint, allConnections)}
+            onDirection={setDirection}
+            onToggleMirror={() => setMirror((value) => !value)}
+            onPreview={runPreview}
+            onRun={run}
+          />
+
+          <Pane
+            role="Destination"
+            state={right}
+            saved={saved}
+            sshConfig={sshConfig}
+            onRefreshHosts={refreshConnections}
+            active={active === 'right'}
+            onFocus={() => setActive('right')}
+            onChange={(patch) => setRight((current) => ({ ...current, ...patch }))}
+            onNavigate={(path) => void navigate('right', right.endpoint, path)}
+            onEndpointChange={(endpoint) => setRight(blankPane(endpoint, defaultPathFor(endpoint, allConnections)))}
+            onAddServer={() => setShowConnection(true)}
+          />
+        </div>
+
+        <TransferBand
+          job={job}
+          route={route}
+          mirror={mirror}
+          onCancel={() => {
+            if (job) void api()?.transfers.cancel(job.jobId)
+          }}
+        />
+
+        {/*
+          This line used to be a fixed string that read like the command being
+          run but could not change -- turn Mirror on and it still claimed no
+          deletes. A command line nobody can trust is worse than none, so it is
+          built from the same state the transfer is.
+        */}
+        <footer className="flex h-[28px] shrink-0 items-center gap-2.5 border-t border-line bg-background px-4 text-[11px] text-faint">
+          <span>Incremental</span>
+          <span className="text-line-strong">·</span>
+          <span>Archive metadata</span>
+          <span className="text-line-strong">·</span>
+          <span>Resume</span>
+          <span className="text-line-strong">·</span>
+          <span className={mirror ? 'font-medium text-destructive' : 'text-ok'}>Deletes {mirror ? 'ON' : 'off'}</span>
+          {/*
+            The command used to run flush to the window edge and get sliced
+            mid-token by the truncation, so the last thing in the footer was
+            always half a word. It keeps a gutter now, and the full string is in
+            the tooltip.
+          */}
+          <span className="selectable numeric ml-auto min-w-0 max-w-[54%] truncate pl-4 text-[10.5px]" title={rsyncFlags}>
+            {rsyncFlags}
+          </span>
+        </footer>
+        </>
+      ) : (
+        <FleetView onAddServer={() => setShowConnection(true)} />
+      )}
 
       <ConnectionDialog open={showConnection} onClose={() => setShowConnection(false)} onSaved={() => void refreshConnections()} />
 

@@ -60,40 +60,60 @@ because that is what it does from where you are sitting.
 
 ## Fleet
 
-The **Fleet** button in the header opens the other thing you do with a list of
-servers: run one command on many of them.
+**Fleet** is one of the two tabs in the header, beside **Transfer**. It is the
+other thing you do with a list of servers: run one command on many of them.
 
 ```text
-┌──────────────┬──────────────────────────────────────────────────────────┐
-│ Servers 3/12 │ Recipes: [check-updates] [upgrade] [disk] [uptime] …     │
-│ [production] │ ┌──────────────────────────────────────────────────────┐ │
-│ [web] [db]   │ │ systemctl reload nginx                               │ │
-│              │ └──────────────────────────────────────────────────────┘ │
-│ ☑ web-01     │ ☑ sudo   At once [4]  Timeout [900]s  ☐ Stop after fail  │
-│ ☑ web-02     │ [Run on 3 servers] [Check for updates]                   │
-│ ☑ web-03     ├──────────────────────────────────────────────────────────┤
-│ ☐ db-01      │ ✓ web-01  succeeded  0.4s                                │
-│ ☐ …          │ ⟳ web-02  running    …                                   │
-│              │ ! web-03  failed  exit 1  nginx: configuration test …    │
-└──────────────┴──────────────────────────────────────────────────────────┘
+┌ DiskPush │ 7 servers │ [ Transfer ][ Fleet ]          [New server] [⚙] ┐
+├──────────────┬─────────────────────────────────────────────────────────┤
+│ SERVERS 4/7  │ Recipes  [check-updates][upgrade][disk][uptime][who]     │
+│ [production] │ ┌─────────────────────────────────────────────────────┐ │
+│ [web] [db]   │ │ set -e                                            ▲ │ │
+│              │ │ pm=$(if command -v apt-get >/dev/null 2>&1; then   │ │
+│ ☑ web-01     │ │ ...                                               ▼ │ │
+│ ☑ web-02     │ └─────────────────────────────────────────────────────┘ │
+│ ☑ web-03     │ 57 lines · runs under sh -e                             │
+│ ☑ db-01      │ ☑ sudo   At once [4]  Timeout [3600]s  ☐ Stop on fail   │
+│ ☐ cache-01   ├─────────────────────────────────────────────────────────┤
+│ ☐ staging    │ ✓ web-01  Succeeded  3.1s                               │
+│              │ ! web-02  Failed  exit 100                              │
+│              │   E: Could not get lock /var/lib/dpkg/lock-frontend     │
+│              │ ⚡ web-03  Unreachable  15.0s                            │
+├──────────────┴─────────────────────────────────────────────────────────┤
+│ [▶ Run on 4 servers] [Check for updates]           2 ok · 2 failed     │
+└────────────────────────────────────────────────────────────────────────┘
 ```
 
-Tag chips filter the server list; ticking servers is the same thing `--on` does
-in the CLI, and the two share one local database, so a command saved in one
-runs from the other.
+A tab rather than a dialog, deliberately. This is somewhere you sit for
+minutes with a long script in front of you while a dozen servers report — all
+the things a modal is wrong for. Fleet shipped as a modal in v0.2.8 and the
+`upgrade` recipe's fifty-seven lines pushed **Run** off the bottom of it,
+where nothing could scroll it back.
+
+So the layout has exactly three scrolling regions — the server list, the
+script editor, and the results — and **the action bar is pinned outside all
+of them**. Run is on screen at the 960×600 minimum window size just as it is
+maximised.
+
+Ticking servers is the same thing `--on` does in the CLI, and tag chips filter
+the list. The two share one local database, so a command saved in one runs
+from the other.
 
 Each host gets its own card with its own live output. Nothing is summarised as
 "done" on behalf of a server that has not said so, and a server that could not
 be reached reads **Unreachable** rather than **Failed** — the command did not
-run there, which is a different situation to a command that ran and failed.
+run there, which is a different situation from a command that ran and failed.
 
 **Check for updates** is the read-only sweep: pending updates, security
 updates where the package manager can separate them, whether a reboot is
-pending, and root filesystem use. It installs nothing.
+pending, and root filesystem use. It installs nothing. A count DiskPush could
+not obtain shows as `?` and never as `0`.
 
-A command matching a destructive pattern shows what it matched and needs an
-explicit tick before it will run. That check is repeated in the main process,
-so it is not something the window can be talked out of.
+A command matching a destructive pattern raises **a modal** — the one
+genuinely modal thing here, a yes/no you must answer before anything happens.
+It names what it matched and how many servers it would reach. That check is
+repeated in the main process, so it is not something the window can be talked
+out of.
 
 ## Keyboard
 

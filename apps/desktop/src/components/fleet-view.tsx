@@ -1,0 +1,663 @@
+'use client'
+
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  CircleAlert,
+  CircleCheck,
+  CircleDashed,
+  Clock,
+  Loader2,
+  PlugZap,
+  Play,
+  RefreshCw,
+  ShieldAlert,
+  Square,
+  TriangleAlert,
+  X,
+} from 'lucide-react'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
+import { Dialog, DialogContent } from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
+import { ScrollArea } from '@/components/ui/scroll-area'
+import { Textarea } from '@/components/ui/textarea'
+import { blankHost, foldHosts, type HostView } from '@/lib/fleet-events'
+import {
+  api,
+  unwrap,
+  type Connection,
+  type FleetCommand,
+  type FleetEvent,
+  type FleetHostState,
+  type Hazard,
+  type HostUpdateReport,
+} from '@/lib/api'
+
+/**
+ * Fleet — one command, many servers.
+ *
+ * A full view, not a dialog. This is a place you work, with a long script in
+ * front of you and a dozen servers reporting for minutes: everything a modal
+ * is wrong for. The first version was a modal and the `upgrade` recipe's forty
+ * lines pushed Run off the bottom of it, where nothing could scroll it back.
+ *
+ * So the layout has exactly three scrolling regions — servers, the editor, and
+ * the results — and the action bar is pinned outside all of them. Run is
+ * always on screen, whatever the script or the window is doing.
+ *
+ * Modals are kept for modality: the destructive-command confirmation below is
+ * a real yes/no that blocks, which is what a dialog is actually for.
+ */
+
+const STATE_META: Record<FleetHostState, { label: string; tone: string; icon: React.ReactNode }> = {
+  pending: { label: 'Waiting', tone: 'text-faint', icon: <CircleDashed className="size-3.5" /> },
+  connecting: { label: 'Connecting', tone: 'text-muted-foreground', icon: <PlugZap className="size-3.5" /> },
+  running: { label: 'Running', tone: 'text-primary', icon: <Loader2 className="size-3.5 animate-spin" /> },
+  succeeded: { label: 'Succeeded', tone: 'text-ok', icon: <CircleCheck className="size-3.5" /> },
+  failed: { label: 'Failed', tone: 'text-destructive', icon: <CircleAlert className="size-3.5" /> },
+  unreachable: { label: 'Unreachable', tone: 'text-warn', icon: <PlugZap className="size-3.5" /> },
+  timeout: { label: 'Timed out', tone: 'text-warn', icon: <Clock className="size-3.5" /> },
+  cancelled: { label: 'Cancelled', tone: 'text-faint', icon: <Square className="size-3.5" /> },
+  skipped: { label: 'Not run', tone: 'text-faint', icon: <CircleDashed className="size-3.5" /> },
+}
+
+export function FleetView({ onAddServer }: { onAddServer: () => void }) {
+  const [servers, setServers] = useState<Connection[]>([])
+  const [commands, setCommands] = useState<FleetCommand[]>([])
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [tagFilter, setTagFilter] = useState<string | null>(null)
+
+  const [script, setScript] = useState('')
+  const [label, setLabel] = useState('')
+  const [commandId, setCommandId] = useState<string | null>(null)
+  const [interpreter, setInterpreter] = useState<'sh' | 'bash' | 'raw'>('raw')
+  const [sudo, setSudo] = useState(false)
+  const [sudoPassword, setSudoPassword] = useState('')
+  const [askSudoPassword, setAskSudoPassword] = useState(false)
+  const [concurrency, setConcurrency] = useState(4)
+  const [timeoutSeconds, setTimeoutSeconds] = useState(900)
+  const [stopOnError, setStopOnError] = useState(false)
+
+  const [hazards, setHazards] = useState<Hazard[]>([])
+  const [runId, setRunId] = useState<string | null>(null)
+  const [hosts, setHosts] = useState<HostView[]>([])
+  const [checking, setChecking] = useState(false)
+  const [reports, setReports] = useState<HostUpdateReport[] | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [finished, setFinished] = useState<{ succeeded: number; failed: number; skipped: number } | null>(null)
+
+  const running = runId !== null && finished === null
+  const resultsRef = useRef<HTMLDivElement | null>(null)
+
+  const refresh = useCallback(async () => {
+    try {
+      const [serverList, commandList] = await Promise.all([
+        unwrap(api()?.fleet.servers()),
+        unwrap(api()?.fleet.commands()),
+      ])
+      setServers(serverList)
+      setCommands(commandList)
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught))
+    }
+  }, [])
+
+  useEffect(() => {
+    void refresh()
+  }, [refresh])
+
+  useEffect(() => {
+    const bridge = api()
+    if (!bridge) return
+    return bridge.events.onFleet(({ runId: incoming, event }) => {
+      setRunId((current) => {
+        if (current !== incoming) return current
+        applyEvent(event, setHosts, setFinished, setError)
+        return current
+      })
+    })
+  }, [])
+
+  useEffect(() => {
+    // Follow the tail while it runs. Once it stops, leave the scroll where the
+    // reader put it: yanking them to the bottom of a finished run is how you
+    // lose the line you were reading.
+    if (running && resultsRef.current) resultsRef.current.scrollTop = resultsRef.current.scrollHeight
+  }, [hosts, running])
+
+  const tags = useMemo(() => {
+    const seen = new Map<string, string>()
+    for (const server of servers) {
+      for (const tag of server.tags ?? []) if (!seen.has(tag.toLowerCase())) seen.set(tag.toLowerCase(), tag)
+    }
+    return [...seen.values()].sort((a, b) => a.localeCompare(b))
+  }, [servers])
+
+  const visible = useMemo(
+    () => (tagFilter ? servers.filter((server) => (server.tags ?? []).includes(tagFilter)) : servers),
+    [servers, tagFilter],
+  )
+
+  const toggle = (id: string) =>
+    setSelected((current) => {
+      const next = new Set(current)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+
+  const selectAllVisible = () =>
+    setSelected((current) => {
+      const next = new Set(current)
+      const everyOn = visible.length > 0 && visible.every((server) => next.has(server.id))
+      for (const server of visible) {
+        if (everyOn) next.delete(server.id)
+        else next.add(server.id)
+      }
+      return next
+    })
+
+  const pickCommand = (command: FleetCommand) => {
+    setScript(command.script)
+    setLabel(command.name)
+    setCommandId(command.builtin ? null : command.id)
+    setInterpreter(command.interpreter)
+    setSudo(command.sudo)
+    setTimeoutSeconds(command.timeoutSeconds)
+    setHazards([])
+  }
+
+  const requestBody = useCallback(
+    (hazardsConfirmed: boolean) => ({
+      connectionIds: [...selected],
+      script,
+      interpreter,
+      sudo,
+      ...(sudo && askSudoPassword && sudoPassword ? { sudoPassword } : {}),
+      workingDirectory: null,
+      timeoutSeconds,
+      concurrency,
+      onFailure: stopOnError ? ('stop' as const) : ('continue' as const),
+      hazardsConfirmed,
+      commandId,
+      label: label || script.slice(0, 60) || 'command',
+    }),
+    [
+      selected,
+      script,
+      interpreter,
+      sudo,
+      askSudoPassword,
+      sudoPassword,
+      timeoutSeconds,
+      concurrency,
+      stopOnError,
+      commandId,
+      label,
+    ],
+  )
+
+  const launch = useCallback(
+    async (hazardsConfirmed: boolean) => {
+      setError(null)
+      setFinished(null)
+      setReports(null)
+      try {
+        const request = requestBody(hazardsConfirmed)
+        // Preview first, always. It is the only thing between a typo and forty
+        // servers, and it costs one round trip with no side effects.
+        const preview = await unwrap(api()?.fleet.preview(request))
+        if (preview.hazards.length > 0 && !hazardsConfirmed) {
+          setHazards(preview.hazards)
+          return
+        }
+        setHazards([])
+        setHosts(preview.servers.map(blankHost))
+        const started = await unwrap(api()?.fleet.start(request))
+        setRunId(started.runId)
+      } catch (caught) {
+        setHazards([])
+        setError(caught instanceof Error ? caught.message : String(caught))
+      }
+    },
+    [requestBody],
+  )
+
+  const check = useCallback(async () => {
+    setError(null)
+    setChecking(true)
+    setReports(null)
+    try {
+      setReports(await unwrap(api()?.fleet.check([...selected], concurrency)))
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught))
+    } finally {
+      setChecking(false)
+    }
+  }, [selected, concurrency])
+
+  const canRun = selected.size > 0 && script.trim().length > 0 && !running
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      {error ? (
+        <div className="flex shrink-0 items-start gap-2.5 border-b border-danger-line bg-danger-surface px-4 py-2.5 text-[12px] text-danger-ink">
+          <CircleAlert className="mt-px size-3.5 shrink-0 text-destructive" />
+          <span className="selectable min-w-0 flex-1">{error}</span>
+          <button
+            type="button"
+            aria-label="Dismiss"
+            onClick={() => setError(null)}
+            className="focus-ring -mr-1 shrink-0 rounded p-0.5 text-danger-ink/70 transition-colors hover:text-danger-ink"
+          >
+            <X className="size-3.5" />
+          </button>
+        </div>
+      ) : null}
+
+      <div className="flex min-h-0 flex-1">
+        {/* --- servers ------------------------------------------------- */}
+        <aside className="flex w-[240px] shrink-0 flex-col border-r border-line">
+          <div className="flex shrink-0 items-center justify-between px-3 py-2">
+            <span className="text-[11px] font-medium uppercase tracking-wide text-faint">
+              Servers {servers.length > 0 ? `· ${selected.size}/${servers.length}` : ''}
+            </span>
+            {visible.length > 0 ? (
+              <Button variant="ghost" size="xs" onClick={selectAllVisible} className="text-[11px]">
+                {visible.every((server) => selected.has(server.id)) ? 'None' : 'All'}
+              </Button>
+            ) : null}
+          </div>
+
+          {tags.length > 0 ? (
+            <div className="flex shrink-0 flex-wrap gap-1 px-3 pb-2">
+              {tags.map((tag) => (
+                <button
+                  key={tag}
+                  type="button"
+                  onClick={() => setTagFilter((current) => (current === tag ? null : tag))}
+                  className={`focus-ring rounded-full border px-2 py-0.5 text-[10.5px] transition-colors ${
+                    tagFilter === tag
+                      ? 'border-primary bg-primary/10 text-primary'
+                      : 'border-line-strong text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  {tag}
+                </button>
+              ))}
+            </div>
+          ) : null}
+
+          <ScrollArea className="min-h-0 flex-1">
+            <div className="px-1.5 pb-2">
+              {visible.length === 0 ? (
+                <div className="px-2 py-4">
+                  <p className="text-[12px] text-muted-foreground">No servers yet.</p>
+                  <Button variant="outline" size="sm" onClick={onAddServer} className="mt-2 w-full text-[11.5px]">
+                    Add a server
+                  </Button>
+                </div>
+              ) : null}
+              {visible.map((server) => (
+                <label
+                  key={server.id}
+                  className="group/field flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-1.5 hover:bg-secondary"
+                >
+                  <Checkbox
+                    checked={selected.has(server.id)}
+                    onCheckedChange={() => toggle(server.id)}
+                    disabled={running}
+                  />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[12.5px]">{server.name}</span>
+                    <span className="block truncate text-[10.5px] text-faint">
+                      {server.username}@{server.host}
+                    </span>
+                  </span>
+                </label>
+              ))}
+            </div>
+          </ScrollArea>
+        </aside>
+
+        {/* --- command + results --------------------------------------- */}
+        <section className="flex min-w-0 flex-1 flex-col">
+          <div className="shrink-0 border-b border-line px-3 pb-2.5 pt-2">
+            <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
+              <span className="mr-1 text-[11px] text-faint">Recipes</span>
+              {commands.map((command) => (
+                <button
+                  key={command.id}
+                  type="button"
+                  title={command.description}
+                  onClick={() => pickCommand(command)}
+                  disabled={running}
+                  className="focus-ring rounded-md border border-line-strong px-2 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:opacity-50"
+                >
+                  {command.name}
+                </button>
+              ))}
+            </div>
+
+            {/*
+              A tall editor with its own scrollbar, not five rows.
+              `upgrade` is forty lines of shell; showing five of them and
+              hiding the rest behind a scroll gesture nobody knows is there is
+              how the first version of this hid what it was about to run.
+            */}
+            <Textarea
+              value={script}
+              onChange={(event) => {
+                setScript(event.target.value)
+                setHazards([])
+                setCommandId(null)
+              }}
+              disabled={running}
+              spellCheck={false}
+              placeholder="systemctl reload nginx"
+              className="h-[clamp(120px,26vh,340px)] resize-y overflow-auto font-[family-name:var(--font-mono)] text-[12px] leading-[1.55]"
+            />
+            {script.includes('\n') ? (
+              <p className="mt-1 text-[10.5px] text-faint">
+                {script.split('\n').length} lines · runs under {interpreter === 'raw' ? 'one command line' : `${interpreter} -e`}
+              </p>
+            ) : null}
+
+            <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2 text-[11.5px]">
+              <label className="group/field flex items-center gap-1.5">
+                <Checkbox checked={sudo} onCheckedChange={() => setSudo((value) => !value)} disabled={running} />
+                <span>sudo</span>
+              </label>
+              {sudo ? (
+                <label className="group/field flex items-center gap-1.5">
+                  <Checkbox
+                    checked={askSudoPassword}
+                    onCheckedChange={() => setAskSudoPassword((value) => !value)}
+                    disabled={running}
+                  />
+                  <span>with a password</span>
+                </label>
+              ) : null}
+              {sudo && askSudoPassword ? (
+                <Input
+                  type="password"
+                  value={sudoPassword}
+                  onChange={(event) => setSudoPassword(event.target.value)}
+                  placeholder="sudo password"
+                  disabled={running}
+                  className="h-7 w-[150px] text-[12px]"
+                  autoComplete="off"
+                />
+              ) : null}
+              <label className="flex items-center gap-1.5">
+                <span className="text-muted-foreground">At once</span>
+                <Input
+                  type="number"
+                  min={1}
+                  max={64}
+                  value={concurrency}
+                  onChange={(event) => setConcurrency(Math.max(1, Number(event.target.value) || 1))}
+                  disabled={running}
+                  className="h-7 w-[56px] text-[12px]"
+                />
+              </label>
+              <label className="flex items-center gap-1.5">
+                <span className="text-muted-foreground">Timeout</span>
+                <Input
+                  type="number"
+                  min={1}
+                  value={timeoutSeconds}
+                  onChange={(event) => setTimeoutSeconds(Math.max(1, Number(event.target.value) || 1))}
+                  disabled={running}
+                  // Wide enough for four digits: the upgrade recipe's default
+                  // is 3600, and at 70px it rendered as "360C".
+                  className="h-7 w-[86px] text-[12px]"
+                />
+                <span className="text-faint">s</span>
+              </label>
+              <label className="group/field flex items-center gap-1.5">
+                <Checkbox
+                  checked={stopOnError}
+                  onCheckedChange={() => setStopOnError((value) => !value)}
+                  disabled={running}
+                />
+                <span>Stop after a failure</span>
+              </label>
+              <label className="flex items-center gap-1.5">
+                <span className="text-muted-foreground">Shell</span>
+                <select
+                  value={interpreter}
+                  onChange={(event) => setInterpreter(event.target.value as 'sh' | 'bash' | 'raw')}
+                  disabled={running}
+                  className="focus-ring h-7 rounded-md border border-input bg-background px-1.5 text-[12px]"
+                >
+                  <option value="raw">one command</option>
+                  <option value="sh">sh script</option>
+                  <option value="bash">bash script</option>
+                </select>
+              </label>
+            </div>
+          </div>
+
+          <div ref={resultsRef} className="min-h-0 flex-1 overflow-y-auto p-3">
+            {reports ? <UpdateReportTable reports={reports} /> : null}
+            {hosts.length === 0 && !reports ? (
+              <p className="px-1 py-8 text-center text-[12px] text-muted-foreground">
+                Pick servers on the left, write a command, and run it.
+                <br />
+                Each server reports on its own.
+              </p>
+            ) : null}
+            <div className="space-y-2">
+              {hosts.map((host) => (
+                <HostCard key={host.connectionId} host={host} />
+              ))}
+            </div>
+          </div>
+        </section>
+      </div>
+
+      {/*
+        Pinned outside every scrolling region. The action you came here to take
+        cannot be scrolled away from, which is the whole reason this stopped
+        being a dialog.
+      */}
+      <footer className="flex shrink-0 items-center gap-2 border-t border-line bg-chrome px-3 py-2">
+        <Button onClick={() => void launch(false)} disabled={!canRun} className="gap-1.5 text-[12px]">
+          <Play className="size-3.5" />
+          Run on {selected.size} server{selected.size === 1 ? '' : 's'}
+        </Button>
+        {running ? (
+          <Button
+            variant="destructive"
+            onClick={() => runId && void api()?.fleet.cancel(runId)}
+            className="gap-1.5 text-[12px]"
+          >
+            <Square className="size-3.5" />
+            Stop
+          </Button>
+        ) : null}
+        <Button
+          variant="outline"
+          onClick={() => void check()}
+          disabled={selected.size === 0 || running || checking}
+          className="gap-1.5 text-[12px]"
+        >
+          {checking ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
+          Check for updates
+        </Button>
+
+        <div className="ml-auto flex items-center gap-2.5 text-[11.5px]">
+          {running ? (
+            <span className="flex items-center gap-1.5 text-muted-foreground">
+              <Loader2 className="size-3.5 animate-spin" />
+              {hosts.filter((host) => host.state === 'running').length} running ·{' '}
+              {hosts.filter((host) => host.state !== 'pending' && host.state !== 'running').length}/{hosts.length} done
+            </span>
+          ) : null}
+          {finished ? (
+            <Badge variant={finished.failed > 0 ? 'destructive' : 'secondary'}>
+              {finished.succeeded} ok · {finished.failed} failed
+              {finished.skipped > 0 ? ` · ${finished.skipped} not run` : ''}
+            </Badge>
+          ) : null}
+        </div>
+      </footer>
+
+      <HazardDialog
+        hazards={hazards}
+        serverCount={selected.size}
+        onCancel={() => setHazards([])}
+        onConfirm={() => void launch(true)}
+      />
+    </div>
+  )
+}
+
+/**
+ * A real modal, for the one genuinely modal thing here: a yes/no you must
+ * answer before anything happens.
+ */
+function HazardDialog({
+  hazards,
+  serverCount,
+  onCancel,
+  onConfirm,
+}: {
+  hazards: readonly Hazard[]
+  serverCount: number
+  onCancel: () => void
+  onConfirm: () => void
+}) {
+  return (
+    <Dialog open={hazards.length > 0} onOpenChange={(next) => !next && onCancel()}>
+      <DialogContent className="max-w-lg">
+        <div className="flex items-start gap-2.5">
+          <ShieldAlert className="mt-0.5 size-5 shrink-0 text-destructive" />
+          <div className="min-w-0">
+            <h2 className="text-[14px] font-medium">This can destroy a server</h2>
+            <p className="mt-0.5 text-[12.5px] text-muted-foreground">
+              It would run on {serverCount} server{serverCount === 1 ? '' : 's'}.
+            </p>
+          </div>
+        </div>
+
+        <ul className="my-3 max-h-[40vh] space-y-2 overflow-y-auto text-[12.5px]">
+          {hazards.map((hazard) => (
+            <li key={`${hazard.lineNumber}-${hazard.kind}`}>
+              <span className="text-faint">line {hazard.lineNumber}:</span> {hazard.explanation}
+              <code className="selectable mt-0.5 block overflow-x-auto rounded bg-secondary px-1.5 py-1 font-[family-name:var(--font-mono)] text-[11px]">
+                {hazard.line}
+              </code>
+            </li>
+          ))}
+        </ul>
+
+        <div className="flex justify-end gap-2">
+          <Button variant="outline" onClick={onCancel} className="text-[12px]">
+            Cancel
+          </Button>
+          <Button variant="destructive" onClick={onConfirm} className="text-[12px]">
+            Run it anyway
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function HostCard({ host }: { host: HostView }) {
+  const meta = STATE_META[host.state]
+  return (
+    <div className="overflow-hidden rounded-md border border-line">
+      <div className="flex items-center gap-2 bg-chrome px-2.5 py-1.5 text-[12px]">
+        <span className={meta.tone}>{meta.icon}</span>
+        <span className="font-medium">{host.name}</span>
+        <span className="truncate text-faint">{host.host}</span>
+        <span className={`ml-auto shrink-0 ${meta.tone}`}>{meta.label}</span>
+        {host.exitCode !== null && host.exitCode !== 0 ? (
+          <span className="numeric shrink-0 text-destructive">exit {host.exitCode}</span>
+        ) : null}
+        {host.durationMs !== null ? (
+          <span className="numeric shrink-0 text-faint">{(host.durationMs / 1000).toFixed(1)}s</span>
+        ) : null}
+      </div>
+
+      {host.errorSummary ? (
+        <p className="selectable flex items-start gap-1.5 border-t border-line bg-danger-surface px-2.5 py-1.5 text-[11.5px] text-danger-ink">
+          <TriangleAlert className="mt-px size-3.5 shrink-0 text-destructive" />
+          {host.errorSummary}
+        </p>
+      ) : null}
+
+      {host.lines.length > 0 ? (
+        <pre className="selectable max-h-[220px] overflow-auto bg-background px-2.5 py-1.5 font-[family-name:var(--font-mono)] text-[11px] leading-[1.55] text-dim">
+          {host.lines.join('\n')}
+        </pre>
+      ) : null}
+    </div>
+  )
+}
+
+function UpdateReportTable({ reports }: { reports: readonly HostUpdateReport[] }) {
+  return (
+    <div className="mb-3 overflow-x-auto rounded-md border border-line">
+      <table className="w-full text-[11.5px]">
+        <thead className="bg-chrome text-faint">
+          <tr>
+            {['Server', 'OS', 'Updates', 'Security', 'Reboot', 'Disk'].map((heading) => (
+              <th key={heading} className="whitespace-nowrap px-2.5 py-1.5 text-left font-medium">
+                {heading}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {reports.map((report) => (
+            <tr key={report.connectionId} className="border-t border-line">
+              <td className="px-2.5 py-1.5">{report.connectionName}</td>
+              <td className="px-2.5 py-1.5 text-muted-foreground">
+                {report.reachable ? (report.os ?? 'unknown') : (report.error ?? 'unreachable')}
+              </td>
+              {/* A count DiskPush could not obtain shows as "?" and never as 0:
+                  "no updates pending" is a claim, and it has to be earned. */}
+              <td className="numeric px-2.5 py-1.5">{report.updates === null ? '?' : report.updates}</td>
+              <td className="numeric px-2.5 py-1.5">
+                {report.securityUpdates === null ? '—' : report.securityUpdates}
+              </td>
+              <td className="px-2.5 py-1.5">
+                {report.rebootRequired === null ? '?' : report.rebootRequired ? (
+                  <span className="text-warn">yes</span>
+                ) : (
+                  'no'
+                )}
+              </td>
+              <td className="numeric px-2.5 py-1.5">
+                {report.diskUsedPercent === null ? '—' : `${report.diskUsedPercent}%`}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function applyEvent(
+  event: FleetEvent,
+  setHosts: React.Dispatch<React.SetStateAction<HostView[]>>,
+  setFinished: React.Dispatch<React.SetStateAction<{ succeeded: number; failed: number; skipped: number } | null>>,
+  setError: (message: string) => void,
+): void {
+  if (event.type === 'run-error') {
+    setError(event.message)
+    setFinished({ succeeded: 0, failed: 0, skipped: 0 })
+    return
+  }
+  if (event.type === 'run-exit') {
+    setFinished({ succeeded: event.succeeded, failed: event.failed, skipped: event.skipped })
+    return
+  }
+  setHosts((current) => foldHosts(current, event))
+}
