@@ -13,7 +13,7 @@
  * tree rather than a half-bumped one you have to unpick.
  */
 import { execFileSync } from 'node:child_process'
-import { readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 
 const root = resolve(import.meta.dirname, '..')
@@ -27,6 +27,7 @@ const MANIFESTS = [
   'packages/schemas/package.json',
   'packages/rsync-core/package.json',
   'packages/ssh-core/package.json',
+  'packages/fleet-core/package.json',
   'packages/database/package.json',
 ]
 const TAG_SOURCE = 'apps/cli/package.json'
@@ -105,6 +106,35 @@ const newest = tags
 if (newest && compare(next, newest) <= 0) {
   console.error(`${next} does not sort above the newest release (${newest}).`)
   console.error('Publishing backwards drags "latest" onto an older build, which cannot be undone.')
+  process.exit(1)
+}
+
+/**
+ * Every workspace package has to be listed in MANIFESTS above.
+ *
+ * A list kept in step by hand drifts the first time someone adds a package,
+ * and silently: `packages/fleet-core` was added and missed, and would have
+ * sat at an old version release after release with nothing failing, because
+ * the drift check below only looks at what is already listed. Discovering the
+ * real set and comparing is what turns that into a refusal.
+ */
+function workspaceManifests() {
+  const found = []
+  for (const group of ['apps', 'packages']) {
+    for (const entry of readdirSync(join(root, group), { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue
+      const relative = `${group}/${entry.name}/package.json`
+      if (existsSync(join(root, relative))) found.push(relative)
+    }
+  }
+  return found
+}
+
+const unlisted = workspaceManifests().filter((relative) => !MANIFESTS.includes(relative))
+if (unlisted.length > 0) {
+  console.error('these workspace packages are not listed in MANIFESTS in scripts/release.mjs:')
+  for (const relative of unlisted) console.error(`  ${relative}`)
+  console.error('\nAdd them, or the release leaves them behind at an old version.')
   process.exit(1)
 }
 
