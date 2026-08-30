@@ -2,6 +2,7 @@ import type { Metadata } from 'next'
 import { Footer, Header } from '@/components/chrome'
 import { SITE } from '@/lib/site'
 import './globals.css'
+import Script from "next/script";
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE.url),
@@ -80,6 +81,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <Header />
         <main className="flex-1">{children}</main>
         <Footer />
+              <Script data-site="4f356371-83a0-4cb2-b570-75b961e6ddcb" src="https://crawlproof.com/stats.js" strategy="afterInteractive" />
       </body>
     </html>
   )
