@@ -19,6 +19,9 @@ diskpush ./data/ prod:/data/ -- --checksum # your own rsync flags
 - **Skips unchanged files.** Re-running a job moves almost nothing.
 - **Never deletes** destination-only files unless you explicitly enable Mirror,
   and Mirror always shows you the delete list first.
+- **One command, many servers.** Package upgrades, a health sweep, or a script
+  you already have — run across a whole tagged fleet, each server reported
+  separately.
 - **No cloud account, no relay.** For a server-to-server job the payload moves
   directly between the two servers; DiskPush only orchestrates.
 
@@ -89,6 +92,15 @@ diskpush ./dist/ production:/srv/app/ --dry-run
 
 # Do it
 diskpush ./dist/ production:/srv/app/
+
+# Ask every production server what it needs
+diskpush fleet check --on tag:production
+
+# Install it
+diskpush fleet upgrade --on tag:production --sudo
+
+# Or run anything, anywhere
+diskpush fleet run "systemctl reload nginx" --on 'web-*' --sudo
 ```
 
 ## Safety
@@ -123,6 +135,7 @@ to make that flag hard to trigger by accident.
 | [docs/direct-server-to-server.md](docs/direct-server-to-server.md) | How the no-relay guarantee is implemented |
 | [docs/file-browser.md](docs/file-browser.md) | Why browsing is SFTP and transfers are rsync |
 | [docs/profiles.md](docs/profiles.md) | Saved, repeatable directory pairs |
+| [docs/fleet.md](docs/fleet.md) | Running one command, or an upgrade, across many servers |
 | [docs/security.md](docs/security.md) | Threat model and the decisions that follow from it |
 | [docs/architecture.md](docs/architecture.md) | Packages, processes and boundaries |
 | [docs/troubleshooting.md](docs/troubleshooting.md) | What the errors mean |
@@ -137,6 +150,7 @@ apps/web            diskpush.com
 packages/schemas    typed option model shared by every surface
 packages/rsync-core the transfer engine, with no Electron in it
 packages/ssh-core   SSH sessions, SFTP browsing, host keys, preflight
+packages/fleet-core one command across many servers, with no Electron in it
 packages/database   the local store shared by desktop and CLI
 ```
 

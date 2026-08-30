@@ -4,9 +4,15 @@ import { randomUUID } from 'node:crypto'
 import { createClient, type Client, type InValue } from '@libsql/client'
 import {
   ConnectionSchema,
+  FleetCommandSchema,
+  FleetHostResultSchema,
+  FleetRunSchema,
   SyncProfileSchema,
   TransferJobSchema,
   type Connection,
+  type FleetCommand,
+  type FleetHostResult,
+  type FleetRun,
   type JobState,
   type SyncProfile,
   type TransferJob,
@@ -280,6 +286,183 @@ export class DiskPushStore {
     })
   }
 
+  // --- fleet commands ------------------------------------------------------
+
+  /**
+   * Saved commands, with the built-in recipes merged in.
+   *
+   * Built-ins are supplied by the caller rather than seeded into the table:
+   * seeding them would mean an upgrade of DiskPush either leaves stale copies
+   * behind or overwrites a command someone edited.
+   */
+  async listFleetCommands(builtins: readonly FleetCommand[] = []): Promise<FleetCommand[]> {
+    const result = await this.client.execute('SELECT * FROM fleet_commands ORDER BY name')
+    const saved = result.rows.map(rowToFleetCommand)
+    const savedNames = new Set(saved.map((command) => command.name))
+    const available = builtins.filter((builtin) => !savedNames.has(builtin.name))
+    return [...saved, ...available].sort((a, b) => a.name.localeCompare(b.name))
+  }
+
+  async findFleetCommand(nameOrId: string, builtins: readonly FleetCommand[] = []): Promise<FleetCommand | null> {
+    const result = await this.client.execute({
+      sql: 'SELECT * FROM fleet_commands WHERE name = ? OR id = ? LIMIT 1',
+      args: [nameOrId, nameOrId],
+    })
+    const row = result.rows[0]
+    if (row) return rowToFleetCommand(row)
+    // A saved command shadows a built-in of the same name, which is how you
+    // override one: copy it, edit it, keep the name.
+    return builtins.find((builtin) => builtin.name === nameOrId || builtin.id === nameOrId) ?? null
+  }
+
+  async saveFleetCommand(
+    input: Omit<FleetCommand, 'id' | 'createdAt' | 'updatedAt' | 'builtin'> & { id?: string },
+  ): Promise<FleetCommand> {
+    const now = new Date().toISOString()
+    const existing = input.id ? await this.findFleetCommand(input.id) : await this.findFleetCommand(input.name)
+    const command = FleetCommandSchema.parse({
+      ...input,
+      builtin: false,
+      id: existing?.id ?? input.id ?? randomUUID(),
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+    })
+
+    await this.client.execute({
+      sql: `INSERT INTO fleet_commands (
+              id, name, description, script, interpreter, sudo, working_directory,
+              timeout_seconds, targets, tags, created_at, updated_at
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(id) DO UPDATE SET
+              name=excluded.name, description=excluded.description, script=excluded.script,
+              interpreter=excluded.interpreter, sudo=excluded.sudo,
+              working_directory=excluded.working_directory, timeout_seconds=excluded.timeout_seconds,
+              targets=excluded.targets, tags=excluded.tags, updated_at=excluded.updated_at`,
+      args: [
+        command.id,
+        command.name,
+        command.description,
+        command.script,
+        command.interpreter,
+        command.sudo ? 1 : 0,
+        command.workingDirectory,
+        command.timeoutSeconds,
+        JSON.stringify(command.targets),
+        JSON.stringify(command.tags),
+        command.createdAt,
+        command.updatedAt,
+      ],
+    })
+    return command
+  }
+
+  async deleteFleetCommand(nameOrId: string): Promise<boolean> {
+    const result = await this.client.execute({
+      sql: 'DELETE FROM fleet_commands WHERE name = ? OR id = ?',
+      args: [nameOrId, nameOrId],
+    })
+    return result.rowsAffected > 0
+  }
+
+  // --- fleet runs ----------------------------------------------------------
+
+  async createFleetRun(run: Omit<FleetRun, 'createdAt'> & { createdAt?: string }): Promise<FleetRun> {
+    const parsed = FleetRunSchema.parse({ ...run, createdAt: run.createdAt ?? new Date().toISOString() })
+    await this.client.execute({
+      sql: `INSERT INTO fleet_runs (
+              id, command_id, label, script, interpreter, sudo, working_directory,
+              timeout_seconds, concurrency, on_failure, target_selector, state,
+              hosts_total, hosts_succeeded, hosts_failed, created_at, completed_at
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      args: [
+        parsed.id,
+        parsed.commandId,
+        parsed.label,
+        parsed.script,
+        parsed.interpreter,
+        parsed.sudo ? 1 : 0,
+        parsed.workingDirectory,
+        parsed.timeoutSeconds,
+        parsed.concurrency,
+        parsed.onFailure,
+        JSON.stringify(parsed.targetSelector),
+        parsed.state,
+        parsed.hostsTotal,
+        parsed.hostsSucceeded,
+        parsed.hostsFailed,
+        parsed.createdAt,
+        parsed.completedAt,
+      ],
+    })
+    return parsed
+  }
+
+  async completeFleetRun(
+    id: string,
+    patch: Pick<FleetRun, 'state' | 'hostsSucceeded' | 'hostsFailed'> & { completedAt?: string },
+  ): Promise<void> {
+    await this.client.execute({
+      sql: `UPDATE fleet_runs SET state = ?, hosts_succeeded = ?, hosts_failed = ?, completed_at = ? WHERE id = ?`,
+      args: [patch.state, patch.hostsSucceeded, patch.hostsFailed, patch.completedAt ?? new Date().toISOString(), id],
+    })
+  }
+
+  /** Upserted per host as each finishes, so a run interrupted halfway still has its results. */
+  async saveFleetHostResult(result: FleetHostResult): Promise<void> {
+    const parsed = FleetHostResultSchema.parse(result)
+    await this.client.execute({
+      sql: `INSERT INTO fleet_run_hosts (
+              run_id, connection_id, connection_name, host, state, exit_code,
+              stdout, stderr, error_summary, started_at, completed_at, duration_ms
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(run_id, connection_id) DO UPDATE SET
+              connection_name=excluded.connection_name, host=excluded.host, state=excluded.state,
+              exit_code=excluded.exit_code, stdout=excluded.stdout, stderr=excluded.stderr,
+              error_summary=excluded.error_summary, started_at=excluded.started_at,
+              completed_at=excluded.completed_at, duration_ms=excluded.duration_ms`,
+      args: [
+        parsed.runId,
+        parsed.connectionId,
+        parsed.connectionName,
+        parsed.host,
+        parsed.state,
+        parsed.exitCode,
+        parsed.stdout,
+        parsed.stderr,
+        parsed.errorSummary,
+        parsed.startedAt,
+        parsed.completedAt,
+        parsed.durationMs,
+      ],
+    })
+  }
+
+  async listFleetRuns(limit = 25): Promise<FleetRun[]> {
+    const result = await this.client.execute({
+      sql: 'SELECT * FROM fleet_runs ORDER BY created_at DESC LIMIT ?',
+      args: [limit],
+    })
+    return result.rows.map(rowToFleetRun)
+  }
+
+  /** Prefix matching on the id, so a run can be named by the short form a summary prints. */
+  async findFleetRun(id: string): Promise<FleetRun | null> {
+    const result = await this.client.execute({
+      sql: 'SELECT * FROM fleet_runs WHERE id = ? OR id LIKE ? ORDER BY created_at DESC LIMIT 1',
+      args: [id, `${id}%`],
+    })
+    const row = result.rows[0]
+    return row ? rowToFleetRun(row) : null
+  }
+
+  async listFleetRunHosts(runId: string): Promise<FleetHostResult[]> {
+    const result = await this.client.execute({
+      sql: 'SELECT * FROM fleet_run_hosts WHERE run_id = ? ORDER BY connection_name',
+      args: [runId],
+    })
+    return result.rows.map(rowToFleetHostResult)
+  }
+
   // --- settings ------------------------------------------------------------
 
   async getSetting<T>(key: string, fallback: T): Promise<T> {
@@ -338,6 +521,63 @@ function rowToProfile(row: Row): SyncProfile {
     notifyOnFailure: Number(row.notify_on_failure) === 1,
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
+  })
+}
+
+function rowToFleetCommand(row: Row): FleetCommand {
+  return FleetCommandSchema.parse({
+    id: String(row.id),
+    name: String(row.name),
+    description: String(row.description),
+    script: String(row.script),
+    interpreter: String(row.interpreter),
+    sudo: Number(row.sudo) === 1,
+    workingDirectory: row.working_directory === null ? null : String(row.working_directory),
+    timeoutSeconds: Number(row.timeout_seconds),
+    targets: JSON.parse(String(row.targets)),
+    tags: JSON.parse(String(row.tags)),
+    builtin: false,
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at),
+  })
+}
+
+function rowToFleetRun(row: Row): FleetRun {
+  return FleetRunSchema.parse({
+    id: String(row.id),
+    commandId: row.command_id === null ? null : String(row.command_id),
+    label: String(row.label),
+    script: String(row.script),
+    interpreter: String(row.interpreter),
+    sudo: Number(row.sudo) === 1,
+    workingDirectory: row.working_directory === null ? null : String(row.working_directory),
+    timeoutSeconds: Number(row.timeout_seconds),
+    concurrency: Number(row.concurrency),
+    onFailure: String(row.on_failure),
+    targetSelector: JSON.parse(String(row.target_selector)),
+    state: String(row.state),
+    hostsTotal: Number(row.hosts_total),
+    hostsSucceeded: Number(row.hosts_succeeded),
+    hostsFailed: Number(row.hosts_failed),
+    createdAt: String(row.created_at),
+    completedAt: row.completed_at === null ? null : String(row.completed_at),
+  })
+}
+
+function rowToFleetHostResult(row: Row): FleetHostResult {
+  return FleetHostResultSchema.parse({
+    runId: String(row.run_id),
+    connectionId: String(row.connection_id),
+    connectionName: String(row.connection_name),
+    host: String(row.host),
+    state: String(row.state),
+    exitCode: row.exit_code === null ? null : Number(row.exit_code),
+    stdout: String(row.stdout),
+    stderr: String(row.stderr),
+    errorSummary: row.error_summary === null ? null : String(row.error_summary),
+    startedAt: row.started_at === null ? null : String(row.started_at),
+    completedAt: row.completed_at === null ? null : String(row.completed_at),
+    durationMs: row.duration_ms === null ? null : Number(row.duration_ms),
   })
 }
 

@@ -9,6 +9,7 @@ import { contentSecurityPolicy, inlineScriptHashes } from './csp.js'
 import { registerIpc } from './ipc.js'
 import { checkForUpdates } from './services/updater.js'
 import { closeAllSessions } from './services/sessions.js'
+import { cancelAllFleetRuns, hasActiveFleetRun } from './services/fleet.js'
 import { cancelAll, hasActiveTransfer } from './services/transfers.js'
 
 // ESM has no __dirname. import.meta.dirname exists in Electron 33's Node 20.18,
@@ -164,7 +165,10 @@ app.whenReady().then(() => {
   createWindow()
 
   // Not awaited: a slow or unreachable GitHub must not delay the window.
-  void checkForUpdates(hasActiveTransfer)
+  // A fleet upgrade counts as busy too: restarting the app under an
+  // `apt upgrade` running on eight servers would drop every live connection
+  // mid-transaction.
+  void checkForUpdates(() => hasActiveTransfer() || hasActiveFleetRun())
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
@@ -179,5 +183,6 @@ app.on('before-quit', () => {
   // Stopping with SIGINT leaves rsync's partial files intact, so anything in
   // flight is resumable rather than lost.
   cancelAll()
+  cancelAllFleetRuns()
   closeAllSessions()
 })

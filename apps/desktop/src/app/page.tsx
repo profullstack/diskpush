@@ -9,11 +9,13 @@ import {
   FileDown,
   MonitorOff,
   Plus,
+  Server,
   Settings,
   Users,
   X,
 } from 'lucide-react'
 import { ConnectionDialog } from '@/components/connection-dialog'
+import { FleetDialog } from '@/components/fleet-dialog'
 import { endpointLabel, loadPane, Pane, type PaneEndpoint, type PaneState } from '@/components/pane'
 import { TransferRail } from '@/components/transfer-rail'
 import { MirrorPreviewDialog, TransferBand, type ActiveJob } from '@/components/transfer-panel'
@@ -60,6 +62,7 @@ export default function Workspace() {
   const [job, setJob] = useState<ActiveJob | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [showConnection, setShowConnection] = useState(false)
+  const [showFleet, setShowFleet] = useState(false)
   const [outsideShell, setOutsideShell] = useState(false)
 
   const refreshConnections = useCallback(async () => {
@@ -276,6 +279,19 @@ export default function Workspace() {
           )}
         </div>
         <div className="ml-auto flex items-center gap-2">
+          {/*
+            Fleet sits beside "New server" rather than inside the menu: it is
+            the other half of what this app does with a list of servers, and
+            a feature nobody can find is a feature nobody has.
+          */}
+          <Button
+            variant="outline"
+            onClick={() => setShowFleet(true)}
+            className="h-[var(--control)] gap-2 border-line-strong text-[12px]"
+          >
+            <Server className="size-3.5" />
+            Fleet
+          </Button>
           <Button
             variant="outline"
             onClick={() => setShowConnection(true)}
@@ -415,6 +431,8 @@ export default function Workspace() {
           {rsyncFlags}
         </span>
       </footer>
+
+      <FleetDialog open={showFleet} onClose={() => setShowFleet(false)} />
 
       <ConnectionDialog open={showConnection} onClose={() => setShowConnection(false)} onSaved={() => void refreshConnections()} />
 

@@ -110,6 +110,47 @@ diskpush profiles remove NAME
 Profiles and connections live in the same local database as the desktop app.
 Something saved in one is immediately usable from the other.
 
+### Fleet
+
+One command across many servers. See [fleet.md](fleet.md) for the whole story.
+
+```bash
+diskpush fleet servers [--on SELECTOR]         # what --on can select
+diskpush fleet check --on SELECTOR             # pending updates, reboot, disk
+diskpush fleet upgrade --on SELECTOR --sudo    # install them
+diskpush fleet run "COMMAND" --on SELECTOR
+diskpush fleet run --command NAME --on SELECTOR
+diskpush fleet script FILE --on SELECTOR
+diskpush fleet commands [list|show|save|copy|remove]
+diskpush fleet runs [--limit N]
+diskpush fleet show RUN-ID [--all]
+```
+
+`--on` takes names, globs, `tag:NAME`, `host:GLOB`, `all`, and `!TERM` to
+exclude. Terms may be repeated or comma-separated. A term that matches nothing
+is an error rather than a smaller fleet.
+
+| Option | Effect |
+| --- | --- |
+| `--on SELECTOR` | Which servers. Repeatable. |
+| `--concurrency N` | How many at once. Default 4. |
+| `--sudo` | Run through `sudo -n`, which fails rather than hangs on a password prompt. |
+| `--sudo-password` | Ask once, without echo, and feed it to `sudo -S`. Never stored. |
+| `--timeout SECONDS` | Per-server deadline. Default 900; 3600 for `upgrade`. |
+| `--stop-on-error` | Stop queuing further servers after one fails. |
+| `--no-fail-fast` | Do not run the script under `sh -e`. |
+| `--accept-new` | Trust an unknown host key instead of failing on it. |
+| `--interpreter NAME` | `sh`, `bash`, or `raw` for a single command line. |
+| `--cwd PATH` | `cd` here on the server first. |
+| `--env KEY=VALUE` | Set an environment variable. Repeatable. |
+| `--print-command` | Print the script and exit. Nothing else is written to stdout. |
+| `--reboot[=always]` | `upgrade` only. Reboot the hosts that need one, or all of them. |
+| `--no-sudo` | `upgrade` only, for a fleet you already connect to as root. |
+| `--pending` | `check` only. Hide the servers with nothing to do. |
+
+Ctrl+C stops a run: servers already running are signalled, the rest are
+cancelled, and every result collected so far is still recorded.
+
 ### Jobs
 
 ```bash
@@ -212,6 +253,11 @@ raw arguments after --
 | `66` | DiskPush declined: unconfirmed mirror, or a blocked pass-through argument. |
 | `69` | Precondition failed: rsync missing, host unreachable. |
 | `70` | Internal error. |
+| `71` | A fleet run did not succeed on every server. |
+
+`71` is deliberately one code rather than the failing host's own status:
+across twelve servers there may be several, and picking one to pass through
+would mean inventing a winner. `--json` carries every host's real exit code.
 
 Codes 24 (some source files vanished) and 0 are both treated as success. Codes
 10, 11, 12, 20, 23, 30 and 35 are reported as **resumable**: the job stopped,

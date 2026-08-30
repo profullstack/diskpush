@@ -83,4 +83,69 @@ export const MIGRATIONS: Migration[] = [
       `CREATE INDEX IF NOT EXISTS idx_events_job ON transfer_events(job_id, id)`,
     ],
   },
+  {
+    name: '002-fleet',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS fleet_commands (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        description TEXT NOT NULL DEFAULT '',
+        script TEXT NOT NULL,
+        interpreter TEXT NOT NULL DEFAULT 'sh',
+        sudo INTEGER NOT NULL DEFAULT 0,
+        working_directory TEXT,
+        timeout_seconds INTEGER NOT NULL DEFAULT 900,
+        targets TEXT NOT NULL DEFAULT '[]',
+        tags TEXT NOT NULL DEFAULT '[]',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )`,
+      /*
+       * A run records the script it ran, not just a reference to the command
+       * it came from: editing a saved command must not silently rewrite the
+       * history of what was executed on production last Tuesday.
+       */
+      `CREATE TABLE IF NOT EXISTS fleet_runs (
+        id TEXT PRIMARY KEY,
+        command_id TEXT REFERENCES fleet_commands(id) ON DELETE SET NULL,
+        label TEXT NOT NULL,
+        script TEXT NOT NULL,
+        interpreter TEXT NOT NULL DEFAULT 'sh',
+        sudo INTEGER NOT NULL DEFAULT 0,
+        working_directory TEXT,
+        timeout_seconds INTEGER NOT NULL DEFAULT 900,
+        concurrency INTEGER NOT NULL DEFAULT 4,
+        on_failure TEXT NOT NULL DEFAULT 'continue',
+        target_selector TEXT NOT NULL DEFAULT '[]',
+        state TEXT NOT NULL DEFAULT 'running',
+        hosts_total INTEGER NOT NULL DEFAULT 0,
+        hosts_succeeded INTEGER NOT NULL DEFAULT 0,
+        hosts_failed INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        completed_at TEXT
+      )`,
+      /*
+       * connection_name and host are denormalised copies. A run has to stay
+       * readable after the connection it names is renamed or deleted, and a
+       * post-mortem that says "the host that used to be id 7f3a" is not one.
+       */
+      `CREATE TABLE IF NOT EXISTS fleet_run_hosts (
+        run_id TEXT NOT NULL REFERENCES fleet_runs(id) ON DELETE CASCADE,
+        connection_id TEXT NOT NULL,
+        connection_name TEXT NOT NULL,
+        host TEXT NOT NULL,
+        state TEXT NOT NULL DEFAULT 'pending',
+        exit_code INTEGER,
+        stdout TEXT NOT NULL DEFAULT '',
+        stderr TEXT NOT NULL DEFAULT '',
+        error_summary TEXT,
+        started_at TEXT,
+        completed_at TEXT,
+        duration_ms INTEGER,
+        PRIMARY KEY (run_id, connection_id)
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_fleet_runs_created ON fleet_runs(created_at DESC)`,
+      `CREATE INDEX IF NOT EXISTS idx_fleet_run_hosts_state ON fleet_run_hosts(run_id, state)`,
+    ],
+  },
 ]

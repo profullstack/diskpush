@@ -83,6 +83,28 @@ DiskPush gates on the version:
 - `--remove-source-files` is refused. DiskPush copies; it does not move.
 - Unattended mirroring is possible, per profile, and off by default.
 
+For fleet commands, which reach many servers at once:
+
+- A script matching a known way to lose a machine (recursive deletes of `/`,
+  `mkfs`, raw block-device writes, power commands, changes to SSH or the
+  firewall, permission resets from the root down, account deletion, fork
+  bombs, piping a URL into a shell, `DROP DATABASE`) is refused until it is
+  confirmed. This is a tripwire against the accident, not a sandbox against an
+  adversary; a shell is Turing-complete and it can be written around.
+- In the desktop app that check runs in the **main process**, so a renderer
+  that skipped the confirmation dialog cannot skip the check with it.
+- Script text is never interpolated into a command line. It reaches the remote
+  interpreter on stdin, and the command line only names the interpreter, so a
+  quote or a backtick in a script cannot become a different command.
+- A selector term matching no server is an error rather than a smaller fleet:
+  a typo must not silently reduce which machines got a security update.
+- Unknown host keys fail during a fan-out rather than prompting, unless
+  `--accept-new` is passed for that run. A *changed* key is never accepted.
+- `--sudo` uses `sudo -n`, which fails rather than hanging on an invisible
+  prompt. A sudo password, where one is used, lives in memory for the length
+  of the run: never a column, never a log line, and never on the command line
+  where `ps` on the server would show it.
+
 ## Agent forwarding
 
 Off by default, opt-in per connection.

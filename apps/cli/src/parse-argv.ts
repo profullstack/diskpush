@@ -48,6 +48,20 @@ export const VALUE_FLAGS = new Set([
   '--key',
   '--path',
   '--jump',
+  // fleet
+  '--on',
+  '--concurrency',
+  '--command',
+  '--script',
+  '--interpreter',
+  '--cwd',
+  '--env',
+  '--description',
+  '--tag',
+  '--as',
+  // `--reboot` is deliberately absent, for the same reason `--compress` is:
+  // its value is optional, so `--reboot --on web-01` must not read `--on` as
+  // the reboot policy. `--reboot=always` uses the attached form.
 ])
 
 /** Single-letter aliases. */
@@ -84,6 +98,7 @@ const KNOWN_COMMANDS = new Set([
   'doctor',
   'desktop',
   'tui',
+  'fleet',
   'help',
   'version',
 ])

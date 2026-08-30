@@ -38,10 +38,21 @@ export const IPC = {
   profilesSave: 'profiles:save',
   profilesRemove: 'profiles:remove',
 
+  fleetServers: 'fleet:servers',
+  fleetCommands: 'fleet:commands',
+  fleetPreview: 'fleet:preview',
+  fleetStart: 'fleet:start',
+  fleetCancel: 'fleet:cancel',
+  fleetCheck: 'fleet:check',
+  fleetRuns: 'fleet:runs',
+  fleetRunDetail: 'fleet:run-detail',
+
   shellOpenExternal: 'shell:open-external',
 
   /** Main -> renderer, one channel carrying every job event. */
   eventTransfer: 'event:transfer',
+  /** Main -> renderer, one channel carrying every fleet event. */
+  eventFleet: 'event:fleet',
 } as const
 
 /** A path the renderer asked for. Length-capped, and never joined by the renderer. */
@@ -169,6 +180,54 @@ export const DeleteEntryRequestSchema = z.object({
   name: EntryNameSchema,
   isDirectory: z.boolean(),
 })
+
+/**
+ * A fleet request.
+ *
+ * The renderer names connections by id and supplies script text; it does not
+ * assemble a command line, choose an interpreter binary, or supply a remote
+ * shell. The main process turns those into an invocation — the same one the
+ * CLI builds — so a compromised renderer's worst case is a script running
+ * where the user already has a shell, not a command line of its own design.
+ */
+export const FleetRequestSchema = z.object({
+  connectionIds: z.array(ConnectionIdSchema).min(1).max(500),
+  script: z.string().min(1).max(256 * 1024),
+  interpreter: z.enum(['sh', 'bash', 'raw']).default('sh'),
+  sudo: z.boolean().default(false),
+  /**
+   * Held in memory for one run and written to `sudo -S` on stdin.
+   *
+   * Never stored, never logged, and never echoed back to the renderer. The
+   * cap is here so a renderer cannot use this field to push megabytes through
+   * the boundary.
+   */
+  sudoPassword: z.string().max(1024).optional(),
+  workingDirectory: PathSchema.nullable().default(null),
+  timeoutSeconds: z.number().int().min(1).max(86400).default(900),
+  concurrency: z.number().int().min(1).max(64).default(4),
+  onFailure: z.enum(['continue', 'stop']).default('continue'),
+  /**
+   * The user saw the hazard list and chose to continue.
+   *
+   * Checked again in the main process rather than trusted from the dialog:
+   * `false` here means a script matching a destructive pattern is refused,
+   * whatever the renderer believes it showed.
+   */
+  hazardsConfirmed: z.boolean().default(false),
+  /** A saved command this came from, recorded with the run. */
+  commandId: z.string().min(1).max(128).nullable().default(null),
+  label: z.string().min(1).max(200),
+})
+export type FleetRequest = z.infer<typeof FleetRequestSchema>
+
+export const FleetCheckRequestSchema = z.object({
+  connectionIds: z.array(ConnectionIdSchema).min(1).max(500),
+  concurrency: z.number().int().min(1).max(64).default(4),
+  timeoutSeconds: z.number().int().min(1).max(3600).default(180),
+})
+
+export const FleetRunIdSchema = z.string().min(1).max(128)
 
 /** Only http(s) may be handed to the system browser. */
 export const ExternalUrlSchema = z.string().url().refine((value) => /^https?:\/\//i.test(value), {

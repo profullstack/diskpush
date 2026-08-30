@@ -31,6 +31,14 @@ COMMANDS
   desktop                 launch the desktop app
   tui [SRC] [DST]         the two-pane browser, in this terminal
 
+  fleet run "CMD"         run one command on every selected server
+  fleet script FILE       run a local script file on every selected server
+  fleet upgrade           install pending package updates, per host
+  fleet check             what each server needs: updates, reboot, disk
+  fleet servers           what --on can select, with tags
+  fleet commands          saved commands and built-in recipes
+  fleet runs / show ID    fleet history, and one run's full output
+
   ls [ENDPOINT]           list a local or remote directory over SFTP
   connections             list saved connections
   connections add NAME [user@]host
@@ -78,6 +86,30 @@ OPTIONS
       --progress          rsync's own per-file progress instead of the
                           aggregate line DiskPush draws
       --stats             include rsync's transfer statistics
+FLEET OPTIONS
+      --on SELECTOR       which servers (repeatable, or comma-separated):
+                            all              every server DiskPush knows
+                            web-01           one, by name
+                            web-*            a glob over names
+                            tag:production   every server with that tag
+                            host:10.0.0.*    a glob over hostnames
+                            !web-03          remove one from the set
+      --concurrency N     how many servers at once (default 4)
+      --sudo              run through \`sudo -n\`, which fails rather than
+                          hangs when a password is wanted
+      --sudo-password     ask for a sudo password once, use it everywhere;
+                          never written to disk
+      --timeout SECONDS   per-server deadline (default 900, upgrade 3600)
+      --stop-on-error     do not start further servers after one fails
+      --accept-new        trust an unknown host key instead of failing
+      --interpreter NAME  sh | bash | raw
+      --cwd PATH          cd here on the server first
+      --env KEY=VALUE     set an environment variable (repeatable)
+      --print-command     print the script and exit
+      --reboot[=always]   upgrade only: reboot hosts that need one, or all
+      --no-sudo           upgrade only: you already connect as root
+      --pending           check only: hide servers with nothing to do
+
   -y, --yes               confirm a mirror's deletions without prompting
       --non-interactive   never prompt; fail instead
       --json              machine-readable result on stdout
@@ -94,6 +126,7 @@ EXIT CODES
   66                      DiskPush declined (unconfirmed mirror, blocked argument)
   69                      precondition failed (rsync missing, host unreachable)
   70                      internal error
+  71                      a fleet run did not succeed on every server
 
 EXAMPLES
   diskpush ./dist/ production:/srv/app/
@@ -101,4 +134,9 @@ EXAMPLES
   diskpush media-01:/srv/media/ backup-02:/data/media/
   diskpush mirror ./site/ prod:/var/www/site/ --exclude-preset node
   diskpush sync ./data/ prod:/data/ -- -aHAX --checksum
+
+  diskpush fleet check --on tag:production
+  diskpush fleet upgrade --on tag:production --sudo --concurrency 2
+  diskpush fleet run "systemctl reload nginx" --on web-* --sudo
+  diskpush fleet script ./rotate-keys.sh --on all '!db-01'
 `

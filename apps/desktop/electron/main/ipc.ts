@@ -9,6 +9,9 @@ import {
   CreateEntryRequestSchema,
   DeleteEntryRequestSchema,
   ExternalUrlSchema,
+  FleetCheckRequestSchema,
+  FleetRequestSchema,
+  FleetRunIdSchema,
   IPC,
   JobIdSchema,
   PathSchema,
@@ -18,6 +21,15 @@ import {
   type IpcResult,
 } from '../shared/contract.js'
 import { requireConnection } from './services/connections.js'
+import {
+  cancelFleet,
+  checkFleetServers,
+  fleetCommands,
+  fleetRunDetail,
+  fleetServers,
+  previewFleet,
+  startFleet,
+} from './services/fleet.js'
 import { browserFor, dropSession, sessionFor } from './services/sessions.js'
 import { store } from './services/store.js'
 import { cancelTransfer, previewTransfer, startTransfer } from './services/transfers.js'
@@ -292,6 +304,26 @@ export function registerIpc(): void {
   handle(IPC.profilesList, z.undefined(), async () => (await store()).listProfiles())
 
   handle(IPC.profilesRemove, z.object({ id: z.string().min(1) }), async ({ id }) => (await store()).deleteProfile(id))
+
+  // --- fleet ---------------------------------------------------------------
+
+  handle(IPC.fleetServers, z.undefined(), async () => fleetServers())
+
+  handle(IPC.fleetCommands, z.undefined(), async () => fleetCommands())
+
+  handle(IPC.fleetPreview, FleetRequestSchema, async (request) => previewFleet(request))
+
+  handle(IPC.fleetStart, FleetRequestSchema, async (request, event) => startFleet(request, event.sender))
+
+  handle(IPC.fleetCancel, z.object({ runId: FleetRunIdSchema }), async ({ runId }) => cancelFleet(runId))
+
+  handle(IPC.fleetCheck, FleetCheckRequestSchema, async (input) => checkFleetServers(input))
+
+  handle(IPC.fleetRuns, z.object({ limit: z.number().int().min(1).max(200).default(25) }), async ({ limit }) =>
+    (await store()).listFleetRuns(limit),
+  )
+
+  handle(IPC.fleetRunDetail, z.object({ runId: FleetRunIdSchema }), async ({ runId }) => fleetRunDetail(runId))
 
   // --- shell ---------------------------------------------------------------
 

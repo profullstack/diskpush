@@ -31,6 +31,8 @@ export type Connection = {
   authType: string
   defaultRemotePath: string | null
   defaultLocalPath: string | null
+  /** Optional because the two-pane view predates them and never asked for them. */
+  tags?: string[]
 }
 
 export type Change = {
@@ -67,6 +69,95 @@ export type TransferEvent =
   | { type: 'stderr' | 'stdout'; line: string }
   | { type: 'exit'; code: number; resumable: boolean; message: string }
 
+export type FleetHostState =
+  | 'pending'
+  | 'connecting'
+  | 'running'
+  | 'succeeded'
+  | 'failed'
+  | 'unreachable'
+  | 'timeout'
+  | 'cancelled'
+  | 'skipped'
+
+export type FleetHostResult = {
+  runId: string
+  connectionId: string
+  connectionName: string
+  host: string
+  state: FleetHostState
+  exitCode: number | null
+  stdout: string
+  stderr: string
+  errorSummary: string | null
+  startedAt: string | null
+  completedAt: string | null
+  durationMs: number | null
+}
+
+export type FleetCommand = {
+  id: string
+  name: string
+  description: string
+  script: string
+  interpreter: 'sh' | 'bash' | 'raw'
+  sudo: boolean
+  workingDirectory: string | null
+  timeoutSeconds: number
+  targets: string[]
+  tags: string[]
+  builtin: boolean
+}
+
+export type Hazard = { kind: string; explanation: string; line: string; lineNumber: number }
+
+export type FleetPreview = {
+  servers: { id: string; name: string; host: string }[]
+  hazards: Hazard[]
+  command: string
+}
+
+export type HostUpdateReport = {
+  connectionId: string
+  connectionName: string
+  host: string
+  reachable: boolean
+  packageManager: string
+  os: string | null
+  kernel: string | null
+  uptimeSeconds: number | null
+  updates: number | null
+  securityUpdates: number | null
+  rebootRequired: boolean | null
+  diskUsedPercent: number | null
+  error: string | null
+}
+
+export type FleetEvent =
+  | { type: 'run-start'; runId: string; hosts: { connectionId: string }[]; command: string }
+  | { type: 'host-start'; connectionId: string }
+  | { type: 'host-stdout'; connectionId: string; line: string }
+  | { type: 'host-stderr'; connectionId: string; line: string }
+  | { type: 'host-exit'; connectionId: string; result: FleetHostResult }
+  | { type: 'run-exit'; runId: string; state: string; succeeded: number; failed: number; skipped: number }
+  /** Only the main process emits this: the run never got as far as a host. */
+  | { type: 'run-error'; message: string }
+
+export type FleetRequest = {
+  connectionIds: string[]
+  script: string
+  interpreter: 'sh' | 'bash' | 'raw'
+  sudo: boolean
+  sudoPassword?: string
+  workingDirectory: string | null
+  timeoutSeconds: number
+  concurrency: number
+  onFailure: 'continue' | 'stop'
+  hazardsConfirmed: boolean
+  commandId: string | null
+  label: string
+}
+
 type Api = {
   connections: {
     list(): Promise<IpcResult<Connection[]>>
@@ -97,8 +188,21 @@ type Api = {
     list(limit?: number): Promise<IpcResult<unknown[]>>
   }
   profiles: { list(): Promise<IpcResult<unknown[]>>; remove(id: string): Promise<IpcResult<boolean>> }
+  fleet: {
+    servers(): Promise<IpcResult<Connection[]>>
+    commands(): Promise<IpcResult<FleetCommand[]>>
+    preview(request: FleetRequest): Promise<IpcResult<FleetPreview>>
+    start(request: FleetRequest): Promise<IpcResult<{ runId: string; hosts: { connectionId: string }[] }>>
+    cancel(runId: string): Promise<IpcResult<boolean>>
+    check(connectionIds: string[], concurrency?: number, timeoutSeconds?: number): Promise<IpcResult<HostUpdateReport[]>>
+    runs(limit?: number): Promise<IpcResult<unknown[]>>
+    runDetail(runId: string): Promise<IpcResult<{ run: unknown; hosts: FleetHostResult[] } | null>>
+  }
   shell: { openExternal(url: string): Promise<IpcResult<boolean>> }
-  events: { onTransfer(listener: (payload: { jobId: string; event: TransferEvent }) => void): () => void }
+  events: {
+    onTransfer(listener: (payload: { jobId: string; event: TransferEvent }) => void): () => void
+    onFleet(listener: (payload: { runId: string; event: FleetEvent }) => void): () => void
+  }
 }
 
 declare global {
