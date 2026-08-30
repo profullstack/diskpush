@@ -7,6 +7,7 @@
  */
 
 import { homedir } from 'node:os'
+import { expandTilde } from './identity.js'
 import { join } from 'node:path'
 import { readFileSync } from 'node:fs'
 import type { Connection } from '@diskpush/schemas'
@@ -36,7 +37,7 @@ export function parseSshConfig(contents: string): SshConfigHost[] {
     const match = /^(\S+)[\s=]+(.*)$/.exec(line)
     if (!match) continue
     const key = match[1]!.toLowerCase()
-    const value = match[2]!.trim()
+    const value = unquote(match[2]!.trim())
 
     if (key === 'host') {
       // A wildcard block sets defaults across many hosts. Modelling that
@@ -62,6 +63,18 @@ export function parseSshConfig(contents: string): SshConfigHost[] {
   }
 
   return hosts
+}
+
+/**
+ * Drops the quotes OpenSSH allows around a value.
+ *
+ * `IdentityFile "/path with spaces/key"` is valid ssh_config, and keeping the
+ * quotes makes the path a file that cannot exist — an ENOENT naming a path
+ * that is plainly right, quotes and all.
+ */
+function unquote(value: string): string {
+  const quoted = /^"(.*)"$/.exec(value) ?? /^'(.*)'$/.exec(value)
+  return quoted ? quoted[1]! : value
 }
 
 function applySetting(host: SshConfigHost, key: string, value: string): void {
@@ -119,7 +132,7 @@ export function sshConfigConnections(env: NodeJS.ProcessEnv = process.env): Conn
       return true
     })
     .map((host): Connection => {
-      const identity = host.identityFile ? host.identityFile.replace(/^~/, homedir()) : null
+      const identity = host.identityFile ? expandTilde(host.identityFile) : null
       return {
         id: `ssh-config:${host.alias}`,
         name: host.alias,

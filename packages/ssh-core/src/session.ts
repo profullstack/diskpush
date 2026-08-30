@@ -1,7 +1,8 @@
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { Client, type ConnectConfig, type SFTPWrapper } from 'ssh2'
 import type { Connection } from '@diskpush/schemas'
 import { keyTypeOf, sha256Fingerprint } from './fingerprint.js'
+import { expandTilde, findAgentSocket, findDefaultIdentity } from './identity.js'
 import { appendKnownHost, readKnownHosts, verifyHostKey, type HostKeyVerdict } from './known-hosts.js'
 
 export class SshError extends Error {
@@ -59,12 +60,34 @@ export class SshSession {
     }
 
     if (connection.authType === 'agent') {
-      const agent = options.agentSocket ?? process.env.SSH_AUTH_SOCK
-      if (!agent) throw new SshError('No SSH agent is available (SSH_AUTH_SOCK is unset).', 'auth')
-      config.agent = agent
+      // Both halves, the way ssh(1) does it: an agent if one can be found, and
+      // the default identity files regardless. Requiring SSH_AUTH_SOCK to be
+      // exported meant every agent host failed in the desktop app, which is
+      // launched from a session that exports far less than a login shell.
+      const agent = options.agentSocket ?? findAgentSocket(existsSync)
+      if (agent) config.agent = agent
+
+      const identity = findDefaultIdentity(existsSync)
+      if (identity) {
+        config.privateKey = readFileSync(identity)
+        if (options.passphrase) config.passphrase = options.passphrase
+      }
+
+      if (!agent && !identity) {
+        throw new SshError(
+          'No SSH agent and no default key. Looked for an agent socket, then for ' +
+            '~/.ssh/id_ed25519, id_ecdsa, id_rsa and id_dsa. Set a key file on this connection, ' +
+            'or start an agent and add one.',
+          'auth',
+        )
+      }
     } else if (connection.authType === 'key' || connection.authType === 'key-passphrase') {
       if (!connection.keyPath) throw new SshError('This connection is set to key authentication but has no key path.', 'auth')
-      config.privateKey = readFileSync(connection.keyPath)
+      // `~` is expanded here rather than trusted to have been expanded by
+      // whoever stored the path: it can come from ssh_config, from an import,
+      // or from someone typing it into the New server dialog, and only one of
+      // those three used to expand it.
+      config.privateKey = readFileSync(expandTilde(connection.keyPath))
       if (options.passphrase) config.passphrase = options.passphrase
     } else if (connection.authType === 'password') {
       if (!options.password) throw new SshError('This connection needs a password, which was not supplied.', 'auth')

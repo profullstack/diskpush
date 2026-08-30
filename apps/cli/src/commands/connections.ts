@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { createInterface } from 'node:readline/promises'
 import type { DiskPushStore } from '@diskpush/database'
 import { knownHostsPath } from '@diskpush/database'
-import { parseSshConfig, probeConnection, SshSession } from '@diskpush/ssh-core'
+import { expandTilde, parseSshConfig, probeConnection, SshSession } from '@diskpush/ssh-core'
 import { EXIT } from '../exit-codes.js'
 import { table } from '../format.js'
 import { failure, type Output } from '../output.js'
@@ -171,7 +171,7 @@ async function importConnections(parsed: ParsedArgv, store: DiskPushStore, outpu
       port: host.port ?? 22,
       username: host.user ?? process.env.USER ?? 'root',
       authType: host.identityFile ? 'key' : 'agent',
-      keyPath: host.identityFile ?? null,
+      keyPath: host.identityFile ? expandTilde(host.identityFile) : null,
       defaultLocalPath: null,
       defaultRemotePath: null,
       jumpHost: host.proxyJump ?? null,

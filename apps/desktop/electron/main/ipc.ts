@@ -2,7 +2,7 @@ import { lstat, mkdir, open, readdir, readFile, rename, rm, stat, unlink } from 
 import { homedir } from 'node:os'
 import { isAbsolute, join, posix, resolve } from 'node:path'
 import { ipcMain, shell, type IpcMainInvokeEvent } from 'electron'
-import { probeConnection, parseSshConfig, sshConfigConnections, type SftpBrowser } from '@diskpush/ssh-core'
+import { expandTilde, probeConnection, parseSshConfig, sshConfigConnections, type SftpBrowser } from '@diskpush/ssh-core'
 import { z } from 'zod'
 import {
   ConnectionInputSchema,
@@ -122,7 +122,8 @@ export function registerIpc(): void {
         port: host.port ?? 22,
         username: host.user ?? process.env.USER ?? 'root',
         authType: host.identityFile ? 'key' : 'agent',
-        keyPath: host.identityFile ?? null,
+        // Expanded on the way in, so a stored key path is always usable.
+        keyPath: host.identityFile ? expandTilde(host.identityFile) : null,
         defaultLocalPath: null,
         defaultRemotePath: null,
         jumpHost: host.proxyJump ?? null,
