@@ -140,7 +140,18 @@ export function buildRsyncArgs(input: BuildArgsInput): BuildArgsResult {
   if (options.includeFrom) args.push(`--include-from=${options.includeFrom}`)
   for (const exclude of options.excludes) args.push(`--exclude=${exclude}`)
   if (options.excludeFrom) args.push(`--exclude-from=${options.excludeFrom}`)
-  if (options.filesFrom) args.push(`--files-from=${options.filesFrom}`)
+  if (options.filesFrom) {
+    if (options.from0) args.push('--from0')
+    args.push(`--files-from=${options.filesFrom}`)
+    /*
+     * `--files-from` turns recursion OFF, and `--archive` does not turn it
+     * back on. A selected folder then arrives as an empty directory — verified
+     * against rsync 3.4.1: with `-a --files-from` only `keep/` is created,
+     * with `-a -r --files-from` its whole tree comes across. So the flag is
+     * re-stated explicitly here rather than assumed from `--archive`.
+     */
+    args.push('--recursive')
+  }
   if (options.pruneEmptyDirs) args.push('--prune-empty-dirs')
   if (options.relative) args.push('--relative')
   if (options.maxSize) args.push(`--max-size=${options.maxSize}`)

@@ -37,6 +37,19 @@ Skip unchanged files: On
 Delete destination-only files: Off
 ```
 
+## Sending only what is selected
+
+Tick entries in the source pane and the transfer button changes from
+**Sync to web-01** to **Send 2 → web-01**: only those entries move, the way an
+SFTP client behaves. Nothing ticked means the whole directory, which is what
+the two panes have always meant.
+
+A selected folder comes across whole, with its contents. The selection travels
+as entry names — the renderer never builds a path, so it cannot address
+anything the pane is not already showing.
+
+`--only` is the same thing from the CLI. See [cli.md](cli.md).
+
 ## Mirror
 
 The destination pane stays browsable right up to the confirmation: you can
