@@ -56,10 +56,19 @@ export const BUILTIN_RECIPES: readonly FleetCommand[] = [
     id: 'builtin:reboot-required',
     name: 'reboot-required',
     description: 'Which servers are waiting on a reboot to finish an earlier upgrade.',
+    /*
+     * Every branch ends in something that succeeds.
+     *
+     * `[ -f pkgs ] && cat pkgs` as the last statement of the `then` block
+     * returns 1 when the file is absent, which is the `if`'s status, which
+     * under `sh -e` exits the script — so a server that genuinely needs a
+     * reboot but has no package list reported as *failed*. The `|| true` is
+     * what makes the answer the exit code rather than the accident.
+     */
     script: `
 if [ -f /var/run/reboot-required ] || [ -f /run/reboot-required ]; then
   echo "reboot required"
-  [ -f /var/run/reboot-required.pkgs ] && cat /var/run/reboot-required.pkgs
+  cat /var/run/reboot-required.pkgs 2>/dev/null || true
 elif command -v needs-restarting >/dev/null 2>&1; then
   needs-restarting -r || true
 else

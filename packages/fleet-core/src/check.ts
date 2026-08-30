@@ -38,10 +38,10 @@ export async function checkFleet(options: FleetCheckOptions): Promise<FleetCheck
     // supported package manager, and a status command that asks for sudo is a
     // status command people stop running.
     sudo: 'off',
-    // A probe is not a sequence of steps. `grep -c` exits 1 when it counts
-    // zero updates, and under `-e` that ends the script and reports a
-    // perfectly healthy, fully patched server as unreachable.
-    failFast: false,
+    // No `failFast` override: CHECK_SCRIPT opens with `set +e` because it is a
+    // probe whose commands fail as part of doing their job. Declaring it in
+    // the script rather than here is what keeps it true when the recipe is
+    // copied, run through `fleet script`, or picked from the desktop's list.
     timeoutSeconds: options.timeoutSeconds ?? 180,
     ...(options.concurrency !== undefined ? { concurrency: options.concurrency } : {}),
     connect: options.connect,

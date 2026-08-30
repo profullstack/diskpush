@@ -46,6 +46,14 @@ fi`.trim()
  * something a status command may do behind someone's back.
  */
 export const CHECK_SCRIPT = `
+# The script says this itself rather than relying on the caller passing a
+# flag. A probe fails commands as part of doing its job -- \`grep -c\` exits 1
+# when it counts zero updates -- and under \`sh -e\` that ends the script and
+# reports a healthy, fully patched server as unreachable. Declaring it here
+# means the recipe is still correct after someone copies it, runs it through
+# \`fleet script\`, or picks it from the desktop's recipe list.
+set +e
+
 pm=$(${DETECT})
 echo "dp_pm=$pm"
 

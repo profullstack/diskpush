@@ -109,8 +109,14 @@ local file and pipes it to `sh` — or to `bash`, if the file starts with a
 `#!` line naming it.
 
 A script runs under `sh -e`: it stops at the first failing command, which is
-what someone writing a three-line deploy step assumes already happens. Pass
-`--no-fail-fast` for a probe whose commands are expected to fail.
+what someone writing a three-line deploy step assumes already happens.
+
+For a *probe*, whose commands fail as part of doing their job — `grep -c`
+exits 1 when it counts nothing — either pass `--no-fail-fast`, or open the
+script with `set +e`. Prefer `set +e`: it travels with the script, so the
+same text is still correct after it is copied, saved as a command, or picked
+from the desktop's recipe list, none of which carry a flag. The shipped
+`check-updates` recipe does exactly that.
 
 ### `fleet commands`
 
