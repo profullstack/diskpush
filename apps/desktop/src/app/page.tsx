@@ -236,7 +236,7 @@ export default function Workspace() {
 
   return (
     <div className="flex h-full flex-col">
-      <header className="flex h-[52px] shrink-0 items-center gap-3.5 border-b border-line bg-chrome px-4">
+      <header className="flex h-[72px] shrink-0 items-center gap-3.5 border-b border-line bg-chrome px-4">
         {/*
           Two files, not one. logo.dark.png is the lockup FOR a dark background:
           its "Disk" is white, so on the light theme it vanished and the header
@@ -248,7 +248,7 @@ export default function Workspace() {
           alt="DiskPush"
           width={2172}
           height={724}
-          className="hidden h-[22px] w-auto dark:block"
+          className="hidden h-auto w-[150px] dark:block"
           priority
         />
         <Image
@@ -256,7 +256,7 @@ export default function Workspace() {
           alt="DiskPush"
           width={2172}
           height={724}
-          className="block h-[22px] w-auto dark:hidden"
+          className="block h-auto w-[150px] dark:hidden"
           priority
         />
         <div className="h-5 w-px bg-line" />

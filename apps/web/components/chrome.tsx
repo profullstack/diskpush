@@ -67,9 +67,9 @@ function Logo() {
         alt="DiskPush"
         width={2172}
         height={724}
-        className="logo-dark w-60 h-auto"
+        className="logo-dark w-[150px] h-auto"
       />
-      <img src="/logo.png" alt="DiskPush" width={2172} height={724} className="logo-light w-60 h-auto" />
+      <img src="/logo.png" alt="DiskPush" width={2172} height={724} className="logo-light w-[150px] h-auto" />
     </>
   )
 }
