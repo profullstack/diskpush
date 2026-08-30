@@ -14,6 +14,7 @@ import { defaultRsyncOptions, summarizeChanges, type Change, type Endpoint, type
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { IPC, type EndpointRef, type TransferOptions, type TransferRequest } from '../../shared/contract.js'
+import { requireConnection, resolveConnection } from './connections.js'
 import { store } from './store.js'
 
 const execFileAsync = promisify(execFile)
@@ -30,9 +31,7 @@ const running = new Map<string, RunningJob>()
 async function resolveEndpoint(ref: EndpointRef): Promise<{ endpoint: Endpoint; connectionId: string | null }> {
   if (ref.type === 'local') return { endpoint: { type: 'local', path: ref.path }, connectionId: null }
 
-  const db = await store()
-  const connection = await db.findConnection(ref.connectionId)
-  if (!connection) throw new Error('That connection no longer exists.')
+  const connection = await requireConnection(ref.connectionId)
 
   return {
     endpoint: {
@@ -49,8 +48,7 @@ async function resolveEndpoint(ref: EndpointRef): Promise<{ endpoint: Endpoint; 
 
 async function shellOptionsFor(connectionId: string | null) {
   if (!connectionId) return {}
-  const db = await store()
-  const connection = await db.findConnection(connectionId)
+  const connection = await resolveConnection(connectionId)
   if (!connection) return {}
   return {
     keyPath: connection.authType === 'key' || connection.authType === 'key-passphrase' ? connection.keyPath : null,
@@ -111,8 +109,7 @@ async function buildPlan(request: TransferRequest, overrides: Partial<RsyncOptio
   const options = { ...optionsFrom(request.options), ...overrides }
 
   const isServerToServer = source.endpoint.type === 'ssh' && destination.endpoint.type === 'ssh'
-  const db = await store()
-  const sourceConnection = source.connectionId ? await db.findConnection(source.connectionId) : null
+  const sourceConnection = source.connectionId ? await resolveConnection(source.connectionId) : null
 
   return planTransfer({
     source: source.endpoint,

@@ -16,6 +16,7 @@ import {
   TransferRequestSchema,
   type IpcResult,
 } from '../shared/contract.js'
+import { requireConnection } from './services/connections.js'
 import { browserFor, dropSession, sessionFor } from './services/sessions.js'
 import { store } from './services/store.js'
 import { cancelTransfer, previewTransfer, startTransfer } from './services/transfers.js'
@@ -71,8 +72,7 @@ export function registerIpc(): void {
 
   handle(IPC.connectionsTest, z.object({ id: z.string().min(1) }), async ({ id }) => {
     const db = await store()
-    const connection = await db.findConnection(id)
-    if (!connection) throw new Error('That connection no longer exists.')
+    const connection = await requireConnection(id)
 
     const session = await sessionFor(connection)
     const report = await probeConnection(session, connection.rsyncPath)
@@ -154,9 +154,7 @@ export function registerIpc(): void {
   })
 
   handle(IPC.fsListRemote, RemotePathRequestSchema, async ({ connectionId, path }) => {
-    const db = await store()
-    const connection = await db.findConnection(connectionId)
-    if (!connection) throw new Error('That connection no longer exists.')
+    const connection = await requireConnection(connectionId)
 
     const browser = await browserFor(connection)
     try {
@@ -167,9 +165,7 @@ export function registerIpc(): void {
   })
 
   handle(IPC.fsMkdirRemote, RemotePathRequestSchema, async ({ connectionId, path }) => {
-    const db = await store()
-    const connection = await db.findConnection(connectionId)
-    if (!connection) throw new Error('That connection no longer exists.')
+    const connection = await requireConnection(connectionId)
     const browser = await browserFor(connection)
     try {
       await browser.mkdir(path)
@@ -180,9 +176,7 @@ export function registerIpc(): void {
   })
 
   handle(IPC.fsRenameRemote, RenameRequestSchema, async ({ connectionId, from, to }) => {
-    const db = await store()
-    const connection = await db.findConnection(connectionId)
-    if (!connection) throw new Error('That connection no longer exists.')
+    const connection = await requireConnection(connectionId)
     const browser = await browserFor(connection)
     try {
       await browser.rename(from, to)
@@ -196,9 +190,7 @@ export function registerIpc(): void {
     IPC.fsDeleteRemote,
     z.object({ connectionId: z.string().min(1), path: PathSchema, isDirectory: z.boolean() }),
     async ({ connectionId, path, isDirectory }) => {
-      const db = await store()
-      const connection = await db.findConnection(connectionId)
-      if (!connection) throw new Error('That connection no longer exists.')
+      const connection = await requireConnection(connectionId)
       const browser = await browserFor(connection)
       try {
         if (isDirectory) await browser.rmdir(path)
