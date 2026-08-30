@@ -72,6 +72,8 @@ export type SyncProfile = {
   source: { type: 'local'; path: string } | { type: 'ssh'; connectionId?: string; host: string; path: string }
   destination: { type: 'local'; path: string } | { type: 'ssh'; connectionId?: string; host: string; path: string }
   options: { deleteMode: 'off' | 'delay' | 'during' | 'after' | 'before' }
+  /** Which pane the source was on when saved. Older rows default to 'left'. */
+  sourcePane?: 'left' | 'right'
 }
 
 export type StartedJob = { jobId: string; command: string; control: string | null; warnings: string[] }
@@ -243,6 +245,7 @@ type Api = {
       source: unknown
       destination: unknown
       options: { deleteMode: 'off' | 'delay' }
+      sourcePane: 'left' | 'right'
     }): Promise<IpcResult<SyncProfile>>
     remove(id: string): Promise<IpcResult<boolean>>
   }

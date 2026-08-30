@@ -252,9 +252,23 @@ export default function Workspace() {
           : { kind: 'ssh', connectionId: endpoint.connectionId }
 
       setError(null)
-      setLeft(blankPane(toPane(profile.source), profile.source.path))
-      setRight(blankPane(toPane(profile.destination), profile.destination.path))
-      setDirection('ltr')
+
+      /*
+       * Put each pane back where it was, not where the transfer's direction
+       * happens to imply.
+       *
+       * `source` and `destination` carry the transfer's meaning, so with the
+       * arrow pointing right-to-left the source IS the right pane. Loading
+       * source into the left pane unconditionally mirrored the whole window,
+       * and forcing the arrow back to left-to-right lost the direction too.
+       */
+      const sourceOnLeft = (profile.sourcePane ?? 'left') === 'left'
+      const forLeft = sourceOnLeft ? profile.source : profile.destination
+      const forRight = sourceOnLeft ? profile.destination : profile.source
+
+      setLeft(blankPane(toPane(forLeft), forLeft.path))
+      setRight(blankPane(toPane(forRight), forRight.path))
+      setDirection(sourceOnLeft ? 'ltr' : 'rtl')
       setMirror(profile.options?.deleteMode !== undefined && profile.options.deleteMode !== 'off')
     },
     [],
@@ -270,6 +284,9 @@ export default function Workspace() {
             source: request.source,
             destination: request.destination,
             options: request.options,
+            // Which pane the source was on. Without it, loading cannot tell a
+            // right-to-left arrangement from a mirrored left-to-right one.
+            sourcePane: direction === 'ltr' ? 'left' : 'right',
           }),
         )
         setProfiles(await unwrap(api()?.profiles.list()))
@@ -277,7 +294,7 @@ export default function Workspace() {
         setError(caught instanceof Error ? caught.message : String(caught))
       }
     },
-    [request],
+    [request, direction],
   )
 
   const removeProfile = useCallback(async (id: string) => {

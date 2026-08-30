@@ -189,4 +189,18 @@ export const MIGRATIONS: Migration[] = [
       `ALTER TABLE fleet_commands ADD COLUMN on_failure TEXT NOT NULL DEFAULT 'continue'`,
     ],
   },
+  {
+    name: '005-profile-source-pane',
+    statements: [
+      /*
+       * Which pane the source was on.
+       *
+       * A profile stored source and destination, which is the transfer's
+       * meaning, and the app restored source into the LEFT pane always. Saved
+       * with the arrow pointing right-to-left, the panes came back mirrored.
+       * Defaults to 'left', which is what every existing row was assumed to be.
+       */
+      `ALTER TABLE sync_profiles ADD COLUMN source_pane TEXT NOT NULL DEFAULT 'left'`,
+    ],
+  },
 ]

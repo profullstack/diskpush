@@ -34,6 +34,13 @@ A profile whose delete mode is on carries a red **mirror** mark, because
 loading a profile that turns Mirror on is not something to discover from the
 footer afterwards.
 
+A profile restores **both panes where you left them**, and the arrow with
+them. `source` and `destination` carry the transfer's meaning — that is what
+`diskpush profile run` acts on, and it must not depend on how a window was
+arranged — so the arrangement is recorded separately. Without that, a profile
+saved while the arrow pointed right-to-left came back mirrored, because the
+source was the *right* pane and loading put it on the left.
+
 Loading a profile sets Mirror to whatever the profile stored, rather than
 leaving it as it found it — a profile that did something different depending
 on what you had toggled last would not be a profile.

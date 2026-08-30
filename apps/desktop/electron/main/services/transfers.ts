@@ -238,6 +238,7 @@ export async function saveProfile(input: {
   source: EndpointRef
   destination: EndpointRef
   options: TransferOptions
+  sourcePane: 'left' | 'right'
 }) {
   const source = await resolveEndpoint(input.source)
   const destination = await resolveEndpoint(input.destination)
@@ -247,6 +248,7 @@ export async function saveProfile(input: {
     destination: destination.endpoint,
     preset: 'fast-sync',
     options: optionsFrom(input.options),
+    sourcePane: input.sourcePane,
     // Never set from the app. Unattended mirroring is the one way a delete
     // list runs without a human looking at it, and it stays a deliberate,
     // out-of-band choice.
