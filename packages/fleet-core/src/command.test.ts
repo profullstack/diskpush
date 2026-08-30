@@ -28,9 +28,29 @@ describe('buildCommand', () => {
     expect(buildCommand({ script: 'id', interpreter: 'sh', sudo: 'non-interactive' }).command).toBe('sudo -n /bin/sh -es')
   })
 
-  it('uses sudo -S with an empty prompt when a password will be supplied', () => {
+  it('leaves stdin free for the password, and sends the script as an argument', () => {
+    // `sudo -S` reads stdin ONLY when it actually needs a password. Under
+    // NOPASSWD, a cached timestamp, or an already-root login it reads nothing,
+    // and a password prepended to the script becomes command number one:
+    //     /bin/sh: 1: <the password>: not found
     const built = buildCommand({ script: 'id', interpreter: 'sh', sudo: 'password' })
-    expect(built.command).toBe("sudo -S -p '' /bin/sh -es")
+    expect(built.command).toBe("sudo -S -p '' /bin/sh -ec id")
+    expect(built.stdin).toBeUndefined()
+  })
+
+  it('quotes that argument, so a script full of metacharacters still arrives intact', () => {
+    const built = buildCommand({
+      script: `echo "it's $(whoami)"; rm -rf /tmp/x`,
+      interpreter: 'sh',
+      sudo: 'password',
+    })
+    // Single-quoted with embedded quotes escaped: the shell sees one argument.
+    expect(built.command).toBe(`sudo -S -p '' /bin/sh -ec 'echo "it'\\''s $(whoami)"; rm -rf /tmp/x'`)
+  })
+
+  it('honours --no-fail-fast in the password path too', () => {
+    const built = buildCommand({ script: 'id', interpreter: 'sh', sudo: 'password', failFast: false })
+    expect(built.command).toBe("sudo -S -p '' /bin/sh -c id")
   })
 
   it('runs raw text unwrapped, with nothing on stdin', () => {
@@ -73,9 +93,22 @@ describe('buildCommand', () => {
 })
 
 describe('withSudoPassword', () => {
-  it('puts the password on the first stdin line, ahead of the script', () => {
+  it('puts the password on stdin and nothing else', () => {
     const built = withSudoPassword(buildCommand({ script: 'id', interpreter: 'sh', sudo: 'password' }), 'hunter2')
-    expect(built.stdin).toBe('hunter2\nid\n')
+    expect(built.stdin).toBe('hunter2\n')
+    expect(built.stdin).not.toContain('id')
+  })
+
+  it('refuses to share stdin with a script rather than corrupting the run', () => {
+    // The old behaviour. If buildCommand ever leaves a script on stdin in this
+    // mode again, this throws instead of executing a password.
+    const onStdin = buildCommand({ script: 'id', interpreter: 'sh', sudo: 'off' })
+    expect(() => withSudoPassword(onStdin, 'hunter2')).toThrow(/cannot share stdin/)
+  })
+
+  it('refuses a password containing a newline, which cannot be escaped', () => {
+    const built = buildCommand({ script: 'id', interpreter: 'sh', sudo: 'password' })
+    expect(() => withSudoPassword(built, 'two\nlines')).toThrow(/newline/)
   })
 
   it('leaves the display form alone, so a password cannot reach a log through it', () => {
@@ -84,7 +117,7 @@ describe('withSudoPassword', () => {
     expect(withSudoPassword(base, 'hunter2').display).not.toContain('hunter2')
   })
 
-  it('works for raw commands, which have no script on stdin of their own', () => {
+  it('works for raw commands, which never had a script on stdin', () => {
     const built = withSudoPassword(buildCommand({ script: 'id', interpreter: 'raw', sudo: 'password' }), 'hunter2')
     expect(built.stdin).toBe('hunter2\n')
   })
@@ -104,6 +137,14 @@ describe('explainSudoFailure', () => {
     ]) {
       expect(explainSudoFailure(stderr), stderr).toContain('--sudo-password')
     }
+  })
+
+  it('tells someone who supplied a password that it was refused, not to supply one', () => {
+    // sudo says both things on a failed attempt: the refusal, then
+    // "authentication required but not attempted" once it runs out of input.
+    const stderr = 'sudo: Authentication failed, try again.\nsudo: Authentication required but not attempted'
+    expect(explainSudoFailure(stderr)).toMatch(/refused/)
+    expect(explainSudoFailure(stderr)).not.toMatch(/--sudo-password/)
   })
 
   it('stays out of the way of unrelated failures', () => {
