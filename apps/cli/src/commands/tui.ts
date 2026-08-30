@@ -4,6 +4,7 @@ import { failure, type Output } from '../output.js'
 import { flagValue, type ParsedArgv } from '../parse-argv.js'
 import { resolveEndpoint } from '../resolve.js'
 import { blankPane, defaultLocalPath, Tui } from '../tui/app.js'
+import { parseKeys } from '../tui/keys.js'
 import { ansi } from '../tui/render.js'
 
 /**
@@ -60,9 +61,10 @@ export async function runTui(parsed: ParsedArgv, store: DiskPushStore, output: O
 
     await new Promise<void>((resolve) => {
       const onData = (chunk: string) => {
-        // A key may arrive with others in one chunk; handle them in order.
+        // Several keys can arrive in one chunk, and an arrow key is three
+        // bytes; parseKeys turns the raw bytes into logical keys first.
         void (async () => {
-          for (const key of chunk) {
+          for (const key of parseKeys(chunk)) {
             const keepGoing = await tui.onKey(key)
             if (!keepGoing) {
               process.stdin.off('data', onData)

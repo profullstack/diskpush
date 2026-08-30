@@ -5,6 +5,7 @@ import { knownHostsPath } from '@diskpush/database'
 import { SftpBrowser, SshSession } from '@diskpush/ssh-core'
 import { defaultRsyncOptions, summarizeChanges, type Connection } from '@diskpush/schemas'
 import { parseEndpoint, planTransfer, runToCompletion } from '@diskpush/rsync-core'
+import { isChar, type Key } from './keys.js'
 import { ansi, formatSize, pad, truncate, width } from './render.js'
 
 /**
@@ -16,7 +17,6 @@ import { ansi, formatSize, pad, truncate, width } from './render.js'
  * screen, is the accident the rest of DiskPush is built to prevent.
  */
 
-const ESCAPE_KEY = String.fromCharCode(27)
 const CTRL_C = String.fromCharCode(3)
 
 export type Entry = { name: string; isDirectory: boolean; size: number }
@@ -33,7 +33,7 @@ export type Pane = {
   error: string | null
 }
 
-const HELP = 'tab switch   j/k move   l open   h up   s sync to other   p preview   r refresh   q quit'
+const HELP = 'tab switch   arrows/jk move   enter open   left up   s sync to other   p preview   r refresh   q quit'
 
 export function blankPane(label: string, path: string, connection: Connection | null = null): Pane {
   return { label, connection, path, entries: [], index: 0, offset: 0, error: null }
@@ -144,41 +144,44 @@ export class Tui {
   }
 
   /** Returns false when the app should exit. */
-  async onKey(key: string): Promise<boolean> {
-    if (key === 'q' || key === ESCAPE_KEY || key === CTRL_C) return false
+  async onKey(key: Key): Promise<boolean> {
+    if (key === 'escape' || isChar(key, 'q') || isChar(key, CTRL_C)) return false
     if (this.busy) return true
 
-    switch (key) {
-      case '\t':
-        this.active = this.active === 'left' ? 'right' : 'left'
-        break
-      case 'r':
-        await this.load(this.active)
-        break
-      case 'j':
-        this.current.index = Math.min(this.current.index + 1, Math.max(0, this.current.entries.length - 1))
-        break
-      case 'k':
-        this.current.index = Math.max(0, this.current.index - 1)
-        break
-      case 'h':
-        await this.goUp()
-        break
-      case 'l':
-      case '\r':
-      case '\n':
-        await this.enter()
-        break
-      case 'p':
-        await this.transfer(true)
-        break
-      case 's':
-        await this.transfer(false)
-        break
-      default:
-        break
+    const page = Math.max(1, (process.stdout.rows ?? 30) - 8)
+
+    if (key === 'tab') {
+      this.active = this.active === 'left' ? 'right' : 'left'
+    } else if (key === 'up' || isChar(key, 'k')) {
+      this.move(-1)
+    } else if (key === 'down' || isChar(key, 'j')) {
+      this.move(1)
+    } else if (key === 'page-up') {
+      this.move(-page)
+    } else if (key === 'page-down') {
+      this.move(page)
+    } else if (key === 'home') {
+      this.current.index = 0
+    } else if (key === 'end') {
+      this.current.index = Math.max(0, this.current.entries.length - 1)
+    } else if (key === 'left' || isChar(key, 'h')) {
+      await this.goUp()
+    } else if (key === 'right' || key === 'enter' || isChar(key, 'l')) {
+      await this.enter()
+    } else if (isChar(key, 'r')) {
+      await this.load(this.active)
+    } else if (isChar(key, 'p')) {
+      await this.transfer(true)
+    } else if (isChar(key, 's')) {
+      await this.transfer(false)
     }
     return true
+  }
+
+  private move(delta: number): void {
+    const pane = this.current
+    const last = Math.max(0, pane.entries.length - 1)
+    pane.index = Math.min(last, Math.max(0, pane.index + delta))
   }
 
   private async enter(): Promise<void> {

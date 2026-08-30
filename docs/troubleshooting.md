@@ -140,12 +140,20 @@ unshare --user true && echo "namespaces work" || echo "namespaces denied"
 ls -l /path/to/DiskPush/chrome-sandbox   # -rwsr-xr-x is right, -rwxr-xr-x is not
 ```
 
-**The installed app handles this itself** — its launcher probes both and falls
-back to `--no-sandbox` only when neither is available, telling you it did.
+Do **not** use `unshare --user true` alone to decide. Ubuntu 24.04+ restricts
+unprivileged user namespaces through AppArmor but ships a profile for `unshare`
+itself, so that command succeeds while an unconfined binary is still denied.
+`kernel.apparmor_restrict_unprivileged_userns` is what tells the truth.
 
-**A bare AppImage does not.** Run it with `--no-sandbox`, or install the
-`.deb`, whose postinst sets the SUID bit as root and installs an AppArmor
-profile granting the namespace sandbox:
+**The installed app handles this itself** — its launcher reads that policy,
+falls back to `--no-sandbox` only when the sandbox demonstrably cannot work,
+and retries without it if the app dies complaining about the sandbox anyway.
+
+**A bare AppImage cannot.** Electron aborts before its own JavaScript runs, so
+nothing inside the app can detect or recover from this; only an argument from
+outside can. Run it with `--no-sandbox`, or install the `.deb`, whose postinst
+sets the SUID bit as root and installs an AppArmor profile granting the
+namespace sandbox:
 
 ```sh
 ./DiskPush-0.1.0-linux-x86_64.AppImage --no-sandbox

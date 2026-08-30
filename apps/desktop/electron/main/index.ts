@@ -8,6 +8,12 @@ import { cancelAll, hasActiveTransfer } from './services/transfers.js'
 
 // ESM has no __dirname. import.meta.dirname exists in Electron 33's Node 20.18,
 // but fileURLToPath keeps this working on anything older too.
+// Note on the Chromium sandbox: when neither the namespace sandbox nor a
+// correctly configured SUID helper is available, Electron aborts with SIGTRAP
+// *before this file is executed* — verified by injecting a marker as the first
+// statement and never seeing it. Nothing here can detect or recover from it;
+// only a --no-sandbox argument from outside can, which is why the installer
+// writes a launcher that decides before starting the app.
 const here = join(fileURLToPath(import.meta.url), '..')
 
 const isDev = !app.isPackaged && process.env.DISKPUSH_DEV === '1'
