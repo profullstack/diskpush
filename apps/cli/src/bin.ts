@@ -3,6 +3,7 @@ import { DiskPushStore } from '@diskpush/database'
 import { EndpointParseError } from '@diskpush/rsync-core'
 import { ZodError } from 'zod'
 import { runConnections } from './commands/connections.js'
+import { runFleetCommand } from './commands/fleet.js'
 import { runJob, runJobs, runRetry } from './commands/jobs.js'
 import { runDoctor, runUninstall, runUpdate } from './commands/self.js'
 import { runDesktop } from './commands/desktop.js'
@@ -94,6 +95,8 @@ async function main(argv: readonly string[]): Promise<number> {
         return await runDesktop(parsed, output)
       case 'tui':
         return await runTui(parsed, store, output)
+      case 'fleet':
+        return await runFleetCommand(parsed, store, output)
       case 'ls':
         return await runLs(parsed, store, output)
       default:

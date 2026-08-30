@@ -49,6 +49,17 @@ const api = {
     list: () => call(IPC.profilesList),
     remove: (id: string) => call(IPC.profilesRemove, { id }),
   },
+  fleet: {
+    servers: () => call(IPC.fleetServers),
+    commands: () => call(IPC.fleetCommands),
+    preview: (request: unknown) => call(IPC.fleetPreview, request),
+    start: (request: unknown) => call(IPC.fleetStart, request),
+    cancel: (runId: string) => call<boolean>(IPC.fleetCancel, { runId }),
+    check: (connectionIds: string[], concurrency = 4, timeoutSeconds = 180) =>
+      call(IPC.fleetCheck, { connectionIds, concurrency, timeoutSeconds }),
+    runs: (limit = 25) => call(IPC.fleetRuns, { limit }),
+    runDetail: (runId: string) => call(IPC.fleetRunDetail, { runId }),
+  },
   shell: {
     openExternal: (url: string) => call(IPC.shellOpenExternal, { url }),
   },
@@ -62,6 +73,11 @@ const api = {
       const wrapped = (_event: unknown, payload: { jobId: string; event: unknown }) => listener(payload)
       ipcRenderer.on(IPC.eventTransfer, wrapped)
       return () => ipcRenderer.off(IPC.eventTransfer, wrapped)
+    },
+    onFleet(listener: (payload: { runId: string; event: unknown }) => void): () => void {
+      const wrapped = (_event: unknown, payload: { runId: string; event: unknown }) => listener(payload)
+      ipcRenderer.on(IPC.eventFleet, wrapped)
+      return () => ipcRenderer.off(IPC.eventFleet, wrapped)
     },
   },
 }

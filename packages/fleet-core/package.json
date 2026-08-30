@@ -1,23 +1,23 @@
 {
-  "name": "@diskpush/cli",
+  "name": "@diskpush/fleet-core",
   "version": "0.2.7",
   "type": "module",
-  "bin": {
-    "diskpush": "./dist/bin.js"
-  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
   "files": [
     "dist"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
-    "start": "node dist/bin.js"
+    "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@diskpush/database": "workspace:*",
-    "@diskpush/fleet-core": "workspace:*",
     "@diskpush/rsync-core": "workspace:*",
     "@diskpush/schemas": "workspace:*",
     "@diskpush/ssh-core": "workspace:*",

@@ -17,6 +17,15 @@ export const EXIT = {
   unavailable: 69,
   /** DiskPush itself broke. */
   internal: 70,
+  /**
+   * A fleet run did not succeed everywhere.
+   *
+   * Deliberately one code rather than the failing host's own exit status:
+   * across twelve servers there may be several, and picking one to pass
+   * through would mean inventing a winner. `--json` carries every host's real
+   * code for anything that needs them.
+   */
+  fleetIncomplete: 71,
 } as const
 
 export type ExitCode = (typeof EXIT)[keyof typeof EXIT] | number

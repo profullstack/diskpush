@@ -29,6 +29,9 @@ importers:
       '@diskpush/database':
         specifier: workspace:*
         version: link:../../packages/database
+      '@diskpush/fleet-core':
+        specifier: workspace:*
+        version: link:../../packages/fleet-core
       '@diskpush/rsync-core':
         specifier: workspace:*
         version: link:../../packages/rsync-core
@@ -50,6 +53,9 @@ importers:
       '@diskpush/database':
         specifier: workspace:*
         version: link:../../packages/database
+      '@diskpush/fleet-core':
+        specifier: workspace:*
+        version: link:../../packages/fleet-core
       '@diskpush/rsync-core':
         specifier: workspace:*
         version: link:../../packages/rsync-core
@@ -157,6 +163,21 @@ importers:
       '@libsql/client':
         specifier: ^0.15.4
         version: 0.15.15
+      zod:
+        specifier: ^3.24.1
+        version: 3.25.76
+
+  packages/fleet-core:
+    dependencies:
+      '@diskpush/rsync-core':
+        specifier: workspace:*
+        version: link:../rsync-core
+      '@diskpush/schemas':
+        specifier: workspace:*
+        version: link:../schemas
+      '@diskpush/ssh-core':
+        specifier: workspace:*
+        version: link:../ssh-core
       zod:
         specifier: ^3.24.1
         version: 3.25.76

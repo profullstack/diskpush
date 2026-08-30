@@ -6,6 +6,7 @@
 packages/schemas      Typed option model, endpoints, jobs, profiles. Zod.
 packages/rsync-core   Argument builder, execution planner, parsers, runner.
 packages/ssh-core     SSH sessions, SFTP browsing, host keys, preflight.
+packages/fleet-core   One command across many servers: selection, guard, runner.
 packages/database     The local store, shared by every surface.
 apps/cli              The `diskpush` command.
 apps/desktop          Electron main, preload, and the renderer.
@@ -16,6 +17,13 @@ apps/web              diskpush.com.
 takes endpoints and options and produces a command and a stream of events.
 That boundary is what lets the same engine back a daemon, an HTTP API or an
 MCP tool later without being rewritten.
+
+`fleet-core` is the same idea one layer across: it takes connections and a
+script and produces a stream of per-host events. It knows how to open a
+session only through a `connect` function the caller supplies, which is why
+the CLI can open one connection per host and close it while the desktop hands
+it a pooled session it keeps — and why the runner is testable without a
+network.
 
 ## Endpoints are values
 
