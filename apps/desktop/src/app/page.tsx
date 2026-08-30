@@ -18,6 +18,7 @@ import {
 import { ConnectionDialog } from '@/components/connection-dialog'
 import { FleetView } from '@/components/fleet-view'
 import { ProfileBar } from '@/components/profile-bar'
+import { ServerManager } from '@/components/server-manager'
 import { endpointLabel, loadPane, Pane, type PaneEndpoint, type PaneState } from '@/components/pane'
 import { TransferRail } from '@/components/transfer-rail'
 import { MirrorPreviewDialog, TransferBand, type ActiveJob } from '@/components/transfer-panel'
@@ -90,6 +91,7 @@ export default function Workspace() {
   const [job, setJob] = useState<ActiveJob | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [showConnection, setShowConnection] = useState(false)
+  const [showServers, setShowServers] = useState(false)
   const [tab, setTab] = useState<'transfer' | 'fleet'>('transfer')
   const [profiles, setProfiles] = useState<SyncProfile[]>([])
   const [outsideShell, setOutsideShell] = useState(false)
@@ -380,11 +382,11 @@ export default function Workspace() {
         <div className="ml-auto flex items-center gap-2">
           <Button
             variant="outline"
-            onClick={() => setShowConnection(true)}
+            onClick={() => setShowServers(true)}
             className="h-[var(--control)] gap-2 border-line-strong text-[12px]"
           >
             <Users className="size-3.5" />
-            New server
+            Servers
           </Button>
 
           {/*
@@ -408,8 +410,8 @@ export default function Workspace() {
             <PopoverContent align="end" className="w-[236px] gap-0.5 p-1.5">
               <MenuItem
                 icon={<Plus className="size-3.5" />}
-                onClick={() => setShowConnection(true)}
-                label="Add a server…"
+                onClick={() => setShowServers(true)}
+                label="Servers…"
               />
               <MenuItem
                 icon={<FileDown className="size-3.5" />}
@@ -543,8 +545,14 @@ export default function Workspace() {
       </div>
 
       <div className={`flex min-h-0 flex-1 flex-col ${tab === 'fleet' ? '' : 'hidden'}`}>
-        <FleetView onAddServer={() => setShowConnection(true)} />
+        <FleetView onAddServer={() => setShowServers(true)} />
       </div>
+
+      <ServerManager
+        open={showServers}
+        onClose={() => setShowServers(false)}
+        onChanged={() => void refreshConnections()}
+      />
 
       <ConnectionDialog open={showConnection} onClose={() => setShowConnection(false)} onSaved={() => void refreshConnections()} />
 

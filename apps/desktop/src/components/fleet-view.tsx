@@ -360,6 +360,15 @@ export function FleetView({ onAddServer }: { onAddServer: () => void }) {
 
   const canRun = selected.size > 0 && script.trim().length > 0 && !running
 
+  /**
+   * Is what is on screen a saved command you are changing?
+   *
+   * Saving under an existing name has always updated it — the store upserts —
+   * but the control said "Save these settings" either way, so there was no way
+   * to tell an edit from a new one.
+   */
+  const editingSaved = commands.some((command) => !command.builtin && command.name === label)
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {error ? (
@@ -563,12 +572,18 @@ export function FleetView({ onAddServer }: { onAddServer: () => void }) {
               {script.trim() && !savingCommand ? (
                 <button
                   type="button"
-                  onClick={() => setSavingCommand(true)}
+                  onClick={() => {
+                    // Prefill with the loaded command's name so saving over it
+                    // is one keypress. Updating was always possible — saving
+                    // under the same name upserts — but nothing said so.
+                    setNewCommandName(editingSaved ? label : '')
+                    setSavingCommand(true)
+                  }}
                   disabled={running}
                   className="focus-ring inline-flex items-center gap-1 rounded-md border border-dashed border-line-strong px-2 py-0.5 text-[11px] text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
                 >
                   <BookmarkPlus className="size-2.5" />
-                  Save these settings
+                  {editingSaved ? `Update ${label}` : 'Save these settings'}
                 </button>
               ) : null}
 

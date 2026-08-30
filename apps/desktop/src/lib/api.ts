@@ -31,7 +31,19 @@ export type Connection = {
   authType: string
   defaultRemotePath: string | null
   defaultLocalPath: string | null
-  /** Optional because the two-pane view predates them and never asked for them. */
+  /*
+   * The rest of what a connection actually holds. The two-pane view never
+   * asked for them, so they were absent from this type and therefore
+   * uneditable anywhere in the app — `tags` most consequentially, since
+   * `--on tag:production` is the thing fleet selection is built around.
+   */
+  keyPath?: string | null
+  jumpHost?: string | null
+  rsyncPath?: string | null
+  notes?: string
+  forwardAgent?: boolean
+  connectTimeoutSeconds?: number
+  keepaliveSeconds?: number | null
   tags?: string[]
 }
 
