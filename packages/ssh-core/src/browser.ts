@@ -140,6 +140,40 @@ export class SftpBrowser {
     })
   }
 
+  /**
+   * Creates an empty file, refusing to touch one that already exists.
+   *
+   * `wx` rather than `w`: "New file" in a file manager must never be a way to
+   * silently truncate something that is already there.
+   */
+  createFile(path: string): Promise<void> {
+    return new Promise((resolve, reject) => {
+      this.sftp.open(path, 'wx', (error, handle) => {
+        if (error) {
+          reject(error)
+          return
+        }
+        this.sftp.close(handle, (closeError) => (closeError ? reject(closeError) : resolve()))
+      })
+    })
+  }
+
+  /**
+   * Removes a directory and everything under it.
+   *
+   * SFTP's rmdir only unlinks an empty directory, so deleting a populated one
+   * means walking it here. Depth first, and symlinks are unlinked rather than
+   * followed — recursing through a link would delete somewhere else entirely.
+   */
+  async removeRecursive(path: string): Promise<void> {
+    const entries = await this.list(path)
+    for (const entry of entries) {
+      if (entry.type === 'directory') await this.removeRecursive(entry.path)
+      else await this.unlink(entry.path)
+    }
+    await this.rmdir(path)
+  }
+
   close(): void {
     this.sftp.end()
   }

@@ -76,9 +76,15 @@ type Api = {
     homeLocal(): Promise<IpcResult<string>>
     listLocal(path: string): Promise<IpcResult<{ path: string; entries: FileEntry[] }>>
     listRemote(connectionId: string, path: string): Promise<IpcResult<{ path: string; entries: FileEntry[] }>>
-    mkdirRemote(connectionId: string, path: string): Promise<IpcResult<boolean>>
-    renameRemote(connectionId: string, from: string, to: string): Promise<IpcResult<boolean>>
-    deleteRemote(connectionId: string, path: string, isDirectory: boolean): Promise<IpcResult<boolean>>
+    /**
+     * The mutating operations. `connectionId` is what picks local or remote:
+     * omitted means this computer, so a caller cannot forget which side it is
+     * acting on the way two parallel method names invite.
+     */
+    mkdir(directory: string, name: string, connectionId?: string): Promise<IpcResult<boolean>>
+    createFile(directory: string, name: string, connectionId?: string): Promise<IpcResult<boolean>>
+    rename(directory: string, from: string, to: string, connectionId?: string): Promise<IpcResult<boolean>>
+    remove(directory: string, name: string, isDirectory: boolean, connectionId?: string): Promise<IpcResult<boolean>>
   }
   transfers: {
     preview(request: unknown): Promise<IpcResult<PreviewResult>>

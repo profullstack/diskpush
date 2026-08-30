@@ -1,18 +1,19 @@
-import { readFile } from 'node:fs/promises'
-import { readdir, stat } from 'node:fs/promises'
+import { lstat, mkdir, open, readdir, readFile, rename, rm, stat, unlink } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { isAbsolute, join, resolve } from 'node:path'
+import { isAbsolute, join, posix, resolve } from 'node:path'
 import { ipcMain, shell, type IpcMainInvokeEvent } from 'electron'
-import { probeConnection, parseSshConfig, sshConfigConnections } from '@diskpush/ssh-core'
+import { probeConnection, parseSshConfig, sshConfigConnections, type SftpBrowser } from '@diskpush/ssh-core'
 import { z } from 'zod'
 import {
   ConnectionInputSchema,
+  CreateEntryRequestSchema,
+  DeleteEntryRequestSchema,
   ExternalUrlSchema,
   IPC,
   JobIdSchema,
   PathSchema,
   RemotePathRequestSchema,
-  RenameRequestSchema,
+  RenameEntryRequestSchema,
   TransferRequestSchema,
   type IpcResult,
 } from '../shared/contract.js'
@@ -49,6 +50,32 @@ function handle<S extends z.ZodTypeAny, R>(
 function resolveLocalPath(input: string): string {
   const expanded = input.startsWith('~') ? join(homedir(), input.slice(1)) : input
   return isAbsolute(expanded) ? expanded : resolve(expanded)
+}
+
+/** Whether a path exists, without making the caller catch ENOENT. */
+async function exists(path: string): Promise<boolean> {
+  try {
+    await lstat(path)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Runs `fn` against an SFTP browser for `connectionId` and always closes it.
+ *
+ * Every remote mutation had its own copy of this, and a `finally` that is
+ * written six times is a `finally` that eventually is not.
+ */
+async function withBrowser<T>(connectionId: string | undefined, fn: (browser: SftpBrowser) => Promise<T>): Promise<T> {
+  if (!connectionId) throw new Error('That operation needs a server.')
+  const browser = await browserFor(await requireConnection(connectionId))
+  try {
+    return await fn(browser)
+  } finally {
+    browser.close()
+  }
 }
 
 export function registerIpc(): void {
@@ -164,42 +191,87 @@ export function registerIpc(): void {
     }
   })
 
-  handle(IPC.fsMkdirRemote, RemotePathRequestSchema, async ({ connectionId, path }) => {
-    const connection = await requireConnection(connectionId)
-    const browser = await browserFor(connection)
-    try {
-      await browser.mkdir(path)
-      return true
-    } finally {
-      browser.close()
-    }
+  /**
+   * The mutating operations, local and remote.
+   *
+   * Each takes a directory and a bare entry name and joins them here, so the
+   * renderer names a thing inside the folder it is showing rather than handing
+   * the main process a path to act on. `resolveLocalPath` still expands `~`,
+   * but it is applied to the directory only.
+   */
+  handle(IPC.fsMkdirLocal, CreateEntryRequestSchema, async ({ directory, name }) => {
+    await mkdir(join(resolveLocalPath(directory), name))
+    return true
   })
 
-  handle(IPC.fsRenameRemote, RenameRequestSchema, async ({ connectionId, from, to }) => {
-    const connection = await requireConnection(connectionId)
-    const browser = await browserFor(connection)
-    try {
-      await browser.rename(from, to)
-      return true
-    } finally {
-      browser.close()
-    }
+  handle(IPC.fsCreateFileLocal, CreateEntryRequestSchema, async ({ directory, name }) => {
+    // `wx` fails when the file exists rather than truncating it.
+    const handle = await open(join(resolveLocalPath(directory), name), 'wx')
+    await handle.close()
+    return true
   })
 
-  handle(
-    IPC.fsDeleteRemote,
-    z.object({ connectionId: z.string().min(1), path: PathSchema, isDirectory: z.boolean() }),
-    async ({ connectionId, path, isDirectory }) => {
-      const connection = await requireConnection(connectionId)
-      const browser = await browserFor(connection)
-      try {
-        if (isDirectory) await browser.rmdir(path)
-        else await browser.unlink(path)
+  handle(IPC.fsRenameLocal, RenameEntryRequestSchema, async ({ directory, from, to }) => {
+    const root = resolveLocalPath(directory)
+    const target = join(root, to)
+    // Renaming onto an existing name silently destroys it, so refuse. There is
+    // an unavoidable race here; it narrows a footgun rather than closing it.
+    if (await exists(target)) throw new Error(`“${to}” already exists here.`)
+    await rename(join(root, from), target)
+    return true
+  })
+
+  handle(IPC.fsDeleteLocal, DeleteEntryRequestSchema, async ({ directory, name, isDirectory }) => {
+    const target = join(resolveLocalPath(directory), name)
+    const stats = await lstat(target)
+    // A symlink to a directory reports as a directory to the caller; deleting
+    // it must still unlink the link rather than recurse into what it points at.
+    if (stats.isSymbolicLink()) {
+      await unlink(target)
+      return true
+    }
+    if (stats.isDirectory() !== isDirectory) throw new Error('That item changed on disk; refresh and try again.')
+    if (isDirectory) await rm(target, { recursive: true })
+    else await unlink(target)
+    return true
+  })
+
+  handle(IPC.fsMkdirRemote, CreateEntryRequestSchema, async ({ connectionId, directory, name }) =>
+    withBrowser(connectionId, async (browser) => {
+      await browser.mkdir(posix.join(directory, name))
+      return true
+    }),
+  )
+
+  handle(IPC.fsCreateFileRemote, CreateEntryRequestSchema, async ({ connectionId, directory, name }) =>
+    withBrowser(connectionId, async (browser) => {
+      await browser.createFile(posix.join(directory, name))
+      return true
+    }),
+  )
+
+  handle(IPC.fsRenameRemote, RenameEntryRequestSchema, async ({ connectionId, directory, from, to }) =>
+    withBrowser(connectionId, async (browser) => {
+      await browser.rename(posix.join(directory, from), posix.join(directory, to))
+      return true
+    }),
+  )
+
+  handle(IPC.fsDeleteRemote, DeleteEntryRequestSchema, async ({ connectionId, directory, name, isDirectory }) =>
+    withBrowser(connectionId, async (browser) => {
+      const target = posix.join(directory, name)
+      const stats = await browser.stat(target)
+      if (stats.type === 'symlink') {
+        await browser.unlink(target)
         return true
-      } finally {
-        browser.close()
       }
-    },
+      if ((stats.type === 'directory') !== isDirectory) {
+        throw new Error('That item changed on the server; refresh and try again.')
+      }
+      if (isDirectory) await browser.removeRecursive(target)
+      else await browser.unlink(target)
+      return true
+    }),
   )
 
   // --- transfers -----------------------------------------------------------

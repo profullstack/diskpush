@@ -1,9 +1,10 @@
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { join, normalize } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { app, BrowserWindow, protocol, shell } from 'electron'
 import { contentTypeFor, resolveBundlePath } from './bundle-path.js'
+import { resolveIconPath, WM_CLASS } from './icon-path.js'
 import { contentSecurityPolicy, inlineScriptHashes } from './csp.js'
 import { registerIpc } from './ipc.js'
 import { checkForUpdates } from './services/updater.js'
@@ -22,6 +23,22 @@ const here = join(fileURLToPath(import.meta.url), '..')
 
 const isDev = !app.isPackaged && process.env.DISKPUSH_DEV === '1'
 const DEV_URL = 'http://localhost:3210'
+
+/**
+ * Pinned before the app is ready, because Chromium reads it when it creates
+ * the window: a taskbar matches WM_CLASS against a .desktop file's
+ * StartupWMClass, and left to itself Chromium derives WM_CLASS from the
+ * executable name — different for the deb, the AppImage and a dev run.
+ */
+app.commandLine.appendSwitch('class', WM_CLASS)
+
+/** The window icon, which is also what a taskbar draws for the running app. */
+function iconPath(): string | undefined {
+  return resolveIconPath(
+    [join(process.resourcesPath, 'icon.png'), join(here, '..', '..', 'resources', 'icon.png')],
+    existsSync,
+  )
+}
 
 /**
  * The exported renderer is served over a real scheme rather than loaded from
@@ -88,6 +105,7 @@ function serveBundle(): void {
 }
 
 function createWindow(): BrowserWindow {
+  const icon = iconPath()
   const window = new BrowserWindow({
     width: 1360,
     height: 860,
@@ -95,6 +113,10 @@ function createWindow(): BrowserWindow {
     minHeight: 600,
     backgroundColor: '#0a0c10',
     title: 'DiskPush',
+    // Without this the window carries no _NET_WM_ICON and the taskbar draws a
+    // placeholder, which is what an app launched directly rather than from its
+    // .desktop file always looked like.
+    ...(icon ? { icon } : {}),
     webPreferences: {
       preload: join(here, '..', 'preload', 'index.cjs'),
       // The renderer gets no Node, no remote module, and its own sandbox. It
