@@ -110,11 +110,40 @@ export function buildCommand(options: BuildOptions): BuiltCommand {
   }
 
   const binary = INTERPRETER_BINARY[interpreter]
+  const errexit = options.failFast === false ? '' : 'e'
+
+  /*
+   * With a sudo password, stdin belongs to sudo and to nothing else.
+   *
+   * `sudo -S` reads the password from stdin *only when it actually needs one*.
+   * Under NOPASSWD, a cached timestamp, or when the login is already root, it
+   * reads nothing — and the password line then falls through to `sh -es` and
+   * is executed as command number one:
+   *
+   *     /bin/sh: 1: <the password>: not found
+   *
+   * That is not a corner case; it is what happens on every correctly
+   * configured deploy account. So in this mode the script travels as a
+   * quoted argument instead, and stdin carries the password alone. There is
+   * no ordering to get right because the two never share a stream.
+   */
+  if (sudo === 'password') {
+    const command = `${cd}${sudoPrefix(sudo)}${env}${binary} -${errexit}c ${shellQuote(script)}`
+    return {
+      command,
+      // The password is added by `withSudoPassword`, and it is all that ever
+      // goes to stdin here.
+      stdin: undefined,
+      display: `${cd}sudo -S ${env}${binary} -${errexit}c  <<'DISKPUSH'\n${script.trimEnd()}\nDISKPUSH`,
+    }
+  }
+
   // `-s` makes the interpreter read the script from stdin while still
-  // accepting arguments; `-e` stops at the first failing command.
-  const flags = options.failFast === false ? '-s' : '-es'
-  const inner = `${env}${binary} ${flags}`
-  const command = `${cd}${sudoPrefix(sudo)}${inner}`
+  // accepting arguments; `-e` stops at the first failing command. Preferred
+  // wherever stdin is free: nothing is quoted, so nothing can be misquoted,
+  // and a script is not bounded by the command-line length limit.
+  const flags = `-${errexit}s`
+  const command = `${cd}${sudoPrefix(sudo)}${env}${binary} ${flags}`
 
   return {
     command,
@@ -124,15 +153,31 @@ export function buildCommand(options: BuildOptions): BuiltCommand {
 }
 
 /**
- * Prepends the sudo password to whatever the process reads first.
+ * Puts the sudo password on stdin, and nothing else.
  *
- * `sudo -S` takes the password as the first line on stdin and hands the rest
- * to the command it runs, so a shell script piped in behind it still arrives
- * intact. Kept separate from `buildCommand` so the password never travels
- * through the same object that gets logged.
+ * It used to prepend the password to the script, on the theory that `sudo -S`
+ * eats the first line and hands the rest on. It does — but only when it needs
+ * a password at all. Under NOPASSWD, a cached timestamp, or an already-root
+ * login it reads nothing, the shell gets the password as its first command,
+ * and the run dies with `<password>: not found` — leaking the password into
+ * an error message on the way.
+ *
+ * `buildCommand` therefore routes the script through an argument whenever
+ * this mode is used, leaving stdin free. Refuses rather than silently
+ * corrupting if that ever stops being true.
+ *
+ * Kept separate from `buildCommand` so the password never travels through the
+ * object that gets logged: `display` is built before this is called and is
+ * not touched by it.
  */
 export function withSudoPassword(built: BuiltCommand, password: string): BuiltCommand {
-  return { ...built, stdin: `${password}\n${built.stdin ?? ''}` }
+  if (built.stdin !== undefined) {
+    throw new Error('A sudo password cannot share stdin with a script; buildCommand should have left it free.')
+  }
+  // A password containing a newline would end the line sudo reads and send
+  // the remainder to the command. It cannot be escaped, only rejected.
+  if (/[\r\n]/.test(password)) throw new Error('A sudo password cannot contain a newline.')
+  return { ...built, stdin: `${password}\n` }
 }
 
 /**
@@ -150,7 +195,20 @@ export function withSudoPassword(built: BuiltCommand, password: string): BuiltCo
 const SUDO_NEEDS_AUTH =
   /sudo:.*(password is required|interactive authentication is required|a terminal is required|no askpass program|must have a tty)/i
 
+/**
+ * A password that was supplied and refused.
+ *
+ * Checked first, because sudo says both things on a failed attempt — the
+ * refusal, and then "authentication required but not attempted" once it runs
+ * out of input. Reporting the second would tell someone who *did* supply a
+ * password to supply one.
+ */
+const SUDO_REJECTED = /sudo:.*(authentication failed|sorry, try again|incorrect password)/i
+
 export function explainSudoFailure(stderr: string): string | null {
+  if (SUDO_REJECTED.test(stderr)) {
+    return 'The sudo password was refused by this server. Nothing was run.'
+  }
   if (!SUDO_NEEDS_AUTH.test(stderr)) return null
   return (
     'sudo on this server wants a password. Re-run with --sudo-password to be asked for it once, ' +
