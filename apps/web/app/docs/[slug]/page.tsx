@@ -1,6 +1,7 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
+import { DocsCopyButtons } from '@/components/docs-copy'
 import { listDocs, readDoc } from '@/lib/docs'
 
 type Params = { params: Promise<{ slug: string }> }
@@ -58,6 +59,7 @@ export default async function DocPage({ params }: Params) {
 
       <article className="prose-docs min-w-0 flex-1">
         <div dangerouslySetInnerHTML={{ __html: doc.html }} />
+        <DocsCopyButtons />
       </article>
     </div>
   )

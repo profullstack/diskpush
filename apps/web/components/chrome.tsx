@@ -1,4 +1,5 @@
 import Link from 'next/link'
+import { CopyButton } from '@/components/copy-button'
 import { NAV, SITE } from '@/lib/site'
 
 /** Server components: the navigation needs no JavaScript to work. */
@@ -73,16 +74,28 @@ function Logo() {
   )
 }
 
-export function Code({ children, label }: { children: string; label?: string }) {
+export function Code({
+  children,
+  label,
+  copyable = true,
+}: {
+  children: string
+  label?: string
+  /** Off for diagrams: copying an ASCII drawing is not something anyone wants. */
+  copyable?: boolean
+}) {
   return (
     // `min-w-0` matters: without it this block is a grid child with
     // min-width:auto, and the pre below widens the page rather than scrolling.
-    <div className="min-w-0 overflow-hidden rounded-lg border border-line bg-surface">
-      {label ? (
-        <div className="border-b border-line px-4 py-2 font-mono text-[11px] uppercase tracking-wider text-muted">
-          {label}
-        </div>
-      ) : null}
+    <div className="group relative min-w-0 overflow-hidden rounded-lg border border-line bg-surface">
+      <div className="flex items-center gap-3 border-b border-line px-4 py-2">
+        <span className="font-mono text-[11px] uppercase tracking-wider text-muted">{label ?? 'shell'}</span>
+        {copyable ? (
+          <span className="ml-auto">
+            <CopyButton value={children} />
+          </span>
+        ) : null}
+      </div>
       <pre className="overflow-x-auto p-4 font-mono text-[13px] leading-relaxed">
         <code>{children}</code>
       </pre>

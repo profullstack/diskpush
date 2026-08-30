@@ -143,10 +143,10 @@ function HowItWorks() {
           DiskPush controls the transfer. Your files move directly between the endpoints.
         </p>
         <div className="mt-8 grid min-w-0 gap-4 lg:grid-cols-2">
-          <Code label="browsing">{`DiskPush Desktop ──SFTP/SSH──> Server 1
+          <Code label="browsing" copyable={false}>{`DiskPush Desktop ──SFTP/SSH──> Server 1
         │
         └──────────SFTP/SSH──> Server 2`}</Code>
-          <Code label="transfer">{`Server 1 ═══════ rsync/SSH ═══════> Server 2
+          <Code label="transfer" copyable={false}>{`Server 1 ═══════ rsync/SSH ═══════> Server 2
 
 Desktop relay:  none
 DiskPush relay: none`}</Code>
@@ -217,7 +217,7 @@ function Desktop() {
               How the desktop app works →
             </Link>
           </div>
-          <Code label="two-pane workspace">{`┌──────────────────────────┬──────────────────────────┐
+          <Code label="two-pane workspace" copyable={false}>{`┌──────────────────────────┬──────────────────────────┐
 │ LEFT: Local / Server 1   │ RIGHT: Remote / Server 2 │
 │ [ Local ▼ ]              │ [ production ▼ ]         │
 │ /home/anthony/projects   │ /var/www                 │
