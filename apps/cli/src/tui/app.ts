@@ -6,7 +6,7 @@ import { SftpBrowser, SshSession } from '@diskpush/ssh-core'
 import { defaultRsyncOptions, summarizeChanges, type Connection } from '@diskpush/schemas'
 import { parseEndpoint, planTransfer, runToCompletion } from '@diskpush/rsync-core'
 import { isChar, type Key } from './keys.js'
-import { ansi, formatSize, pad, truncate, width } from './render.js'
+import { ansi, formatSize, pad, truncate, width as width_ } from './render.js'
 
 /**
  * A two-pane browser in the terminal.
@@ -33,7 +33,53 @@ export type Pane = {
   error: string | null
 }
 
-const HELP = 'tab switch   arrows/jk move   enter open   left up   s sync to other   p preview   r refresh   q quit'
+const HELP =
+  'tab switch   arrows/jk move   enter open   left up   c change endpoint   s sync to other   p preview   r refresh   q quit'
+
+/** Somewhere a pane can point at: this machine, or a server. */
+export type EndpointChoice = {
+  label: string
+  detail: string
+  connection: Connection | null
+  path: string
+}
+
+/**
+ * Everywhere a pane can be pointed: this machine, then saved connections, then
+ * `~/.ssh/config` hosts.
+ *
+ * Deduplicated by name, in that order of precedence — a saved connection wins
+ * over an ssh_config host of the same name (it carries a port, a key and a
+ * default path), and ssh_config itself can list one alias more than once.
+ */
+export function buildEndpointChoices(
+  saved: readonly Connection[],
+  sshHosts: readonly Connection[],
+  localPath: string,
+): EndpointChoice[] {
+  const choices: EndpointChoice[] = [
+    { label: 'Local', detail: 'this machine', connection: null, path: localPath },
+    ...saved.map((connection) => ({
+      label: connection.name,
+      detail: `${connection.username}@${connection.host}`,
+      connection,
+      path: connection.defaultRemotePath ?? '.',
+    })),
+    ...sshHosts.map((connection) => ({
+      label: connection.name,
+      detail: `${connection.username}@${connection.host}  (ssh config)`,
+      connection,
+      path: '.',
+    })),
+  ]
+
+  const seen = new Set<string>()
+  return choices.filter((choice) => {
+    if (seen.has(choice.label)) return false
+    seen.add(choice.label)
+    return true
+  })
+}
 
 export function blankPane(label: string, path: string, connection: Connection | null = null): Pane {
   return { label, connection, path, entries: [], index: 0, offset: 0, error: null }
@@ -45,8 +91,14 @@ export class Tui {
   private status = ''
   private busy = false
   private readonly sessions = new Map<string, SshSession>()
+  /** Open endpoint picker, or null. It owns the keyboard while it is up. */
+  private picker: { index: number } | null = null
 
-  constructor(left: Pane, right: Pane) {
+  constructor(
+    left: Pane,
+    right: Pane,
+    private readonly choices: readonly EndpointChoice[] = [],
+  ) {
     this.panes = { left, right }
   }
 
@@ -89,8 +141,11 @@ export class Tui {
   }
 
   render(): void {
-    const columns = process.stdout.columns ?? 100
-    const rows = process.stdout.rows ?? 30
+    // `||` not `??`: a terminal that reports 0 columns (some pty wrappers do)
+    // is unknown, not zero-width, and `?? 100` lets the 0 through — which made
+    // a box width negative and crashed on String.repeat.
+    const columns = Math.max(48, process.stdout.columns || 100)
+    const rows = Math.max(12, process.stdout.rows || 30)
     const paneWidth = Math.max(20, Math.floor((columns - 3) / 2))
     const listHeight = Math.max(3, rows - 6)
 
@@ -100,7 +155,7 @@ export class Tui {
     const headers = (['left', 'right'] as const).map((side) => {
       const pane = this.panes[side]
       this.clampScroll(side, listHeight)
-      const room = Math.max(8, paneWidth - width(pane.label) - 3)
+      const room = Math.max(8, paneWidth - width_(pane.label) - 3)
       const header = `${pane.label} ${ansi.dim}${truncate(pane.path, room)}${ansi.reset}`
       const marker = side === this.active ? `${ansi.blue}>${ansi.reset}` : ' '
       return `${marker}${pad(header, paneWidth)}`
@@ -125,7 +180,10 @@ export class Tui {
 
     out.push('')
     out.push(this.status === '' ? `${ansi.dim}${truncate(HELP, columns - 1)}${ansi.reset}` : truncate(this.status, columns - 1))
-    process.stdout.write(out.join('\n'))
+
+    let frame = out.join('\n')
+    if (this.picker) frame += this.renderPicker(columns, rows)
+    process.stdout.write(frame)
   }
 
   private clampScroll(side: Side, height: number): void {
@@ -145,10 +203,27 @@ export class Tui {
 
   /** Returns false when the app should exit. */
   async onKey(key: Key): Promise<boolean> {
-    if (key === 'escape' || isChar(key, 'q') || isChar(key, CTRL_C)) return false
+    if (isChar(key, CTRL_C)) return false
+
+    if (this.picker) {
+      // Escape closes the picker rather than the app: inside a dialog it means
+      // "not this", which is not the same as "quit".
+      if (key === 'escape' || isChar(key, 'q')) {
+        this.picker = null
+      } else if (key === 'up' || isChar(key, 'k')) {
+        this.picker.index = Math.max(0, this.picker.index - 1)
+      } else if (key === 'down' || isChar(key, 'j')) {
+        this.picker.index = Math.min(this.choices.length - 1, this.picker.index + 1)
+      } else if (key === 'enter' || key === 'right' || isChar(key, 'l')) {
+        await this.choose(this.picker.index)
+      }
+      return true
+    }
+
+    if (key === 'escape' || isChar(key, 'q')) return false
     if (this.busy) return true
 
-    const page = Math.max(1, (process.stdout.rows ?? 30) - 8)
+    const page = Math.max(1, Math.max(12, process.stdout.rows || 30) - 8)
 
     if (key === 'tab') {
       this.active = this.active === 'left' ? 'right' : 'left'
@@ -168,6 +243,8 @@ export class Tui {
       await this.goUp()
     } else if (key === 'right' || key === 'enter' || isChar(key, 'l')) {
       await this.enter()
+    } else if (isChar(key, 'c')) {
+      this.openPicker()
     } else if (isChar(key, 'r')) {
       await this.load(this.active)
     } else if (isChar(key, 'p')) {
@@ -182,6 +259,87 @@ export class Tui {
     const pane = this.current
     const last = Math.max(0, pane.entries.length - 1)
     pane.index = Math.min(last, Math.max(0, pane.index + delta))
+  }
+
+  private openPicker(): void {
+    if (this.choices.length === 0) {
+      this.status = `${ansi.yellow}No servers configured. Add one with: diskpush connections add NAME user@host${ansi.reset}`
+      return
+    }
+    const current = this.current.connection
+    const at = this.choices.findIndex((choice) =>
+      current ? choice.connection?.name === current.name : choice.connection === null,
+    )
+    this.picker = { index: at >= 0 ? at : 0 }
+  }
+
+  /** Points the active pane at the chosen endpoint and lists it. */
+  private async choose(index: number): Promise<void> {
+    const choice = this.choices[index]
+    this.picker = null
+    if (!choice) return
+
+    const pane = this.panes[this.active]
+    pane.label = choice.label
+    pane.connection = choice.connection
+    pane.path = choice.path
+    pane.entries = []
+    pane.index = 0
+    pane.offset = 0
+    pane.error = null
+
+    this.busy = true
+    this.status = `${ansi.dim}Connecting to ${choice.label}...${ansi.reset}`
+    this.render()
+    try {
+      await this.load(this.active)
+      this.status = pane.error ? `${ansi.red}${truncate(pane.error, 200)}${ansi.reset}` : ''
+    } finally {
+      this.busy = false
+    }
+  }
+
+  /** Draws the picker over the panes. Returns the lines it occupies. */
+  private renderPicker(columns: number, rows: number): string {
+    const width = Math.max(28, Math.min(64, columns - 8))
+    const left = Math.max(1, Math.floor((columns - width) / 2))
+    const index = this.picker?.index ?? 0
+
+    // A machine with forty hosts in ~/.ssh/config would otherwise draw a box
+    // taller than the terminal, so the list scrolls with the selection.
+    const visible = Math.max(3, Math.min(this.choices.length, rows - 8))
+    const half = Math.floor(visible / 2)
+    const start = Math.max(0, Math.min(this.choices.length - visible, index - half))
+    const shown = this.choices.slice(start, start + visible)
+
+    const top = Math.max(1, Math.floor((rows - visible - 4) / 2))
+    const out: string[] = []
+    const line = (row: number, body: string) => out.push(`${ansi.moveTo(row, left)}${body}`)
+    const inner = width - 2
+
+    const title =
+      this.choices.length > visible
+        ? `Point this pane at   ${start + 1}-${start + shown.length} of ${this.choices.length}`
+        : 'Point this pane at'
+
+    line(top, `${ansi.blue}+${'-'.repeat(inner)}+${ansi.reset}`)
+    line(top + 1, `${ansi.blue}|${ansi.reset}${ansi.bold}${pad(` ${title}`, inner)}${ansi.reset}${ansi.blue}|${ansi.reset}`)
+
+    shown.forEach((choice, i) => {
+      const at = start + i
+      const label = pad(truncate(choice.label, 20), 20)
+      const detail = truncate(choice.detail, Math.max(4, inner - 24))
+      const body = ` ${label} ${detail}`
+      const text =
+        at === index
+          ? `${ansi.reverse}${pad(body, inner)}${ansi.reset}`
+          : `${pad(` ${label} `, 22)}${ansi.dim}${detail}${ansi.reset}${' '.repeat(Math.max(0, inner - 22 - width_(detail)))}`
+      line(top + 2 + i, `${ansi.blue}|${ansi.reset}${text}${ansi.blue}|${ansi.reset}`)
+    })
+
+    line(top + 2 + shown.length, `${ansi.blue}|${ansi.reset}${ansi.dim}${pad(' enter select   esc cancel', inner)}${ansi.reset}${ansi.blue}|${ansi.reset}`)
+    line(top + 3 + shown.length, `${ansi.blue}+${'-'.repeat(inner)}+${ansi.reset}`)
+    return out.join('')
   }
 
   private async enter(): Promise<void> {

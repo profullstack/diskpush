@@ -81,6 +81,21 @@ export function sshConfigConnection(alias: string, env: NodeJS.ProcessEnv = proc
   }
 }
 
+/** Every host in ~/.ssh/config, as unsaved connections. */
+export function sshConfigHosts(env: NodeJS.ProcessEnv = process.env): Connection[] {
+  const path = env.DISKPUSH_SSH_CONFIG ?? join(homedir(), '.ssh', 'config')
+  let contents: string
+  try {
+    contents = readFileSync(path, 'utf8')
+  } catch {
+    return []
+  }
+  return parseSshConfig(contents)
+    .filter((host) => host.hostName || host.user)
+    .map((host) => sshConfigConnection(host.alias, env))
+    .filter((connection): connection is Connection => connection !== null)
+}
+
 export async function resolveEndpoint(store: DiskPushStore, input: string): Promise<ResolvedEndpoint> {
   const endpoint = parseEndpoint(input)
   if (endpoint.type === 'local') return { endpoint, connection: null }

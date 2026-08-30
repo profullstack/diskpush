@@ -68,9 +68,15 @@ diskpush tui ./dist prod:/srv/   # both sides named
 diskpush desktop                 # launch the desktop app
 ```
 
-In the TUI: `tab` switches pane, `j`/`k` move, `l` or Enter opens, `h` goes up,
-`s` syncs the active pane into the other, `p` previews that sync, `r` refreshes,
-`q` quits. It deliberately offers no Mirror — deleting files from a keystroke,
+In the TUI: `tab` switches pane, arrows or `j`/`k` move, Enter or `l` opens,
+`h` or left goes up, **`c` points the active pane somewhere else**, `s` syncs
+the active pane into the other, `p` previews that sync, `r` refreshes, `q`
+quits.
+
+`c` opens a picker listing Local, your saved connections, and the hosts in
+`~/.ssh/config` — so either pane can be a server without naming one on the
+command line, and `diskpush tui` on its own is a useful starting point rather
+than two local directories. It deliberately offers no Mirror — deleting files from a keystroke,
 with no delete list on screen, is the accident the rest of DiskPush exists to
 prevent. Use `diskpush mirror`.
 

@@ -2,8 +2,8 @@ import type { DiskPushStore } from '@diskpush/database'
 import { EXIT } from '../exit-codes.js'
 import { failure, type Output } from '../output.js'
 import { flagValue, type ParsedArgv } from '../parse-argv.js'
-import { resolveEndpoint } from '../resolve.js'
-import { blankPane, defaultLocalPath, Tui } from '../tui/app.js'
+import { resolveEndpoint, sshConfigHosts } from '../resolve.js'
+import { blankPane, buildEndpointChoices, defaultLocalPath, Tui } from '../tui/app.js'
 import { parseKeys } from '../tui/keys.js'
 import { ansi } from '../tui/render.js'
 
@@ -39,7 +39,8 @@ export async function runTui(parsed: ParsedArgv, store: DiskPushStore, output: O
     panes.push(blankPane(resolved.connection.name, resolved.endpoint.path, resolved.connection))
   }
 
-  const tui = new Tui(panes[0]!, panes[1]!)
+  const choices = buildEndpointChoices(await store.listConnections(), sshConfigHosts(), defaultLocalPath())
+  const tui = new Tui(panes[0]!, panes[1]!, choices)
 
   const restore = () => {
     process.stdout.write(ansi.showCursor + ansi.mainScreen)
