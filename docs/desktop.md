@@ -37,6 +37,22 @@ Skip unchanged files: On
 Delete destination-only files: Off
 ```
 
+## Servers
+
+**Servers** in the header opens the manager: every saved server on the left,
+every field of the selected one on the right. New, Duplicate, Import from
+`~/.ssh/config`, Save, Test, Delete. It is one list shared by both tabs — the
+same servers back the transfer panes and Fleet.
+
+Fields the New-server dialog never exposed are here, **tags** most usefully:
+Fleet selects on them (`--on tag:production`), and there was previously
+nowhere in the app to set one. Also the jump host, a non-standard remote rsync
+path, notes, and agent forwarding.
+
+`~/.ssh/config` hosts are listed but not edited — that is somebody else's
+file. **Save a copy** turns one into a connection of your own and leaves the
+file alone.
+
 ## Saved pairs
 
 The strip above the panes holds saved profiles: click one to restore its
