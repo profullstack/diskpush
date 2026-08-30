@@ -1,24 +1,32 @@
 @import 'tailwindcss';
 
+/* Sampled from logo.dark.png: primary #0054fc–#006cfc, cyan #009cfc, and the
+   navy #001830 of the wordmark. The greys are cool to sit under them. */
 @theme {
   --color-ink: #070c16;
+  --color-chrome: #0b111d;
   --color-surface: #0e1522;
   --color-raised: #141d2c;
+  --color-sunken: #0c1320;
   --color-line: #1f2a3c;
+  --color-line-strong: #22304a;
   --color-text: #e8edf6;
+  --color-dim: #b8c4d9;
   --color-muted: #8d9bb3;
+  --color-faint: #64748b;
+  /* Lifted from the logo blue so it stays legible as text on the dark ground;
+     accent-strong is the logo blue itself, used behind white. */
   --color-accent: #3d86ff;
   --color-accent-strong: #0b62fd;
+  --color-cyan: #009cfc;
+  --color-ok: #4ade80;
   --color-danger: #f87171;
   --color-warn: #fbbf24;
-  --font-mono: ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
 }
 
 :root { color-scheme: dark; }
 
-html, body, #__next {
-  height: 100%;
-}
+html, body { height: 100%; }
 
 body {
   margin: 0;
@@ -27,20 +35,39 @@ body {
   font-size: 13px;
   overflow: hidden;
   -webkit-font-smoothing: antialiased;
-  /* A file manager is a chrome-less surface; nothing here should feel like a
-     web page you can accidentally select and drag. */
+  /* A file manager is chrome, not a document: nothing here should feel
+     selectable and draggable by accident. Text that matters opts back in. */
   user-select: none;
 }
+
+/* Paths, sizes and commands are the things people copy, so they select. */
+.selectable { user-select: text; }
+
+/* A scrollbar that does not shout inside a dark pane. */
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb {
+  background: #22304a;
+  border-radius: 6px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover { background: #33445f; background-clip: content-box; }
 
 @media (prefers-color-scheme: light) {
   :root {
     color-scheme: light;
     --color-ink: #ffffff;
-    --color-surface: #f5f7fa;
-    --color-raised: #ffffff;
+    --color-chrome: #f7f9fc;
+    --color-surface: #ffffff;
+    --color-raised: #f2f5fa;
+    --color-sunken: #f7f9fc;
     --color-line: #dfe4ed;
+    --color-line-strong: #cbd4e2;
     --color-text: #001830;
+    --color-dim: #35435c;
     --color-muted: #55627a;
+    --color-faint: #7a869c;
     --color-accent: #0b62fd;
     --color-accent-strong: #0b62fd;
   }

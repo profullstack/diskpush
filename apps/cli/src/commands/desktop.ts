@@ -56,6 +56,7 @@ export async function runDesktop(parsed: ParsedArgv, output: Output): Promise<nu
   const child = spawn(found, parsed.positionals, {
     detached: !attach,
     stdio: attach ? 'inherit' : 'ignore',
+    env: desktopEnv(),
   })
 
   if (!attach) {
@@ -68,4 +69,21 @@ export async function runDesktop(parsed: ParsedArgv, output: Output): Promise<nu
     child.on('error', () => resolve(EXIT.unavailable))
     child.on('close', (code) => resolve(code ?? EXIT.ok))
   })
+}
+
+/**
+ * The environment for the desktop app.
+ *
+ * `ELECTRON_RUN_AS_NODE` has to be removed. A desktop install runs the CLI on
+ * the Node inside Electron, so the shim sets that variable — and a plain
+ * `spawn` inherits it, which makes the app start as a Node process and exit
+ * immediately instead of opening a window. The symptom is the worst kind:
+ * `diskpush desktop` reports that it launched, and nothing appears, while
+ * running the very same launcher from a shell works.
+ */
+export function desktopEnv(source: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const env = { ...source }
+  delete env.ELECTRON_RUN_AS_NODE
+  delete env.ELECTRON_NO_ATTACH_CONSOLE
+  return env
 }
