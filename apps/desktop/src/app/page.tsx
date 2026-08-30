@@ -54,8 +54,26 @@ export default function Workspace() {
     void (async () => {
       const home = await unwrap(api()?.fs.homeLocal())
       setLeft(blankPane({ kind: 'local' }, home))
-      setRight(blankPane({ kind: 'local' }, home))
-      await refreshConnections()
+
+      // The right pane used to open on local too, so DiskPush launched as a
+      // two-pane view of the same directory twice -- a local file manager,
+      // which is the one job this is not for. Open on a server when there is
+      // one, so the window arrives in the state the tool exists to be in.
+      // Saved connections come first: they were configured deliberately, where
+      // an ssh_config host is only something that happens to be on the box.
+      const [savedList, hosts] = await Promise.all([
+        unwrap(api()?.connections.list()),
+        unwrap(api()?.connections.sshConfigHosts()),
+      ])
+      setSaved(savedList)
+      setSshConfig(hosts)
+
+      const first = savedList[0] ?? hosts[0]
+      setRight(
+        first
+          ? blankPane({ kind: 'ssh', connectionId: first.id }, first.defaultRemotePath ?? '.')
+          : blankPane({ kind: 'local' }, home),
+      )
     })().catch((caught: unknown) => setError(caught instanceof Error ? caught.message : String(caught)))
   }, [refreshConnections])
 
@@ -171,7 +189,28 @@ export default function Workspace() {
   return (
     <div className="flex h-full flex-col">
       <header className="flex h-[52px] shrink-0 items-center gap-4 border-b border-line bg-chrome px-4">
-        <Image src="/logo.dark.png" alt="DiskPush" width={2172} height={724} className="h-[22px] w-auto" priority />
+        {/*
+          Two files, not one. logo.dark.png is the lockup FOR a dark background:
+          its "Disk" is white, so on the light theme it vanished and the header
+          read a lone blue "Push". Swapped by media query rather than by reading
+          the scheme in JS, so it is right in the first paint and never flips.
+        */}
+        <Image
+          src="/logo.dark.png"
+          alt="DiskPush"
+          width={2172}
+          height={724}
+          className="hidden h-[22px] w-auto dark:block"
+          priority
+        />
+        <Image
+          src="/logo.png"
+          alt="DiskPush"
+          width={2172}
+          height={724}
+          className="block h-[22px] w-auto dark:hidden"
+          priority
+        />
         <div className="h-5 w-px bg-line" />
         <div className="flex items-center gap-2 text-[12px] text-muted-foreground">
           <CircleCheck className="size-3.5 text-ok" />

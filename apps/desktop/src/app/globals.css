@@ -2,7 +2,15 @@
 @import 'tw-animate-css';
 @import 'shadcn/tailwind.css';
 
-@custom-variant dark (&:is(.dark *));
+/*
+ * shadcn ships this as `&:is(.dark *)`, which keys every `dark:` utility to a
+ * `.dark` class on an ancestor. This app never sets that class -- it themes off
+ * prefers-color-scheme (see :root and the light media query below) -- so every
+ * `dark:` utility in the tree silently did nothing, including the ones shadcn's
+ * own button, checkbox, select and input-group rely on for their dark fills.
+ * Pointing the variant at the same signal the palette uses makes them real.
+ */
+@custom-variant dark (@media (prefers-color-scheme: dark));
 
 /*
  * The brand, sampled from logo.dark.png: primary #0054fc-#006cfc, cyan
