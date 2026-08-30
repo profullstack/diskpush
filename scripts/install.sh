@@ -116,72 +116,37 @@ if [ "$WANT_DESKTOP" = yes ]; then
     tar -xzf "$WORK/app.tar.gz" -C "$SHARE/app" --strip-components=1
     METHOD=linux-app
 
-    # Chromium wants one of two sandboxes. The namespace sandbox needs
-    # unprivileged user namespaces; the fallback SUID helper needs
-    # chrome-sandbox owned by root with mode 4755, which an install without
-    # root cannot set. Where a kernel denies the first and we cannot provide
-    # the second, Electron aborts on launch:
-    #
-    #   FATAL:setuid_sandbox_host.cc(163) The SUID sandbox helper binary was
-    #   found, but is not configured correctly.
-    #
-    # So the launcher decides at run time rather than the installer guessing,
-    # and only drops the sandbox when neither option is actually available.
-    cat > "$SHARE/app/launch.sh" <<'LAUNCH'
-#!/bin/bash
-# Chooses a sandbox before starting DiskPush.
-#
-# Chromium needs one of two: the namespace sandbox, which needs unprivileged
-# user namespaces, or the SUID helper, which needs chrome-sandbox owned by root
-# with mode 4755 and so is unavailable to an install without root. With
-# neither, it aborts on launch with SIGTRAP:
-#
-#   FATAL:setuid_sandbox_host.cc(163) The SUID sandbox helper binary was found,
-#   but is not configured correctly.
+    # The launcher ships inside the bundle, so it is versioned with the app it
+    # starts. It used to be written here, and that split one behaviour across
+    # two release cadences: the app came from a git tag, its launcher from
+    # whatever installer happened to be deployed. They disagreed exactly once
+    # and it cost a release — v0.1.3 shipped correct binaries while this script,
+    # last deployed before the fix, kept writing the broken launcher over them.
+    if [ -f "$SHARE/app/resources/launch.sh" ]; then
+      cp "$SHARE/app/resources/launch.sh" "$SHARE/app/launch.sh"
+    else
+      # Bundles before 0.1.4 carry no launcher. Write one, with the same
+      # decision, so pinning an old version is not a way to get the crash back.
+      cat > "$SHARE/app/launch.sh" <<'FALLBACK'
+#!/bin/sh
 set -eu
 here="$(cd "$(dirname "$0")" && pwd)"
 app="$here/diskpush-desktop"
 
-sandbox_unavailable() {
-  # A correctly configured SUID helper settles it; a .deb install sets this up.
-  [ -u "$here/chrome-sandbox" ] && return 1
-
-  # Do NOT trust `unshare --user true` alone. Ubuntu 24.04+ restricts
-  # unprivileged user namespaces through AppArmor but ships a profile for
-  # unshare itself, so the probe succeeds while an unconfined binary like this
-  # one is still denied. Reading the policy directly is what tells the truth.
-  if [ "$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>/dev/null || echo 0)" = "1" ]; then
-    return 0
-  fi
-
-  unshare --user true >/dev/null 2>&1 && return 1
-  return 0
-}
-
-if sandbox_unavailable; then
-  echo "diskpush: this kernel restricts unprivileged user namespaces, and the SUID" >&2
-  echo "          sandbox helper needs root to configure, which this install does" >&2
-  echo "          not have. Starting without Chromium's sandbox." >&2
-  echo "          For a sandboxed install use the .deb: https://diskpush.com/download" >&2
+# A correctly configured SUID helper settles it. Otherwise: do not trust
+# `unshare --user true`, which succeeds under a profile of its own while an
+# unconfined binary is denied. The policy file is what tells the truth.
+if [ -u "$here/chrome-sandbox" ]; then
+  exec "$app" "$@"
+fi
+if [ "$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>/dev/null || echo 0)" = "1" ] \
+  || ! unshare --user true >/dev/null 2>&1; then
+  echo "diskpush: no usable Chromium sandbox here; starting without it." >&2
   exec "$app" --no-sandbox "$@"
 fi
-
-# The checks above are the best that can be known in advance, and they have
-# been wrong before. If the app dies immediately complaining about the sandbox,
-# believe it over the probe rather than leaving the user with a core dump.
-errors="$(mktemp)"
-trap 'rm -f "$errors"' EXIT INT TERM
-if "$app" "$@" 2> >(tee "$errors" >&2); then
-  exit 0
-fi
-status=$?
-
-if grep -qE 'sandbox|SUID' "$errors" 2>/dev/null; then
-  echo "diskpush: the sandbox was unavailable after all; restarting without it." >&2
-  exec "$app" --no-sandbox "$@"
-fi
-exit $status
-LAUNCH
+exec "$app" "$@"
+FALLBACK
+    fi
     chmod 0755 "$SHARE/app/launch.sh"
 
     # A launcher, an icon, and a menu entry. This is what a .deb would give
