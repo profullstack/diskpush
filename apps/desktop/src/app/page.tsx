@@ -447,8 +447,16 @@ export default function Workspace() {
         footer and status band; Fleet brings its own, pinned so the action
         it exists for cannot scroll out of reach.
       */}
-      {tab === 'transfer' ? (
-        <>
+      {/*
+        Both views stay MOUNTED, and the inactive one is hidden.
+
+        This was a ternary, so switching tabs unmounted the other branch and
+        React threw its state away: a half-written script, the servers you had
+        ticked, the output of a run still going. Clicking Transfer to check a
+        path and coming back to a blank Fleet view is not a tab, it is a
+        reset.
+      */}
+      <div className={`flex min-h-0 flex-1 flex-col ${tab === 'transfer' ? '' : 'hidden'}`}>
         <ProfileBar
           profiles={profiles}
           routeLabel={route}
@@ -532,10 +540,11 @@ export default function Workspace() {
             {rsyncFlags}
           </span>
         </footer>
-        </>
-      ) : (
+      </div>
+
+      <div className={`flex min-h-0 flex-1 flex-col ${tab === 'fleet' ? '' : 'hidden'}`}>
         <FleetView onAddServer={() => setShowConnection(true)} />
-      )}
+      </div>
 
       <ConnectionDialog open={showConnection} onClose={() => setShowConnection(false)} onSaved={() => void refreshConnections()} />
 
