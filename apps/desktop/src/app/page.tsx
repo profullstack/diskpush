@@ -17,12 +17,13 @@ import {
 } from 'lucide-react'
 import { ConnectionDialog } from '@/components/connection-dialog'
 import { FleetView } from '@/components/fleet-view'
+import { ProfileBar } from '@/components/profile-bar'
 import { endpointLabel, loadPane, Pane, type PaneEndpoint, type PaneState } from '@/components/pane'
 import { TransferRail } from '@/components/transfer-rail'
 import { MirrorPreviewDialog, TransferBand, type ActiveJob } from '@/components/transfer-panel'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { api, unwrap, type Connection, type PreviewResult, type TransferEvent } from '@/lib/api'
+import { api, unwrap, type Connection, type PreviewResult, type SyncProfile, type TransferEvent } from '@/lib/api'
 import { withTrailingSlash } from '@/lib/format'
 
 /** A row in the header menu. Plain button, styled once. */
@@ -90,6 +91,7 @@ export default function Workspace() {
   const [error, setError] = useState<string | null>(null)
   const [showConnection, setShowConnection] = useState(false)
   const [tab, setTab] = useState<'transfer' | 'fleet'>('transfer')
+  const [profiles, setProfiles] = useState<SyncProfile[]>([])
   const [outsideShell, setOutsideShell] = useState(false)
 
   const refreshConnections = useCallback(async () => {
@@ -133,6 +135,7 @@ export default function Workspace() {
       ])
       setSaved(savedList)
       setSshConfig(hosts)
+      setProfiles(await unwrap(api()?.profiles.list()))
 
       const first = savedList[0] ?? hosts[0]
       setRight(
@@ -231,6 +234,59 @@ export default function Workspace() {
     },
     [request],
   )
+
+  /**
+   * Restores a saved pair.
+   *
+   * The panes are set from the stored endpoints; Mirror follows the stored
+   * delete mode, because a profile that quietly left Mirror as you found it
+   * would be a profile that does something different every time.
+   */
+  const loadProfile = useCallback(
+    (profile: SyncProfile) => {
+      const toPane = (endpoint: SyncProfile['source']): PaneEndpoint =>
+        endpoint.type === 'local' || !endpoint.connectionId
+          ? { kind: 'local' }
+          : { kind: 'ssh', connectionId: endpoint.connectionId }
+
+      setError(null)
+      setLeft(blankPane(toPane(profile.source), profile.source.path))
+      setRight(blankPane(toPane(profile.destination), profile.destination.path))
+      setDirection('ltr')
+      setMirror(profile.options?.deleteMode !== undefined && profile.options.deleteMode !== 'off')
+    },
+    [],
+  )
+
+  const saveProfile = useCallback(
+    async (name: string) => {
+      setError(null)
+      try {
+        await unwrap(
+          api()?.profiles.save({
+            name,
+            source: request.source,
+            destination: request.destination,
+            options: request.options,
+          }),
+        )
+        setProfiles(await unwrap(api()?.profiles.list()))
+      } catch (caught) {
+        setError(caught instanceof Error ? caught.message : String(caught))
+      }
+    },
+    [request],
+  )
+
+  const removeProfile = useCallback(async (id: string) => {
+    setError(null)
+    try {
+      await unwrap(api()?.profiles.remove(id))
+      setProfiles(await unwrap(api()?.profiles.list()))
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught))
+    }
+  }, [])
 
   const run = useCallback(async () => {
     // Mirror always previews. A plain sync does not: its dry run costs a full
@@ -393,6 +449,14 @@ export default function Workspace() {
       */}
       {tab === 'transfer' ? (
         <>
+        <ProfileBar
+          profiles={profiles}
+          routeLabel={route}
+          busy={job !== null && !job.finished}
+          onLoad={loadProfile}
+          onSave={(name) => void saveProfile(name)}
+          onRemove={(id) => void removeProfile(id)}
+        />
         <div className="flex min-h-0 flex-1 gap-0 p-3.5">
           <Pane
             role="Source"

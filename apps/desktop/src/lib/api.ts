@@ -53,6 +53,15 @@ export type PreviewResult = {
   message: string
 }
 
+/** A saved source/destination pair with its options. Runnable from the CLI too. */
+export type SyncProfile = {
+  id: string
+  name: string
+  source: { type: 'local'; path: string } | { type: 'ssh'; connectionId?: string; host: string; path: string }
+  destination: { type: 'local'; path: string } | { type: 'ssh'; connectionId?: string; host: string; path: string }
+  options: { deleteMode: 'off' | 'delay' | 'during' | 'after' | 'before' }
+}
+
 export type StartedJob = { jobId: string; command: string; control: string | null; warnings: string[] }
 
 export type TransferProgress = {
@@ -215,7 +224,16 @@ type Api = {
     cancel(jobId: string): Promise<IpcResult<boolean>>
     list(limit?: number): Promise<IpcResult<unknown[]>>
   }
-  profiles: { list(): Promise<IpcResult<unknown[]>>; remove(id: string): Promise<IpcResult<boolean>> }
+  profiles: {
+    list(): Promise<IpcResult<SyncProfile[]>>
+    save(input: {
+      name: string
+      source: unknown
+      destination: unknown
+      options: { deleteMode: 'off' | 'delay' }
+    }): Promise<IpcResult<SyncProfile>>
+    remove(id: string): Promise<IpcResult<boolean>>
+  }
   fleet: {
     servers(): Promise<IpcResult<Connection[]>>
     commands(): Promise<IpcResult<FleetCommand[]>>

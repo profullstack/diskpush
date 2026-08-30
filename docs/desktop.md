@@ -37,6 +37,16 @@ Skip unchanged files: On
 Delete destination-only files: Off
 ```
 
+## Saved pairs
+
+The strip above the panes holds saved profiles: click one to restore its
+source, destination and options, **Save this pair** stores what is on screen,
+and the × deletes it. A profile with deletes enabled carries a red **mirror**
+mark.
+
+These are the same profiles the CLI uses — a pair saved here runs with
+`diskpush profile run NAME`. See [profiles.md](profiles.md).
+
 ## Mirror
 
 The destination pane stays browsable right up to the confirmation: you can
