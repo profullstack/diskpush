@@ -37,7 +37,7 @@ export async function latestRelease(): Promise<ReleaseInfo | null> {
   try {
     const response = await fetch(ENDPOINT, {
       headers: { Accept: 'application/vnd.github+json' },
-      next: { revalidate: 3600 },
+      next: { revalidate: 60 },
     })
     // A repository with no tagged release yet answers 404. That is a normal
     // state before launch, not an error worth surfacing to a visitor.

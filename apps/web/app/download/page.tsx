@@ -20,8 +20,15 @@ export const metadata: Metadata = {
 // old while `install.sh`, which asks the GitHub API at run time, was handing
 // out the current one.
 //
-// The fetch in latestRelease() keeps its own hourly cache, so per-request
-// rendering costs a render and not a GitHub call.
+// The fetch in latestRelease() keeps its own cache, so per-request rendering
+// costs a render and not a GitHub call. That cache is 60s rather than an hour:
+// a release is the one thing a visitor here is looking for, and v0.1.8 was
+// published and downloadable while this page still offered v0.1.7. Next
+// revalidates lazily -- on the first request after the window lapses, not on a
+// timer -- so the ceiling is 60 GitHub calls an hour and the real number
+// tracks traffic. Worth knowing before lowering it further: unauthenticated
+// GitHub allows exactly 60 an hour per IP, and latestRelease() answers null on
+// a refusal, which renders as no release at all.
 export const dynamic = 'force-dynamic'
 
 export default async function DownloadPage() {
