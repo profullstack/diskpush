@@ -112,27 +112,42 @@ export class Tui {
     const existing = this.sessions.get(connection.id)
     if (existing) return existing
 
-    const session = await SshSession.connect(connection, {
-      knownHostsPath: knownHostsPath(),
-      // Without this the first connection to any host fails with "not in
-      // known_hosts and DiskPush was not given a way to ask about it" — true,
-      // and useless: the answer is a keystroke away.
-      onUnknownHostKey: (details) =>
-        new Promise<boolean>((resolve) => {
-          this.hostKey = {
-            host: details.host,
-            fingerprint: details.fingerprint,
-            keyType: details.keyType,
-            decide: (trust) => {
-              this.hostKey = null
-              resolve(trust)
-            },
-          }
-          this.render()
-        }),
-    })
-    this.sessions.set(connection.id, session)
-    return session
+    try {
+      const session = await SshSession.connect(connection, {
+        knownHostsPath: knownHostsPath(),
+        // Without this the first connection to any host fails with "not in
+        // known_hosts and DiskPush was not given a way to ask about it" — true,
+        // and useless: the answer is a keystroke away.
+        onUnknownHostKey: (details) =>
+          new Promise<boolean>((resolve) => {
+            this.hostKey = {
+              host: details.host,
+              fingerprint: details.fingerprint,
+              keyType: details.keyType,
+              decide: (trust) => {
+                this.hostKey = null
+                resolve(trust)
+              },
+            }
+            this.render()
+          }),
+      })
+      this.sessions.set(connection.id, session)
+      return session
+    } finally {
+      // A connect that fails leaves its question on screen with nobody behind
+      // it. That is not a cosmetic leftover: the prompt owns the keyboard while
+      // it is up, so every key goes to a `decide` whose promise no one awaits
+      // any more -- arrows do nothing, and `q` does not quit. It is reached by
+      // simply not answering: readyTimeout fires after connectTimeoutSeconds,
+      // the connect rejects with "Timed out while waiting for handshake", and
+      // the question outlives the asker. The pane shows an error and the app
+      // looks frozen. Whoever asked is gone, so the question goes with them.
+      if (this.hostKey) {
+        this.hostKey = null
+        this.render()
+      }
+    }
   }
 
   async load(side: Side): Promise<void> {
@@ -232,6 +247,11 @@ export class Tui {
     if (isChar(key, CTRL_C)) return false
 
     if (this.hostKey) {
+      // Quit stays reachable from inside the prompt. Every other key is
+      // deliberately swallowed here -- a fingerprint is not something to
+      // dismiss by mashing -- but a dialog that can trap you in the app is
+      // worse than one you can leave, and `q` is the quit key everywhere else.
+      if (isChar(key, 'q')) return false
       if (isChar(key, 'y') || isChar(key, 'Y')) this.hostKey.decide(true)
       else if (key === 'escape' || isChar(key, 'n') || isChar(key, 'N') || key === 'enter') this.hostKey.decide(false)
       return true
