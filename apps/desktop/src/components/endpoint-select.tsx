@@ -37,12 +37,15 @@ export function EndpointSelect({
   sshConfig,
   onChange,
   onAddServer,
+  onOpen,
 }: {
   value: PaneEndpoint
   saved: readonly Connection[]
   sshConfig: readonly Connection[]
   onChange: (endpoint: PaneEndpoint) => void
   onAddServer: () => void
+  /** Re-reads the host lists, so an edited ~/.ssh/config shows without a restart. */
+  onOpen?: () => void
 }) {
   const current = value.kind === 'local' ? LOCAL : value.connectionId
   const selectedLabel =
@@ -53,6 +56,12 @@ export function EndpointSelect({
   return (
     <Select
       value={current}
+      // ~/.ssh/config was read once at startup, so a host removed from the file
+      // stayed in this list for the life of the window — and a host added to it
+      // never appeared at all.
+      onOpenChange={(open) => {
+        if (open) onOpen?.()
+      }}
       onValueChange={(next) => {
         // Base UI hands back `null` when a select is cleared, so this cannot
         // assume a string and build a connection id out of it.

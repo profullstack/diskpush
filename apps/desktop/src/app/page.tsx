@@ -346,6 +346,7 @@ export default function Workspace() {
           state={left}
           saved={saved}
           sshConfig={sshConfig}
+          onRefreshHosts={refreshConnections}
           active={active === 'left'}
           onFocus={() => setActive('left')}
           onChange={(patch) => setLeft((current) => ({ ...current, ...patch }))}
@@ -371,6 +372,7 @@ export default function Workspace() {
           state={right}
           saved={saved}
           sshConfig={sshConfig}
+          onRefreshHosts={refreshConnections}
           active={active === 'right'}
           onFocus={() => setActive('right')}
           onChange={(patch) => setRight((current) => ({ ...current, ...patch }))}

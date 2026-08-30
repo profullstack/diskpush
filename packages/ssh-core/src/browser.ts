@@ -22,6 +22,15 @@ export type RemoteEntry = {
   gid: number
   /** Present for symlinks once resolved. */
   linkTarget?: string
+  /**
+   * What a symlink points at, when it could be resolved.
+   *
+   * SFTP's readdir reports link types the way lstat does, so a link to a
+   * directory arrives as `symlink` and nothing downstream can tell whether it
+   * can be opened. Undefined means the target could not be stat'd — a broken
+   * link, or one pointing somewhere this user cannot read.
+   */
+  targetType?: RemoteEntry['type']
 }
 
 const S_IFMT = 0o170000
@@ -54,7 +63,33 @@ export class SftpBrowser {
     return new SftpBrowser(await session.sftp())
   }
 
-  list(directory: string): Promise<RemoteEntry[]> {
+  async list(directory: string): Promise<RemoteEntry[]> {
+    const entries = await this.readdir(directory)
+
+    // One follow-stat per symlink, and only per symlink: a listing is mostly
+    // ordinary files, and without this a link to a directory is a row nothing
+    // can open.
+    await Promise.all(
+      entries
+        .filter((entry) => entry.type === 'symlink')
+        .map(async (entry) => {
+          try {
+            const [target, resolved] = await Promise.all([
+              this.readlink(entry.path).catch(() => undefined),
+              this.statFollowing(entry.path),
+            ])
+            entry.targetType = resolved
+            if (target) entry.linkTarget = target
+          } catch {
+            // A broken link is still a row worth showing; it just cannot be
+            // opened, which is exactly what an absent targetType means.
+          }
+        }),
+    )
+    return entries
+  }
+
+  private readdir(directory: string): Promise<RemoteEntry[]> {
     return new Promise((resolve, reject) => {
       this.sftp.readdir(directory, (error, entries: FileEntry[]) => {
         if (error) {
@@ -74,6 +109,13 @@ export class SftpBrowser {
           })),
         )
       })
+    })
+  }
+
+  /** `stat`, which follows a link, where `stat()` above uses `lstat`, which does not. */
+  private statFollowing(path: string): Promise<RemoteEntry['type'] | undefined> {
+    return new Promise((resolve) => {
+      this.sftp.stat(path, (error, stats) => resolve(error ? undefined : entryType(stats.mode)))
     })
   }
 
