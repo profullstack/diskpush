@@ -69,3 +69,25 @@ describe('parseSshConfig', () => {
     expect(parseSshConfig('')).toEqual([])
   })
 })
+
+describe('quoted values', () => {
+  /**
+   * `IdentityFile "/path with spaces/key"` is valid ssh_config. Keeping the
+   * quotes makes the path a file that cannot exist, and the ENOENT names a
+   * path that looks plainly correct — quotes and all.
+   */
+  it('drops double quotes around a value', () => {
+    const [host] = parseSshConfig('Host a\n  IdentityFile "/home/you/.ssh/my key"\n')
+    expect(host?.identityFile).toBe('/home/you/.ssh/my key')
+  })
+
+  it('drops single quotes too', () => {
+    const [host] = parseSshConfig("Host a\n  HostName 'example.com'\n")
+    expect(host?.hostName).toBe('example.com')
+  })
+
+  it('leaves an unquoted value untouched', () => {
+    const [host] = parseSshConfig('Host a\n  IdentityFile ~/.ssh/id_rsa\n')
+    expect(host?.identityFile).toBe('~/.ssh/id_rsa')
+  })
+})
