@@ -53,7 +53,7 @@ export function MirrorPreviewDialog({
     <Dialog open={open} onOpenChange={(next) => (next ? undefined : onCancel())}>
       <DialogContent className="max-w-2xl gap-0 border-line-strong bg-popover p-0">
         <DialogHeader className="flex-row items-center gap-3 space-y-0 border-b border-line px-[18px] py-4">
-          <span className="flex size-[30px] shrink-0 items-center justify-center rounded-lg bg-[#2a1620] text-destructive">
+          <span className="flex size-[30px] shrink-0 items-center justify-center rounded-lg bg-danger-surface text-destructive">
             <TriangleAlert className="size-[17px]" />
           </span>
           <div className="min-w-0 text-left">
@@ -90,7 +90,7 @@ export function MirrorPreviewDialog({
 
             <div className="px-[18px] pt-3.5">
               {deletes.length > 0 ? (
-                <div className="flex items-center gap-2.5 rounded-lg border border-[#45202e] bg-[#1c1119] px-3 py-2.5 text-[12.5px] text-[#fca5a5]">
+                <div className="flex items-center gap-2.5 rounded-lg border border-danger-line bg-danger-surface px-3 py-2.5 text-[12.5px] text-danger-ink">
                   <Trash2 className="size-4 shrink-0" />
                   <span>
                     <strong className="font-semibold text-destructive">
@@ -113,9 +113,9 @@ export function MirrorPreviewDialog({
                   {deletes.map((path) => (
                     <div
                       key={path}
-                      className="selectable flex h-[27px] items-center gap-2.5 px-3 font-[family-name:var(--font-mono)] text-[11.5px] text-[#d4a0a0]"
+                      className="selectable flex h-[27px] items-center gap-2.5 px-3 font-[family-name:var(--font-mono)] text-[11.5px] text-danger-ink"
                     >
-                      <span className="text-[#7f3b47]">−</span>
+                      <span className="text-danger-line">−</span>
                       <span className="truncate">{path}</span>
                     </div>
                   ))}
@@ -157,7 +157,7 @@ export function MirrorPreviewDialog({
             <Button
               onClick={onConfirm}
               disabled={!preview?.ok}
-              className={cn('h-[33px] font-semibold', deletes.length > 0 && 'bg-[#b03a4a] text-white hover:bg-[#c04355]')}
+              className={cn('h-[33px] font-semibold', deletes.length > 0 && 'bg-danger-solid text-white hover:bg-danger-solid-lift')}
             >
               {deletes.length > 0 ? `Delete ${deletes.length} and mirror` : 'Mirror'}
             </Button>
@@ -212,7 +212,7 @@ export function TransferBand({ job, route, onCancel }: { job: ActiveJob | null; 
             </span>
           ) : null}
           {job.finished ? null : (
-            <Button variant="outline" onClick={onCancel} className="h-[26px] border-[#3a2430] px-2.5 text-[11px] text-destructive">
+            <Button variant="outline" onClick={onCancel} className="h-[26px] border-danger-line px-2.5 text-[11px] text-destructive">
               Cancel
             </Button>
           )}
@@ -221,7 +221,7 @@ export function TransferBand({ job, route, onCancel }: { job: ActiveJob | null; 
 
       <Progress
         value={job.percent}
-        className={cn('h-[5px] bg-[#16203a]', job.finished && !job.resumable && '[&>div]:bg-ok')}
+        className={cn('h-[5px] bg-accent', job.finished && !job.resumable && '[&>div]:bg-ok')}
       />
 
       <div className="mt-2 flex items-center gap-2.5 font-[family-name:var(--font-mono)] text-[11px] text-muted-foreground">

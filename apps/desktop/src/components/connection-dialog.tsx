@@ -78,7 +78,7 @@ export function ConnectionDialog({
     <Dialog open={open} onOpenChange={(next) => (next ? undefined : onClose())}>
       <DialogContent className="max-w-lg gap-0 border-line-strong bg-popover p-0">
         <DialogHeader className="flex-row items-center gap-3 space-y-0 border-b border-line px-[18px] py-4">
-          <span className="flex size-[30px] items-center justify-center rounded-lg bg-[#12244a] text-primary">
+          <span className="flex size-[30px] items-center justify-center rounded-lg bg-info-surface text-primary">
             <Server className="size-[17px]" />
           </span>
           <DialogTitle className="text-[14px]">New server</DialogTitle>
@@ -86,7 +86,7 @@ export function ConnectionDialog({
 
         <div className="flex flex-col gap-3.5 px-[18px] py-4">
           {error ? (
-            <p className="selectable rounded-lg border border-[#45202e] bg-[#1c1119] px-3 py-2 text-[12px] text-[#fca5a5]">
+            <p className="selectable rounded-lg border border-danger-line bg-danger-surface px-3 py-2 text-[12px] text-danger-ink">
               {error}
             </p>
           ) : null}
@@ -123,7 +123,7 @@ export function ConnectionDialog({
                   className={cn(
                     'h-8 rounded-lg border px-3 text-[12px] font-medium transition-colors',
                     auth === option.id
-                      ? 'border-[#2f5fd0] bg-[#12244a] text-[#9dc0ff]'
+                      ? 'border-info-line bg-info-surface text-info-ink'
                       : 'border-line-strong text-muted-foreground hover:text-foreground',
                   )}
                 >

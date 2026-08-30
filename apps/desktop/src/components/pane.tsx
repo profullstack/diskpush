@@ -111,6 +111,12 @@ export function Pane({
     .filter((entry) => state.selected.has(entry.name))
     .reduce((total, entry) => total + entry.size, 0)
 
+  // Directories report their own inode size, not their contents, so counting
+  // them would make the total wrong in a way that looks authoritative.
+  const totalSize = visible
+    .filter((entry) => entry.type !== 'directory')
+    .reduce((total, entry) => total + entry.size, 0)
+
   function toggle(name: string, additive: boolean) {
     const next = new Set(additive ? state.selected : [])
     if (state.selected.has(name) && additive) next.delete(name)
@@ -127,7 +133,7 @@ export function Pane({
       )}
       aria-label={role}
     >
-      <header className="flex items-center gap-2.5 border-b border-line bg-[#101828] px-3 py-2.5">
+      <header className="flex items-center gap-2.5 border-b border-line bg-chrome px-3 py-2.5">
         <EndpointSelect
           value={state.endpoint}
           saved={saved}
@@ -209,7 +215,7 @@ export function Pane({
                 }}
                 className={cn(
                   'grid h-[34px] cursor-default grid-cols-[1fr_78px_118px] items-center border-l-2 px-3 text-[12.5px]',
-                  isSelected ? 'border-l-primary bg-[#132446]' : 'border-l-transparent hover:bg-secondary',
+                  isSelected ? 'border-l-primary bg-accent' : 'border-l-transparent hover:bg-secondary',
                 )}
               >
                 <span className="flex min-w-0 items-center gap-2.5">
@@ -218,7 +224,7 @@ export function Pane({
                   ) : entry.type === 'symlink' ? (
                     <Link2 className="size-[15px] shrink-0 text-cyan" />
                   ) : (
-                    <FileText className="size-[15px] shrink-0 text-[#5b6b85]" />
+                    <FileText className="size-[15px] shrink-0 text-muted-foreground" />
                   )}
                   <span className={cn('truncate', isSelected ? 'text-white' : 'text-dim')}>{entry.name}</span>
                 </span>
@@ -245,7 +251,11 @@ export function Pane({
           <span>
             · <span className="text-primary">{state.selected.size}</span> selected · {formatBytes(selectedSize)}
           </span>
-        ) : null}
+        ) : (
+          // What the pane adds up to is the question you actually have before
+          // pressing Sync, and the strip was showing a bare count instead.
+          <span>· {formatBytes(totalSize)}</span>
+        )}
       </footer>
     </section>
   )

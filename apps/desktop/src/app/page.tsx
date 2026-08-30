@@ -185,6 +185,12 @@ export default function Workspace() {
   }
 
   const connected = saved.length + sshConfig.length
+  const rsyncFlags = [
+    'rsync --archive --partial-dir=.rsync-partial --info=progress2',
+    mirror ? '--delete-delay' : null,
+  ]
+    .filter(Boolean)
+    .join(' ')
 
   return (
     <div className="flex h-full flex-col">
@@ -229,7 +235,7 @@ export default function Workspace() {
       </header>
 
       {error ? (
-        <div className="selectable border-b border-[#45202e] bg-[#1c1119] px-4 py-2 text-[12px] text-[#fca5a5]">{error}</div>
+        <div className="selectable border-b border-danger-line bg-danger-surface px-4 py-2 text-[12px] text-danger-ink">{error}</div>
       ) : null}
 
       <div className="flex min-h-0 flex-1 gap-0 p-3.5">
@@ -250,6 +256,8 @@ export default function Workspace() {
           direction={direction}
           mirror={mirror}
           busy={job !== null && !job.finished}
+          leftLabel={railLabel(left.endpoint, allConnections)}
+          rightLabel={railLabel(right.endpoint, allConnections)}
           onDirection={setDirection}
           onToggleMirror={() => setMirror((value) => !value)}
           onPreview={runPreview}
@@ -278,13 +286,27 @@ export default function Workspace() {
         }}
       />
 
-      <footer className="flex h-[26px] shrink-0 items-center gap-3.5 border-t border-line bg-background px-4 text-[11px] text-faint">
-        <span>Incremental sync</span>
-        <span>Archive metadata on</span>
-        <span>Resume on</span>
-        <span className={mirror ? 'text-destructive' : 'text-ok'}>Deletes {mirror ? 'ON' : 'off'}</span>
-        <span className="selectable ml-auto font-[family-name:var(--font-mono)]">
-          rsync --archive --partial-dir=.rsync-partial --info=progress2
+      {/*
+        This line used to be a fixed string that read like the command being
+        run but could not change -- turn Mirror on and it still claimed no
+        deletes. A command line nobody can trust is worse than none, so it is
+        built from the same state the transfer is.
+      */}
+      <footer className="flex h-[30px] shrink-0 items-center gap-3 border-t border-line bg-background px-4 text-[11px] text-faint">
+        <span>Incremental</span>
+        <span className="text-line-strong">·</span>
+        <span>Archive metadata</span>
+        <span className="text-line-strong">·</span>
+        <span>Resume</span>
+        <span className="text-line-strong">·</span>
+        <span className={mirror ? 'font-medium text-destructive' : 'text-ok'}>
+          Deletes {mirror ? 'ON' : 'off'}
+        </span>
+        <span
+          className="selectable ml-auto max-w-[52%] truncate font-[family-name:var(--font-mono)] text-[10.5px]"
+          title={rsyncFlags}
+        >
+          {rsyncFlags}
         </span>
       </footer>
 
@@ -307,6 +329,15 @@ function refFor(pane: PaneState, path: string) {
   return pane.endpoint.kind === 'local'
     ? ({ type: 'local', path } as const)
     : ({ type: 'ssh', connectionId: pane.endpoint.connectionId, path } as const)
+}
+
+/**
+ * "This computer" is right in a pane header and too long on an 84px button,
+ * where it truncated to "to This comp...". The rail gets the short form; a
+ * server keeps its own name, which is already short.
+ */
+function railLabel(endpoint: PaneEndpoint, connections: readonly Connection[]): string {
+  return endpoint.kind === 'local' ? 'Local' : endpointLabel(endpoint, connections)
 }
 
 function defaultPathFor(endpoint: PaneEndpoint, connections: readonly Connection[]): string {

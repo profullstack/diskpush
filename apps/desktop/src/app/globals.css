@@ -33,6 +33,23 @@
   --color-cyan: #009cfc;
   --color-ok: #4ade80;
   --color-warn: #fbbf24;
+
+  /*
+   * Two tinted surfaces that recur: the red one behind an error or a pending
+   * delete, and the blue one behind a selected server or an identity badge.
+   * They were written inline as dark-only hexes in half a dozen components
+   * (bg-[#1c1119], border-[#45202e], text-[#fca5a5] ...), which is invisible
+   * until the light theme renders near-black panels on a white window. Named
+   * here so both themes get a definition and neither can drift.
+   */
+  --color-danger-surface: #1c1119;
+  --color-danger-line: #45202e;
+  --color-danger-ink: #fca5a5;
+  --color-danger-solid: #b03a4a;
+  --color-danger-solid-lift: #c04355;
+  --color-info-surface: #12244a;
+  --color-info-line: #2f5fd0;
+  --color-info-ink: #9dc0ff;
 }
 
 /*
@@ -102,6 +119,16 @@
     --color-line-strong: #cbd4e2;
     --color-dim: #35435c;
     --color-faint: #7a869c;
+
+    /* tints, not near-blacks, so they read as a highlight on a white window */
+    --color-danger-surface: #fef2f2;
+    --color-danger-line: #fbcfd3;
+    --color-danger-ink: #b42332;
+    --color-danger-solid: #c0334a;
+    --color-danger-solid-lift: #a92a3f;
+    --color-info-surface: #eef4ff;
+    --color-info-line: #b9cffc;
+    --color-info-ink: #1b4fc4;
   }
 }
 
