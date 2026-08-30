@@ -113,28 +113,6 @@ export const TransferOptionsSchema = z.object({
 })
 export type TransferOptions = z.infer<typeof TransferOptionsSchema>
 
-export const TransferRequestSchema = z.object({
-  source: EndpointRefSchema,
-  destination: EndpointRefSchema,
-  options: TransferOptionsSchema,
-  /** Only meaningful for a delete-enabled job, and only after a preview. */
-  deletesConfirmed: z.boolean().default(false),
-})
-export type TransferRequest = z.infer<typeof TransferRequestSchema>
-
-export const JobIdSchema = z.string().uuid()
-
-export const RemotePathRequestSchema = z.object({
-  connectionId: ConnectionIdSchema,
-  path: PathSchema,
-})
-
-export const RenameRequestSchema = z.object({
-  connectionId: ConnectionIdSchema,
-  from: PathSchema,
-  to: PathSchema,
-})
-
 /**
  * A single entry name inside a directory — never a path.
  *
@@ -151,6 +129,38 @@ export const EntryNameSchema = z
   })
   .refine((name) => name !== '.' && name !== '..', { message: 'That name is reserved.' })
   .refine((name) => name.trim() === name, { message: 'A name cannot begin or end with a space.' })
+
+export const TransferRequestSchema = z.object({
+  source: EndpointRefSchema,
+  destination: EndpointRefSchema,
+  options: TransferOptionsSchema,
+  /** Only meaningful for a delete-enabled job, and only after a preview. */
+  deletesConfirmed: z.boolean().default(false),
+  /**
+   * Send only these entries, rather than everything in the source directory.
+   *
+   * Entry names, not paths: each is one item the source pane is showing. The
+   * main process turns them into a `--files-from` list; the renderer never
+   * builds a path, so a selection cannot address anything the pane is not
+   * already looking at. Empty means the whole directory, which is what the
+   * two-pane view has always done.
+   */
+  selection: z.array(EntryNameSchema).max(10_000).default([]),
+})
+export type TransferRequest = z.infer<typeof TransferRequestSchema>
+
+export const JobIdSchema = z.string().uuid()
+
+export const RemotePathRequestSchema = z.object({
+  connectionId: ConnectionIdSchema,
+  path: PathSchema,
+})
+
+export const RenameRequestSchema = z.object({
+  connectionId: ConnectionIdSchema,
+  from: PathSchema,
+  to: PathSchema,
+})
 
 /** Create a directory or an empty file: `name` inside `directory`. */
 export const CreateEntryRequestSchema = z.object({

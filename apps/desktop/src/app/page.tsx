@@ -191,6 +191,10 @@ export default function Workspace() {
       destination: refFor(destination, withTrailingSlash(destination.path)),
       options: { deleteMode: mirror ? ('delay' as const) : ('off' as const) },
       deletesConfirmed: false,
+      // Ticked entries in the source pane mean "just these", the way an SFTP
+      // client behaves. Nothing ticked keeps the old meaning: the whole
+      // directory.
+      selection: [...source.selected],
     }),
     [source, destination, mirror],
   )
@@ -409,6 +413,7 @@ export default function Workspace() {
           />
 
           <TransferRail
+            selectedCount={source.selected.size}
             direction={direction}
             mirror={mirror}
             busy={job !== null && !job.finished}

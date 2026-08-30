@@ -33,6 +33,7 @@ export const VALUE_FLAGS = new Set([
   '--exclude-from',
   '--include-from',
   '--files-from',
+  '--only',
   '--bwlimit',
   '--max-size',
   '--min-size',
