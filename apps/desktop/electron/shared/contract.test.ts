@@ -1,9 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import {
   ConnectionInputSchema,
+  CreateEntryRequestSchema,
+  DeleteEntryRequestSchema,
   EndpointRefSchema,
+  EntryNameSchema,
   ExternalUrlSchema,
   PathSchema,
+  RenameEntryRequestSchema,
   TransferOptionsSchema,
   TransferRequestSchema,
 } from './contract.js'
@@ -139,5 +143,57 @@ describe('ConnectionInputSchema', () => {
 
   it('defaults agent forwarding to off', () => {
     expect(ConnectionInputSchema.parse({ name: 'x', host: 'h', username: 'u' }).forwardAgent).toBe(false)
+  })
+})
+
+describe('EntryNameSchema', () => {
+  /**
+   * Every mutating file operation joins a directory with one of these in the
+   * main process. If a name can carry a separator or a `..`, then "new folder"
+   * in a listing of /home/you is a way to write anywhere on the disk — and on
+   * the remote side, anywhere the SSH user can reach.
+   */
+  it.each(['../etc', 'a/b', 'a\\b', '..', '.', '', 'x\0y', ' leading', 'trailing '])(
+    'rejects %j',
+    (name) => {
+      expect(EntryNameSchema.safeParse(name).success).toBe(false)
+    },
+  )
+
+  it.each(['notes.md', '.zshrc', 'a b c', 'München', 'file.tar.gz', '-rf'])('accepts %j', (name) => {
+    expect(EntryNameSchema.safeParse(name).success).toBe(true)
+  })
+
+  it('caps a name at 255 bytes, the limit every filesystem here shares', () => {
+    expect(EntryNameSchema.safeParse('a'.repeat(255)).success).toBe(true)
+    expect(EntryNameSchema.safeParse('a'.repeat(256)).success).toBe(false)
+  })
+})
+
+describe('the mutating request schemas', () => {
+  it('takes a directory and a name, never a path to act on', () => {
+    const parsed = CreateEntryRequestSchema.parse({ directory: '/home/you', name: 'reports' })
+    expect(parsed).toEqual({ directory: '/home/you', name: 'reports' })
+  })
+
+  it('refuses a traversal in any name field', () => {
+    expect(CreateEntryRequestSchema.safeParse({ directory: '/home/you', name: '../x' }).success).toBe(false)
+    expect(
+      RenameEntryRequestSchema.safeParse({ directory: '/home/you', from: 'a', to: '../b' }).success,
+    ).toBe(false)
+    expect(
+      DeleteEntryRequestSchema.safeParse({ directory: '/home/you', name: '../b', isDirectory: false }).success,
+    ).toBe(false)
+  })
+
+  it('makes connectionId optional, because omitting it is what selects local', () => {
+    expect(CreateEntryRequestSchema.parse({ directory: '/tmp', name: 'x' }).connectionId).toBeUndefined()
+    expect(
+      CreateEntryRequestSchema.parse({ connectionId: 'ssh-config:dev', directory: '/tmp', name: 'x' }).connectionId,
+    ).toBe('ssh-config:dev')
+  })
+
+  it('requires isDirectory on a delete, so the caller cannot leave it to chance', () => {
+    expect(DeleteEntryRequestSchema.safeParse({ directory: '/tmp', name: 'x' }).success).toBe(false)
   })
 })

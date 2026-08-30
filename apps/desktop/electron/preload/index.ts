@@ -24,11 +24,20 @@ const api = {
     homeLocal: () => call<string>(IPC.fsHomeLocal),
     listLocal: (path: string) => call(IPC.fsListLocal, { path }),
     listRemote: (connectionId: string, path: string) => call(IPC.fsListRemote, { connectionId, path }),
-    mkdirRemote: (connectionId: string, path: string) => call(IPC.fsMkdirRemote, { connectionId, path }),
-    renameRemote: (connectionId: string, from: string, to: string) =>
-      call(IPC.fsRenameRemote, { connectionId, from, to }),
-    deleteRemote: (connectionId: string, path: string, isDirectory: boolean) =>
-      call(IPC.fsDeleteRemote, { connectionId, path, isDirectory }),
+    // Mutations name an entry inside a directory; the main process joins them.
+    mkdir: (directory: string, name: string, connectionId?: string) =>
+      call<boolean>(connectionId ? IPC.fsMkdirRemote : IPC.fsMkdirLocal, { connectionId, directory, name }),
+    createFile: (directory: string, name: string, connectionId?: string) =>
+      call<boolean>(connectionId ? IPC.fsCreateFileRemote : IPC.fsCreateFileLocal, { connectionId, directory, name }),
+    rename: (directory: string, from: string, to: string, connectionId?: string) =>
+      call<boolean>(connectionId ? IPC.fsRenameRemote : IPC.fsRenameLocal, { connectionId, directory, from, to }),
+    remove: (directory: string, name: string, isDirectory: boolean, connectionId?: string) =>
+      call<boolean>(connectionId ? IPC.fsDeleteRemote : IPC.fsDeleteLocal, {
+        connectionId,
+        directory,
+        name,
+        isDirectory,
+      }),
   },
   transfers: {
     preview: (request: unknown) => call(IPC.transfersPreview, request),

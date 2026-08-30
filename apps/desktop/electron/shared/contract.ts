@@ -23,6 +23,11 @@ export const IPC = {
   fsMkdirRemote: 'fs:mkdir-remote',
   fsRenameRemote: 'fs:rename-remote',
   fsDeleteRemote: 'fs:delete-remote',
+  fsCreateFileRemote: 'fs:create-file-remote',
+  fsMkdirLocal: 'fs:mkdir-local',
+  fsRenameLocal: 'fs:rename-local',
+  fsDeleteLocal: 'fs:delete-local',
+  fsCreateFileLocal: 'fs:create-file-local',
 
   transfersPreview: 'transfers:preview',
   transfersStart: 'transfers:start',
@@ -117,6 +122,52 @@ export const RenameRequestSchema = z.object({
   connectionId: ConnectionIdSchema,
   from: PathSchema,
   to: PathSchema,
+})
+
+/**
+ * A single entry name inside a directory — never a path.
+ *
+ * Every mutating operation takes a directory plus one of these and joins them
+ * in the main process, so the renderer cannot walk out of the folder it is
+ * showing. `..`, a separator or a NUL would each be a way to do exactly that.
+ */
+export const EntryNameSchema = z
+  .string()
+  .min(1)
+  .max(255)
+  .refine((name) => !name.includes('/') && !name.includes('\\') && !name.includes('\0'), {
+    message: 'A name cannot contain a path separator.',
+  })
+  .refine((name) => name !== '.' && name !== '..', { message: 'That name is reserved.' })
+  .refine((name) => name.trim() === name, { message: 'A name cannot begin or end with a space.' })
+
+/** Create a directory or an empty file: `name` inside `directory`. */
+export const CreateEntryRequestSchema = z.object({
+  connectionId: ConnectionIdSchema.optional(),
+  directory: PathSchema,
+  name: EntryNameSchema,
+})
+
+/** Rename `from` to `to`, both inside `directory`. */
+export const RenameEntryRequestSchema = z.object({
+  connectionId: ConnectionIdSchema.optional(),
+  directory: PathSchema,
+  from: EntryNameSchema,
+  to: EntryNameSchema,
+})
+
+/**
+ * Delete `name` from `directory`.
+ *
+ * `isDirectory` is not a hint — the main process refuses when it disagrees
+ * with what is actually on disk, so a mislabelled request cannot turn a
+ * single unlink into a recursive delete.
+ */
+export const DeleteEntryRequestSchema = z.object({
+  connectionId: ConnectionIdSchema.optional(),
+  directory: PathSchema,
+  name: EntryNameSchema,
+  isDirectory: z.boolean(),
 })
 
 /** Only http(s) may be handed to the system browser. */

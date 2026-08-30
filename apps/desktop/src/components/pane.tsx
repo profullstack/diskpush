@@ -4,19 +4,32 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ChevronRight,
   CornerLeftUp,
+  FilePlus2,
   FileText,
   Folder,
   FolderOpen,
+  FolderPlus,
   Link2,
+  PenLine,
   RefreshCw,
   Search,
   ServerCrash,
   SearchX,
+  Trash2,
 } from 'lucide-react'
 import { api, unwrap, type Connection, type FileEntry } from '@/lib/api'
 import { formatBytes, formatDate, formatMode, joinPath, parentPath } from '@/lib/format'
 import { EndpointSelect, type PaneEndpoint } from '@/components/endpoint-select'
+import { DeleteDialog, NameDialog } from '@/components/entry-dialogs'
 import { Checkbox } from '@/components/ui/checkbox'
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuShortcut,
+  ContextMenuTrigger,
+} from '@/components/ui/context-menu'
 import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
@@ -214,6 +227,12 @@ export function Pane({
   const [cursor, setCursor] = useState(0)
   const listRef = useRef<HTMLDivElement>(null)
   const anchor = useRef<number | null>(null)
+  // The row the context menu was opened on. Null when it was opened on empty
+  // space, which is what distinguishes "new file here" from "rename this".
+  const [target, setTarget] = useState<FileEntry | null>(null)
+  const [dialog, setDialog] = useState<'mkdir' | 'create-file' | 'rename' | 'delete' | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [opError, setOpError] = useState<string | null>(null)
 
   useEffect(() => {
     setFilter('')
@@ -273,6 +292,49 @@ export function Pane({
     [onNavigate, state.path],
   )
 
+  const connectionId = state.endpoint.kind === 'local' ? undefined : state.endpoint.connectionId
+
+  const closeDialog = useCallback(() => {
+    setDialog(null)
+    setOpError(null)
+  }, [])
+
+  /**
+   * Runs one file operation and reloads the directory.
+   *
+   * The listing is re-read from the endpoint rather than patched locally: the
+   * server is the only thing that knows whether the operation really happened,
+   * and a pane that shows an optimistic folder which does not exist is worse
+   * than one that takes a moment.
+   */
+  const run = useCallback(
+    async (operation: () => Promise<unknown>) => {
+      setBusy(true)
+      setOpError(null)
+      try {
+        await operation()
+        closeDialog()
+        onNavigate(state.path)
+      } catch (error) {
+        setOpError(error instanceof Error ? error.message : String(error))
+      } finally {
+        setBusy(false)
+      }
+    },
+    [closeDialog, onNavigate, state.path],
+  )
+
+  /** Opens the menu against `entry`, selecting it the way a right-click should. */
+  const aimAt = useCallback(
+    (entry: FileEntry | null, index: number) => {
+      setTarget(entry)
+      if (!entry) return
+      setCursor(index)
+      if (!state.selected.has(entry.name)) onChange({ selected: new Set([entry.name]) })
+    },
+    [onChange, state.selected],
+  )
+
   /**
    * Arrow keys walk the list, Enter opens, Backspace goes up.
    *
@@ -307,6 +369,14 @@ export function Pane({
       case 'Backspace':
         event.preventDefault()
         return onNavigate(parentPath(state.path))
+      case 'F2':
+        event.preventDefault()
+        aimAt(visible[cursor] ?? null, cursor)
+        return setDialog('rename')
+      case 'Delete':
+        event.preventDefault()
+        aimAt(visible[cursor] ?? null, cursor)
+        return setDialog('delete')
       case 'a':
         if (event.ctrlKey || event.metaKey) {
           event.preventDefault()
@@ -402,14 +472,27 @@ export function Pane({
       </div>
 
       <ScrollArea className="min-h-0 flex-1">
-        <div
-          ref={listRef}
-          role="listbox"
-          aria-label={`${role} files`}
-          tabIndex={0}
-          onKeyDown={onKeyDown}
-          className="focus-ring h-full outline-none"
-        >
+        <ContextMenu>
+          <ContextMenuTrigger
+            render={
+              <div
+                ref={listRef}
+                role="listbox"
+                aria-label={`${role} files`}
+                tabIndex={0}
+                onKeyDown={onKeyDown}
+                // A right-click on empty space aims at the directory itself.
+                // Guarded by where the click landed, because this fires after
+                // the row's own handler as the event bubbles: clearing
+                // unconditionally left Rename and Delete greyed out on every
+                // row, which is exactly how it shipped in the first draft.
+                onContextMenu={(event: React.MouseEvent) => {
+                  if (!(event.target as HTMLElement).closest('[data-row]')) setTarget(null)
+                }}
+                className="focus-ring h-full outline-none"
+              />
+            }
+          >
           {state.error ? (
             <EmptyState
               tone="danger"
@@ -451,6 +534,7 @@ export function Pane({
                     select(index, event.shiftKey ? 'range' : event.ctrlKey || event.metaKey ? 'toggle' : 'replace')
                   }}
                   onDoubleClick={() => open(entry)}
+                  onContextMenu={() => aimAt(entry, index)}
                   className={cn(
                     'grid h-[var(--row)] cursor-default items-center gap-3 border-l-2 px-3 text-[12.5px] transition-colors',
                     COLUMNS,
@@ -487,8 +571,81 @@ export function Pane({
               )
             })
           )}
-        </div>
+          </ContextMenuTrigger>
+
+          <ContextMenuContent>
+            <ContextMenuItem onClick={() => onNavigate(state.path)}>
+              <RefreshCw className="size-[14px] text-faint" />
+              Refresh
+            </ContextMenuItem>
+            <ContextMenuSeparator />
+            <ContextMenuItem onClick={() => setDialog('mkdir')}>
+              <FolderPlus className="size-[14px] text-faint" />
+              New folder
+            </ContextMenuItem>
+            <ContextMenuItem onClick={() => setDialog('create-file')}>
+              <FilePlus2 className="size-[14px] text-faint" />
+              New file
+            </ContextMenuItem>
+            <ContextMenuSeparator />
+            <ContextMenuItem disabled={!target} onClick={() => setDialog('rename')}>
+              <PenLine className="size-[14px] text-faint" />
+              Rename
+              <ContextMenuShortcut>F2</ContextMenuShortcut>
+            </ContextMenuItem>
+            <ContextMenuItem variant="danger" disabled={!target} onClick={() => setDialog('delete')}>
+              <Trash2 className="size-[14px]" />
+              Delete
+              <ContextMenuShortcut>Del</ContextMenuShortcut>
+            </ContextMenuItem>
+          </ContextMenuContent>
+        </ContextMenu>
       </ScrollArea>
+
+      <NameDialog
+        open={dialog === 'mkdir' || dialog === 'create-file'}
+        title={dialog === 'mkdir' ? 'New folder' : 'New file'}
+        action="Create"
+        busy={busy}
+        error={opError}
+        onClose={closeDialog}
+        onSubmit={(name) =>
+          run(() =>
+            unwrap(
+              dialog === 'mkdir'
+                ? api()?.fs.mkdir(state.path, name, connectionId)
+                : api()?.fs.createFile(state.path, name, connectionId),
+            ),
+          )
+        }
+      />
+
+      <NameDialog
+        open={dialog === 'rename'}
+        title="Rename"
+        action="Rename"
+        initialValue={target?.name ?? ''}
+        busy={busy}
+        error={opError}
+        onClose={closeDialog}
+        onSubmit={(name) =>
+          target && run(() => unwrap(api()?.fs.rename(state.path, target.name, name, connectionId)))
+        }
+      />
+
+      <DeleteDialog
+        open={dialog === 'delete'}
+        name={target?.name ?? ''}
+        isDirectory={target?.type === 'directory'}
+        where={endpointLabel(state.endpoint, state.endpoint.kind === 'local' ? [] : [...saved, ...sshConfig])}
+        busy={busy}
+        error={opError}
+        onClose={closeDialog}
+        onConfirm={() =>
+          target &&
+          run(() => unwrap(api()?.fs.remove(state.path, target.name, target.type === 'directory', connectionId)))
+        }
+      />
 
       <footer className="flex h-[30px] shrink-0 items-center gap-2 border-t border-line bg-sunken px-3 text-[11.5px] text-muted-foreground">
         <span>
