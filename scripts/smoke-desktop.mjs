@@ -93,8 +93,41 @@ function checkRendererDelivery() {
   console.log('ok: the renderer is served over its own scheme, not file://.')
 }
 
+/**
+ * The policy the window will send must admit every inline script in the export.
+ *
+ * Serving the assets correctly is not sufficient: a Next export carries its
+ * Flight payload in inline `<script>` tags, and `script-src 'self'` refuses
+ * them. That shipped in v0.2.1 — the chunks loaded, React booted with no
+ * payload, and the window was blank. Assets loading and the page rendering are
+ * different facts, and only this one catches the second.
+ */
+async function checkPolicyAdmitsPayload() {
+  const { contentSecurityPolicy, inlineScriptHashes } = await import(join(desktop, 'dist-electron', 'main', 'csp.js'))
+  const html = readFileSync(join(desktop, 'out', 'index.html'), 'utf8')
+  const hashes = inlineScriptHashes(html)
+
+  if (hashes.length === 0) {
+    console.error('FAIL: no inline scripts found in the export — the hashing no longer matches what Next emits.')
+    console.error('A policy computed from this would blank the window.')
+    process.exit(1)
+  }
+
+  const policy = contentSecurityPolicy(hashes)
+  const scriptSrc = policy.split('; ').find((directive) => directive.startsWith('script-src')) ?? ''
+  const unadmitted = hashes.filter((hash) => !scriptSrc.includes(hash))
+
+  if (unadmitted.length > 0) {
+    console.error(`FAIL: ${unadmitted.length} inline scripts are not admitted by script-src; the window would be blank.`)
+    process.exit(1)
+  }
+
+  console.log(`ok: the policy admits all ${hashes.length} inline payload scripts.`)
+}
+
 await checkRendererAssets()
 checkRendererDelivery()
+await checkPolicyAdmitsPayload()
 
 if (!existsSync(electron)) {
   console.error('electron binary not found; run pnpm install first.')

@@ -1,8 +1,10 @@
+import { readFileSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { join, normalize } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { app, BrowserWindow, protocol, shell } from 'electron'
 import { contentTypeFor, resolveBundlePath } from './bundle-path.js'
+import { contentSecurityPolicy, inlineScriptHashes } from './csp.js'
 import { registerIpc } from './ipc.js'
 import { checkForUpdates } from './services/updater.js'
 import { closeAllSessions } from './services/sessions.js'
@@ -41,15 +43,44 @@ protocol.registerSchemesAsPrivileged([
   { scheme: APP_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true } },
 ])
 
+function bundleRoot(): string {
+  return normalize(join(here, '..', '..', 'out'))
+}
+
+/**
+ * The policy, computed once from the export the app will actually serve.
+ *
+ * Read eagerly rather than per request: the hashes come from index.html, and a
+ * policy that silently fell back to one without them would blank the window.
+ */
+let policy: string | null = null
+function bundlePolicy(): string {
+  if (policy === null) {
+    try {
+      policy = contentSecurityPolicy(inlineScriptHashes(readFileSync(join(bundleRoot(), 'index.html'), 'utf8')))
+    } catch {
+      policy = contentSecurityPolicy()
+    }
+  }
+  return policy
+}
+
 /** Serves the exported renderer, and nothing outside it. */
 function serveBundle(): void {
-  const root = normalize(join(here, '..', '..', 'out'))
+  const root = bundleRoot()
   protocol.handle(APP_SCHEME, async (request) => {
     const target = resolveBundlePath(root, new URL(request.url).pathname)
     if (!target) return new Response('Forbidden', { status: 403 })
     try {
       const body = await readFile(target)
-      return new Response(body, { headers: { 'content-type': contentTypeFor(target) } })
+      return new Response(body, {
+        headers: {
+          'content-type': contentTypeFor(target),
+          // Carried on the response itself, so the document is governed by the
+          // policy whether or not a webRequest listener is attached.
+          'content-security-policy': bundlePolicy(),
+        },
+      })
     } catch {
       return new Response('Not found', { status: 404 })
     }
@@ -94,22 +125,7 @@ function createWindow(): BrowserWindow {
     callback({
       responseHeaders: {
         ...details.responseHeaders,
-        'Content-Security-Policy': [
-          [
-            "default-src 'self'",
-            // Next's exported bundle inlines a small amount of style.
-            "style-src 'self' 'unsafe-inline'",
-            "script-src 'self'",
-            "img-src 'self' data:",
-            "font-src 'self' data:",
-            // The renderer talks to the main process over IPC, not the network.
-            "connect-src 'self'",
-            "object-src 'none'",
-            "frame-src 'none'",
-            "base-uri 'none'",
-            "form-action 'none'",
-          ].join('; '),
-        ],
+        'Content-Security-Policy': [bundlePolicy()],
       },
     })
   })
