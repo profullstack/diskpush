@@ -12,7 +12,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "cli": "node apps/cli/dist/bin.js",
-    "test:integration": "vitest run --config vitest.integration.config.ts"
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "release": "node scripts/release.mjs",
+    "smoke:desktop": "node scripts/smoke-desktop.mjs"
   },
   "devDependencies": {
     "@types/node": "^24.3.0",

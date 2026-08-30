@@ -60,7 +60,22 @@ diskpush media-01:/srv/media/ backup-02:/data/ # server -> server, directly
 ```bash
 diskpush ls                      # the current directory
 diskpush ls prod:/srv/app        # a remote directory, over SFTP
+
+diskpush tui                     # two-pane browser, local beside cwd
+diskpush tui prod:/srv/app       # local beside a server
+diskpush tui ./dist prod:/srv/   # both sides named
+
+diskpush desktop                 # launch the desktop app
 ```
+
+In the TUI: `tab` switches pane, `j`/`k` move, `l` or Enter opens, `h` goes up,
+`s` syncs the active pane into the other, `p` previews that sync, `r` refreshes,
+`q` quits. It deliberately offers no Mirror — deleting files from a keystroke,
+with no delete list on screen, is the accident the rest of DiskPush exists to
+prevent. Use `diskpush mirror`.
+
+A remote pane resolves against your saved connections first and then
+`~/.ssh/config`, so hosts you already have work without being imported.
 
 ### Connections
 
@@ -123,6 +138,7 @@ job would need a background daemon, which does not exist yet.
 | `--hard-links`, `--acls`, `--xattrs`, `--numeric-ids`, `--sparse` | Extra metadata. |
 | `--update`, `--ignore-existing`, `--existing` | Destination policies. |
 | `--inplace`, `--append-verify`, `--mkpath` | Advanced. |
+| `--progress` | rsync's own per-file progress, instead of the aggregate line DiskPush draws. |
 | `--stats` | Include rsync's transfer statistics. |
 | `-y`, `--yes` | Confirm a mirror's deletions without prompting. |
 | `--non-interactive` | Never prompt; fail instead. |

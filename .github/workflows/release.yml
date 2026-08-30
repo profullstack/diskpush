@@ -1,0 +1,59 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: pnpm test
+
+      # Catches the class of failure that unit tests cannot: the app starting.
+      - run: pnpm --filter @diskpush/desktop build
+      - run: pnpm smoke:desktop
+
+      - name: Build the CLI bundle
+        run: node scripts/package-cli.mjs
+
+      - name: Build the desktop packages
+        run: node scripts/package-desktop.mjs
+
+      - name: Checksums
+        working-directory: release
+        run: |
+          sha256sum \
+            DiskPush-*-linux-x64.tar.gz \
+            DiskPush-*-linux-x86_64.AppImage \
+            DiskPush-*-linux-amd64.deb \
+            diskpush-cli-*-linux-x64.tar.gz > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "DiskPush ${GITHUB_REF_NAME#v}" \
+            --generate-notes \
+            release/DiskPush-*-linux-x64.tar.gz \
+            release/DiskPush-*-linux-x86_64.AppImage \
+            release/DiskPush-*-linux-amd64.deb \
+            release/diskpush-cli-*-linux-x64.tar.gz \
+            release/SHA256SUMS

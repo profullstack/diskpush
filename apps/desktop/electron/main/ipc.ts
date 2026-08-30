@@ -15,10 +15,10 @@ import {
   RenameRequestSchema,
   TransferRequestSchema,
   type IpcResult,
-} from '../shared/contract'
-import { browserFor, dropSession, sessionFor } from './services/sessions'
-import { store } from './services/store'
-import { cancelTransfer, previewTransfer, startTransfer } from './services/transfers'
+} from '../shared/contract.js'
+import { browserFor, dropSession, sessionFor } from './services/sessions.js'
+import { store } from './services/store.js'
+import { cancelTransfer, previewTransfer, startTransfer } from './services/transfers.js'
 
 /**
  * Every handler validates its input with Zod before doing anything, and every

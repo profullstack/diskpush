@@ -19,8 +19,12 @@ import { VERSION } from '../help.js'
 
 export type InstallManifest = {
   version: string
-  /** How it was installed, which decides how it is removed. */
-  method: 'appimage' | 'deb' | 'macos-app' | 'cli-tarball' | 'source'
+  /**
+   * How it was installed, which decides how it is removed and where the
+   * desktop app lives. These are exactly the values scripts/install.sh writes;
+   * `deb` and `appimage` are for installs done outside it.
+   */
+  method: 'linux-app' | 'macos-app' | 'cli-tarball' | 'deb' | 'appimage' | 'source'
   installer: string
   installedAt: string
   paths: string[]

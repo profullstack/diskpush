@@ -120,7 +120,10 @@ export function buildRsyncArgs(input: BuildArgsInput): BuildArgsResult {
   if (options.humanReadable) args.push('--human-readable')
   if (options.itemizeAll) args.push('--itemize-changes', '--itemize-changes')
   else if (options.itemizeChanges) args.push('--itemize-changes')
-  if (options.progress) args.push('--info=progress2')
+  // --progress and --info=progress2 both set rsync's info flags, and the last
+  // one wins, so only one of them is ever passed.
+  if (options.perFileProgress) args.push('--progress')
+  else if (options.progress) args.push('--info=progress2')
   if (options.stats) args.push('--stats')
 
   // --- synchronisation semantics -------------------------------------------

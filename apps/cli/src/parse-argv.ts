@@ -82,6 +82,8 @@ const KNOWN_COMMANDS = new Set([
   'uninstall',
   'remove',
   'doctor',
+  'desktop',
+  'tui',
   'help',
   'version',
 ])

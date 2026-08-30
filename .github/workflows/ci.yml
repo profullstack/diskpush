@@ -43,6 +43,12 @@ jobs:
       - name: Build the desktop app
         run: pnpm --filter @diskpush/desktop build
 
+      # The app starting is not something the unit tests can check. Without a
+      # display it fails at the display, and reaching that point proves main,
+      # preload and everything they import loaded.
+      - name: Desktop starts
+        run: pnpm smoke:desktop
+
   integration:
     runs-on: ubuntu-latest
     steps:

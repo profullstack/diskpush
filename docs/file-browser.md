@@ -37,6 +37,21 @@ interactive browser, for two reasons:
 So SFTP is the browser and rsync is the engine, sharing the same SSH
 connection infrastructure.
 
+## ~/.ssh/config
+
+A remote endpoint resolves in two steps: a saved DiskPush connection first,
+then `~/.ssh/config`. So a host you already have in ssh_config works
+everywhere without being imported.
+
+This matters more than it sounds. Transfers got ssh_config for free, because
+rsync shells out to ssh and ssh reads the file — but browsing did not, because
+SFTP goes through ssh2, which has never read it. Before this, `diskpush
+prod:/srv/` would transfer happily while `diskpush ls prod:/srv/` insisted the
+host did not exist.
+
+`diskpush connections import` still exists, and is worth using when you want to
+attach a default path or a remote rsync path to a host.
+
 ## SFTP without rsync
 
 A server can have SSH and SFTP but no rsync. DiskPush connects anyway:

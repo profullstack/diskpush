@@ -6,7 +6,7 @@ import {
   PathSchema,
   TransferOptionsSchema,
   TransferRequestSchema,
-} from './contract'
+} from './contract.js'
 
 /**
  * The IPC boundary is where a compromised renderer would try to reach the

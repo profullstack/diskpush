@@ -1,4 +1,8 @@
 import { execFileSync } from 'node:child_process'
+import { readFileSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
+import { parseSshConfig } from '@diskpush/ssh-core'
 import {
   EXCLUDE_PRESETS,
   parseEndpoint,
@@ -31,11 +35,60 @@ export type ResolvedEndpoint = {
   connection: Connection | null
 }
 
+/**
+ * Builds an unsaved connection from a `~/.ssh/config` entry.
+ *
+ * Transfers get ssh_config for free, because rsync shells out to ssh and ssh
+ * reads the file. Browsing does not: SFTP goes through ssh2, which has never
+ * read ssh_config. Without this, `diskpush prod:/srv/` would transfer happily
+ * while `diskpush ls prod:/srv/` claimed the host did not exist.
+ */
+export function sshConfigConnection(alias: string, env: NodeJS.ProcessEnv = process.env): Connection | null {
+  const path = env.DISKPUSH_SSH_CONFIG ?? join(homedir(), '.ssh', 'config')
+  let contents: string
+  try {
+    contents = readFileSync(path, 'utf8')
+  } catch {
+    return null
+  }
+
+  const host = parseSshConfig(contents).find((candidate) => candidate.alias === alias)
+  if (!host) return null
+
+  const identity = host.identityFile ? host.identityFile.replace(/^~/, homedir()) : null
+  const now = new Date().toISOString()
+
+  return {
+    // Not persisted: the id marks where it came from, for diagnostics.
+    id: `ssh-config:${alias}`,
+    name: alias,
+    host: host.hostName ?? alias,
+    port: host.port ?? 22,
+    username: host.user ?? env.USER ?? 'root',
+    authType: identity ? 'key' : 'agent',
+    keyPath: identity,
+    defaultLocalPath: null,
+    defaultRemotePath: null,
+    jumpHost: host.proxyJump,
+    rsyncPath: null,
+    connectTimeoutSeconds: 15,
+    keepaliveSeconds: host.serverAliveInterval ?? 30,
+    forwardAgent: false,
+    tags: ['ssh-config'],
+    notes: `From ${path}`,
+    createdAt: now,
+    updatedAt: now,
+  }
+}
+
 export async function resolveEndpoint(store: DiskPushStore, input: string): Promise<ResolvedEndpoint> {
   const endpoint = parseEndpoint(input)
   if (endpoint.type === 'local') return { endpoint, connection: null }
 
-  const connection = await store.findConnection(endpoint.host)
+  const saved = await store.findConnection(endpoint.host)
+  // A saved connection wins; otherwise fall back to ~/.ssh/config, which is
+  // where most people already keep their hosts.
+  const connection = saved ?? sshConfigConnection(endpoint.host)
   if (!connection) return { endpoint, connection: null }
 
   const resolved: SshEndpoint = {
@@ -110,6 +163,7 @@ export function optionsFromFlags(parsed: ParsedArgv, base?: RsyncOptions): Rsync
   if (hasFlag(parsed, '--append-verify')) options.appendVerify = true
   if (hasFlag(parsed, '--mkpath')) options.mkpath = true
   if (hasFlag(parsed, '--itemize-all')) options.itemizeAll = true
+  if (hasFlag(parsed, '--progress')) options.perFileProgress = true
 
   if (hasFlag(parsed, '--compress')) {
     const choice = flagValue(parsed, '--compress')

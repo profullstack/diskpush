@@ -189,6 +189,9 @@ export async function runTransfer(
   output.line('')
 
   const changes: Change[] = []
+  // The file rsync is working on. With twenty thousand files going past, an
+  // aggregate percentage alone tells you it is alive but not what it is doing.
+  let currentFile = ''
   let lastProgress: import('@diskpush/schemas').RsyncProgress | null = null
   let exitCode: number = EXIT.internal
   let message = ''
@@ -205,15 +208,18 @@ export async function runTransfer(
       switch (event.type) {
         case 'change':
           changes.push(event.change)
+          if (event.change.action === 'add' || event.change.action === 'update') {
+            currentFile = event.change.path
+          }
           break
         case 'progress': {
           lastProgress = event.progress
           const remaining = estimateRemaining(event.progress.percent, event.progress.elapsedSeconds)
-          output.status(
+          const head =
             `  ${formatBytes(event.progress.bytesTransferred).padStart(10)}  ${String(event.progress.percent).padStart(3)}%  ` +
-              `${formatRate(event.progress.bytesPerSecond).padStart(11)}  ` +
-              `ETA ${remaining === null ? '--:--' : formatDuration(remaining)}`,
-          )
+            `${formatRate(event.progress.bytesPerSecond).padStart(11)}  ` +
+            `ETA ${remaining === null ? '--:--' : formatDuration(remaining)}`
+          output.status(currentFile === '' ? head : `${head}  ${truncatePath(currentFile, head.length)}`)
           break
         }
         case 'stderr':
@@ -389,4 +395,18 @@ function finish(output: Output, code: number, message: string, extra: Record<str
   if (output.isJson) output.json({ status: code === 0 ? 'ok' : 'failed', message, ...extra })
   else output.line(message)
   return code
+}
+
+/**
+ * Keeps the status line to one terminal row.
+ *
+ * A wrapped status line defeats the carriage return that redraws it, leaving a
+ * trail of half-lines up the screen instead of one updating row. The head is
+ * the part that must survive, so the path gives up its middle.
+ */
+function truncatePath(path: string, used: number): string {
+  const available = Math.max(12, (process.stdout.columns ?? 80) - used - 2)
+  if (path.length <= available) return path
+  const tail = path.slice(-(available - 1))
+  return `…${tail}`
 }

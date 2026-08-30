@@ -1,4 +1,5 @@
-export const VERSION = '0.1.0'
+export { VERSION } from './version.js'
+import { VERSION } from './version.js'
 
 export const HELP = `DiskPush ${VERSION} - push files fast, sync only what changed.
 
@@ -26,6 +27,9 @@ COMMANDS
   backup SRC DST          same engine, backup-shaped intent
   mirror SRC DST          sync AND delete destination-only files (previewed first)
   rsync SRC DST -- ARGS   endpoint resolution and orchestration only
+
+  desktop                 launch the desktop app
+  tui [SRC] [DST]         the two-pane browser, in this terminal
 
   ls [ENDPOINT]           list a local or remote directory over SFTP
   connections             list saved connections
@@ -69,6 +73,8 @@ OPTIONS
       --hard-links --acls --xattrs --numeric-ids --sparse
       --update --ignore-existing --existing
       --inplace --append-verify --mkpath
+      --progress          rsync's own per-file progress instead of the
+                          aggregate line DiskPush draws
       --stats             include rsync's transfer statistics
   -y, --yes               confirm a mirror's deletions without prompting
       --non-interactive   never prompt; fail instead

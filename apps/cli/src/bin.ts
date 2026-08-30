@@ -5,6 +5,8 @@ import { ZodError } from 'zod'
 import { runConnections } from './commands/connections.js'
 import { runJob, runJobs, runRetry } from './commands/jobs.js'
 import { runDoctor, runUninstall, runUpdate } from './commands/self.js'
+import { runDesktop } from './commands/desktop.js'
+import { runTui } from './commands/tui.js'
 import { runLs } from './commands/ls.js'
 import { runProfiles } from './commands/profiles.js'
 import { runTransfer, TRANSFER_ALIASES } from './commands/transfer.js'
@@ -88,6 +90,10 @@ async function main(argv: readonly string[]): Promise<number> {
         return await runUninstall(parsed, output)
       case 'doctor':
         return await runDoctor(parsed, output)
+      case 'desktop':
+        return await runDesktop(parsed, output)
+      case 'tui':
+        return await runTui(parsed, store, output)
       case 'ls':
         return await runLs(parsed, store, output)
       default:

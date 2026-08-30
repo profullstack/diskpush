@@ -1,9 +1,14 @@
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { app, BrowserWindow, shell } from 'electron'
-import { registerIpc } from './ipc'
-import { checkForUpdates } from './services/updater'
-import { closeAllSessions } from './services/sessions'
-import { cancelAll, hasActiveTransfer } from './services/transfers'
+import { registerIpc } from './ipc.js'
+import { checkForUpdates } from './services/updater.js'
+import { closeAllSessions } from './services/sessions.js'
+import { cancelAll, hasActiveTransfer } from './services/transfers.js'
+
+// ESM has no __dirname. import.meta.dirname exists in Electron 33's Node 20.18,
+// but fileURLToPath keeps this working on anything older too.
+const here = join(fileURLToPath(import.meta.url), '..')
 
 const isDev = !app.isPackaged && process.env.DISKPUSH_DEV === '1'
 const DEV_URL = 'http://localhost:3210'
@@ -17,7 +22,7 @@ function createWindow(): BrowserWindow {
     backgroundColor: '#0a0c10',
     title: 'DiskPush',
     webPreferences: {
-      preload: join(__dirname, '..', 'preload', 'index.js'),
+      preload: join(here, '..', 'preload', 'index.cjs'),
       // The renderer gets no Node, no remote module, and its own sandbox. It
       // reaches the outside world only through the narrow IPC surface in
       // ipc.ts, and every message there is validated.
@@ -67,7 +72,7 @@ function createWindow(): BrowserWindow {
   })
 
   if (isDev) void window.loadURL(DEV_URL)
-  else void window.loadFile(join(__dirname, '..', '..', 'out', 'index.html'))
+  else void window.loadFile(join(here, '..', '..', 'out', 'index.html'))
 
   return window
 }

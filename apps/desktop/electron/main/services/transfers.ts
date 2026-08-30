@@ -13,8 +13,8 @@ import {
 import { defaultRsyncOptions, summarizeChanges, type Change, type Endpoint, type RsyncOptions } from '@diskpush/schemas'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { IPC, type EndpointRef, type TransferOptions, type TransferRequest } from '../../shared/contract'
-import { store } from './store'
+import { IPC, type EndpointRef, type TransferOptions, type TransferRequest } from '../../shared/contract.js'
+import { store } from './store.js'
 
 const execFileAsync = promisify(execFile)
 

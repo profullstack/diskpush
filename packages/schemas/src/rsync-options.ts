@@ -24,6 +24,12 @@ export const RsyncOptionsSchema = z.object({
   /** `-ii`: also itemize items that need no change. Powers the "Unchanged" rows. */
   itemizeAll: z.boolean().default(false),
   progress: z.boolean().default(true),
+  /**
+   * rsync's own `--progress`: a per-file progress line rather than the single
+   * aggregate one. Mutually exclusive with `--info=progress2`, because
+   * whichever info flag comes last wins.
+   */
+  perFileProgress: z.boolean().default(false),
   stats: z.boolean().default(false),
 
   // --- synchronisation semantics ------------------------------------------

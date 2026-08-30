@@ -20,7 +20,8 @@ export async function runLs(parsed: ParsedArgv, store: DiskPushStore, output: Ou
   if (!resolved.connection) {
     return failure(
       output,
-      `${resolved.endpoint.host} is not a saved connection. Add it with: diskpush connections add ${resolved.endpoint.host} user@${resolved.endpoint.host}`,
+      `${resolved.endpoint.host} is neither a saved connection nor a host in ~/.ssh/config.\n` +
+        `Add it with: diskpush connections add ${resolved.endpoint.host} user@${resolved.endpoint.host}`,
       EXIT.configuration,
     )
   }

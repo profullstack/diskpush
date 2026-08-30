@@ -1,9 +1,11 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "lib": ["ES2023"],
-    "module": "commonjs",
-    "moduleResolution": "node",
+    "lib": [
+      "ES2023"
+    ],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
     "outDir": "dist-electron",
     "rootDir": "electron",
     "strict": true,
@@ -12,5 +14,11 @@
     "resolveJsonModule": true,
     "sourceMap": true
   },
-  "include": ["electron/**/*.ts"]
+  "include": [
+    "electron/main/**/*.ts",
+    "electron/shared/**/*.ts"
+  ],
+  "exclude": [
+    "electron/**/*.test.ts"
+  ]
 }

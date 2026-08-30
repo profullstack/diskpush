@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import { IPC, type IpcResult } from '../shared/contract'
+import { IPC, type IpcResult } from '../shared/contract.js'
 
 /**
  * The entire surface the renderer can see.
