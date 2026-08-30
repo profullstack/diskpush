@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { latestRelease } from '@/lib/releases'
 
-export const revalidate = 3600
+export const revalidate = 60
 
 /**
  * Normalised latest-release metadata, so the download UI never has to know
@@ -15,5 +15,5 @@ export async function GET() {
       { headers: { 'Cache-Control': 'public, s-maxage=600' } },
     )
   }
-  return NextResponse.json(release, { headers: { 'Cache-Control': 'public, s-maxage=3600' } })
+  return NextResponse.json(release, { headers: { 'Cache-Control': 'public, s-maxage=60' } })
 }
