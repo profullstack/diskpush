@@ -1,8 +1,8 @@
 import { existsSync, readFileSync } from 'node:fs'
-import { Client, type ConnectConfig, type SFTPWrapper } from 'ssh2'
+import { Client, type AnyAuthMethod, type ConnectConfig, type SFTPWrapper } from 'ssh2'
 import type { Connection } from '@diskpush/schemas'
 import { keyTypeOf, sha256Fingerprint } from './fingerprint.js'
-import { expandTilde, findAgentSocket, findDefaultIdentity } from './identity.js'
+import { expandTilde, findAgentSocket, findDefaultIdentities } from './identity.js'
 import { appendKnownHost, readKnownHosts, verifyHostKey, type HostKeyVerdict } from './known-hosts.js'
 
 export class SshError extends Error {
@@ -60,20 +60,18 @@ export class SshSession {
     }
 
     if (connection.authType === 'agent') {
-      // Both halves, the way ssh(1) does it: an agent if one can be found, and
-      // the default identity files regardless. Requiring SSH_AUTH_SOCK to be
-      // exported meant every agent host failed in the desktop app, which is
-      // launched from a session that exports far less than a login shell.
+      // Every credential, offered in turn, the way ssh(1) does it: the agent
+      // first if one can be found, then each default identity that exists.
+      //
+      // ssh2's `privateKey` holds exactly one key, so offering only the first
+      // one meant a host that accepts id_rsa but not id_ed25519 rejected us
+      // outright — while `ssh` to that same host from a terminal succeeded,
+      // because it tries them all. An authHandler array is how ssh2 expresses
+      // "try these, in this order".
       const agent = options.agentSocket ?? findAgentSocket(existsSync)
-      if (agent) config.agent = agent
+      const identities = findDefaultIdentities(existsSync)
 
-      const identity = findDefaultIdentity(existsSync)
-      if (identity) {
-        config.privateKey = readFileSync(identity)
-        if (options.passphrase) config.passphrase = options.passphrase
-      }
-
-      if (!agent && !identity) {
+      if (!agent && identities.length === 0) {
         throw new SshError(
           'No SSH agent and no default key. Looked for an agent socket, then for ' +
             '~/.ssh/id_ed25519, id_ecdsa, id_rsa and id_dsa. Set a key file on this connection, ' +
@@ -81,6 +79,18 @@ export class SshSession {
           'auth',
         )
       }
+
+      const methods: AnyAuthMethod[] = []
+      if (agent) methods.push({ type: 'agent', username: connection.username, agent })
+      for (const identity of identities) {
+        methods.push({
+          type: 'publickey',
+          username: connection.username,
+          key: readFileSync(identity),
+          ...(options.passphrase ? { passphrase: options.passphrase } : {}),
+        })
+      }
+      config.authHandler = methods
     } else if (connection.authType === 'key' || connection.authType === 'key-passphrase') {
       if (!connection.keyPath) throw new SshError('This connection is set to key authentication but has no key path.', 'auth')
       // `~` is expanded here rather than trusted to have been expanded by
