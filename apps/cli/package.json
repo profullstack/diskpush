@@ -1,11 +1,15 @@
 {
   "name": "@diskpush/cli",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
-  "bin": { "diskpush": "./dist/bin.js" },
+  "bin": {
+    "diskpush": "./dist/bin.js"
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
