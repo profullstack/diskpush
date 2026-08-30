@@ -47,7 +47,8 @@ const api = {
   },
   profiles: {
     list: () => call(IPC.profilesList),
-    remove: (id: string) => call(IPC.profilesRemove, { id }),
+    save: (input: unknown) => call(IPC.profilesSave, input),
+    remove: (id: string) => call<boolean>(IPC.profilesRemove, { id }),
   },
   fleet: {
     servers: () => call(IPC.fleetServers),

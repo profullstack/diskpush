@@ -18,6 +18,7 @@ import {
   JobIdSchema,
   PathSchema,
   RemotePathRequestSchema,
+  ProfileSaveSchema,
   RenameEntryRequestSchema,
   TransferRequestSchema,
   type IpcResult,
@@ -38,7 +39,7 @@ import {
 } from './services/fleet.js'
 import { browserFor, dropSession, sessionFor } from './services/sessions.js'
 import { store } from './services/store.js'
-import { cancelTransfer, previewTransfer, startTransfer } from './services/transfers.js'
+import { cancelTransfer, previewTransfer, saveProfile, startTransfer } from './services/transfers.js'
 
 /**
  * Every handler validates its input with Zod before doing anything, and every
@@ -308,6 +309,8 @@ export function registerIpc(): void {
   // --- profiles ------------------------------------------------------------
 
   handle(IPC.profilesList, z.undefined(), async () => (await store()).listProfiles())
+
+  handle(IPC.profilesSave, ProfileSaveSchema, async (input) => saveProfile(input))
 
   handle(IPC.profilesRemove, z.object({ id: z.string().min(1) }), async ({ id }) => (await store()).deleteProfile(id))
 

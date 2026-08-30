@@ -226,6 +226,38 @@ export async function startTransfer(request: TransferRequest, sender: WebContent
   return { jobId, command: plan.display, control: plan.controlDisplay ?? null, warnings: plan.warnings }
 }
 
+/**
+ * Saves the current pair and options as a named profile.
+ *
+ * The endpoint references are resolved to full endpoints here, so the profile
+ * that lands in the store is the same shape the CLI writes and can be run with
+ * `diskpush profile run NAME`. One store, one profile, either surface.
+ */
+export async function saveProfile(input: {
+  name: string
+  source: EndpointRef
+  destination: EndpointRef
+  options: TransferOptions
+}) {
+  const source = await resolveEndpoint(input.source)
+  const destination = await resolveEndpoint(input.destination)
+  return (await store()).saveProfile({
+    name: input.name,
+    source: source.endpoint,
+    destination: destination.endpoint,
+    preset: 'fast-sync',
+    options: optionsFrom(input.options),
+    // Never set from the app. Unattended mirroring is the one way a delete
+    // list runs without a human looking at it, and it stays a deliberate,
+    // out-of-band choice.
+    trustDeletes: false,
+    schedule: { enabled: false, kind: 'daily', cron: null },
+    watch: { enabled: false, debounceMs: 1000 },
+    notifyOnSuccess: false,
+    notifyOnFailure: true,
+  })
+}
+
 export function cancelTransfer(jobId: string): boolean {
   const job = running.get(jobId)
   if (!job) return false

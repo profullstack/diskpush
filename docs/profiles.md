@@ -24,9 +24,29 @@ watch                   off by default
 notifyOnSuccess / notifyOnFailure
 ```
 
+## In the desktop app
+
+The strip above the two panes holds them. Click one to restore its source,
+destination and options; **Save this pair** stores what is on screen; the × on
+a chip deletes it.
+
+A profile whose delete mode is on carries a red **mirror** mark, because
+loading a profile that turns Mirror on is not something to discover from the
+footer afterwards.
+
+Loading a profile sets Mirror to whatever the profile stored, rather than
+leaving it as it found it — a profile that did something different depending
+on what you had toggled last would not be a profile.
+
+`trustDeletes` is never set from the app. It is the one way a mirror runs
+without a human looking at the delete list first, so it stays a deliberate,
+out-of-band choice.
+
 Profiles and connections live in one local database shared with the desktop
-app. A profile created in the CLI appears in the app, and the reverse. There is
-deliberately no second configuration universe.
+app. A profile created in the CLI appears in the app, and the reverse — a pair
+saved in the window is runnable with `diskpush profile run NAME`, which is
+verified rather than assumed. There is deliberately no second configuration
+universe.
 
 ## Direction
 

@@ -128,6 +128,23 @@ export type TransferRequest = z.infer<typeof TransferRequestSchema>
 
 export const JobIdSchema = z.string().uuid()
 
+/**
+ * Saving the current pane pair and options as a named profile.
+ *
+ * The renderer sends the same endpoint references a transfer takes, so a
+ * profile can name a saved connection but never a host of its own. The main
+ * process resolves them and stores the full endpoints, which is what makes a
+ * profile runnable from the CLI too.
+ */
+export const ProfileSaveSchema = z.object({
+  name: z.string().min(1).max(128).refine((value) => value.trim() === value, {
+    message: 'A name cannot begin or end with a space.',
+  }),
+  source: EndpointRefSchema,
+  destination: EndpointRefSchema,
+  options: TransferOptionsSchema,
+})
+
 export const RemotePathRequestSchema = z.object({
   connectionId: ConnectionIdSchema,
   path: PathSchema,
