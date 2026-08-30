@@ -137,6 +137,17 @@ It names what it matched and how many servers it would reach. That check is
 repeated in the main process, so it is not something the window can be talked
 out of.
 
+## Switching tabs keeps your work
+
+Both views stay mounted; the inactive one is hidden, not destroyed. Clicking
+Transfer to check a path and coming back finds the Fleet view exactly as you
+left it — the script, the ticked servers, the output of a run still going.
+
+The Fleet editor's contents also survive quitting the app. That is the
+*unsaved draft*: the thing you have not decided to name yet, kept in the
+window's own storage as a safety net under **Save these settings**. A sudo
+password is never part of it.
+
 ## Keyboard
 
 ```text

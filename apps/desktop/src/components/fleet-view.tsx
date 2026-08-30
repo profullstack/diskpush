@@ -25,6 +25,7 @@ import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Textarea } from '@/components/ui/textarea'
 import { blankHost, foldHosts, type HostView } from '@/lib/fleet-events'
+import { readDraft, writeDraft } from '@/lib/fleet-draft'
 import {
   api,
   unwrap,
@@ -73,19 +74,25 @@ export function FleetView({ onAddServer }: { onAddServer: () => void }) {
   const [newListName, setNewListName] = useState('')
   const [savingCommand, setSavingCommand] = useState(false)
   const [newCommandName, setNewCommandName] = useState('')
-  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [selected, setSelected] = useState<Set<string>>(() => new Set(readDraft().selected))
   const [tagFilter, setTagFilter] = useState<string | null>(null)
 
-  const [script, setScript] = useState('')
-  const [label, setLabel] = useState('')
+  // Read once, synchronously, as the initial state. Restoring in an effect
+  // would paint an empty editor and then replace what you were looking at.
+  const [draft] = useState(readDraft)
+
+  const [script, setScript] = useState(draft.script)
+  const [label, setLabel] = useState(draft.label)
   const [commandId, setCommandId] = useState<string | null>(null)
-  const [interpreter, setInterpreter] = useState<'sh' | 'bash' | 'raw'>('raw')
-  const [sudo, setSudo] = useState(false)
+  const [interpreter, setInterpreter] = useState<'sh' | 'bash' | 'raw'>(draft.interpreter)
+  const [sudo, setSudo] = useState(draft.sudo)
+  // Never restored. A password is held for one run, and writing it anywhere it
+  // could be read back is exactly what the CLI refuses to do.
   const [sudoPassword, setSudoPassword] = useState('')
   const [askSudoPassword, setAskSudoPassword] = useState(false)
-  const [concurrency, setConcurrency] = useState(4)
-  const [timeoutSeconds, setTimeoutSeconds] = useState(900)
-  const [stopOnError, setStopOnError] = useState(false)
+  const [concurrency, setConcurrency] = useState(draft.concurrency)
+  const [timeoutSeconds, setTimeoutSeconds] = useState(draft.timeoutSeconds)
+  const [stopOnError, setStopOnError] = useState(draft.stopOnError)
 
   const [hazards, setHazards] = useState<Hazard[]>([])
   const [runId, setRunId] = useState<string | null>(null)
@@ -108,6 +115,14 @@ export function FleetView({ onAddServer }: { onAddServer: () => void }) {
       setServers(serverList)
       setCommands(commandList)
       setLists(listList)
+      // A restored draft can name servers that have since been deleted.
+      // Dropping them quietly is right here — this is a draft, not a saved
+      // list, and there is nothing for the run to get wrong yet.
+      const live = new Set(serverList.map((server) => server.id))
+      setSelected((current) => {
+        const kept = [...current].filter((id) => live.has(id))
+        return kept.length === current.size ? current : new Set(kept)
+      })
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught))
     }
@@ -116,6 +131,12 @@ export function FleetView({ onAddServer }: { onAddServer: () => void }) {
   useEffect(() => {
     void refresh()
   }, [refresh])
+
+  // Keep the draft current. Cheap, and it is the difference between closing
+  // the window and losing a fifty-line script.
+  useEffect(() => {
+    writeDraft({ script, interpreter, sudo, concurrency, timeoutSeconds, stopOnError, label, selected: [...selected] })
+  }, [script, interpreter, sudo, concurrency, timeoutSeconds, stopOnError, label, selected])
 
   useEffect(() => {
     const bridge = api()
