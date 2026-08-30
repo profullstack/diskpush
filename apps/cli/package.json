@@ -1,6 +1,6 @@
 {
   "name": "@diskpush/cli",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "type": "module",
   "bin": {
     "diskpush": "./dist/bin.js"
