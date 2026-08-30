@@ -89,6 +89,9 @@ async function saveProfile(parsed: ParsedArgv, store: DiskPushStore, output: Out
     destination: parseEndpoint(destination),
     preset: presetFlag ? PresetNameSchema.parse(presetFlag) : 'fast-sync',
     options: optionsFromFlags(parsed),
+    // A profile made here has no panes. 'left' is what the app will use when
+    // it opens one: source on the left, the way you read it.
+    sourcePane: 'left',
     // Never inherited from the command line: unattended mirroring has to be
     // turned on deliberately, in one place, after the fact.
     trustDeletes: false,

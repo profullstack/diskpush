@@ -165,12 +165,13 @@ export class DiskPushStore {
     await this.client.execute({
       sql: `INSERT INTO sync_profiles (
               id, name, source_json, destination_json, preset, options_json, trust_deletes,
-              schedule_json, watch_json, notify_on_success, notify_on_failure, created_at, updated_at
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+              source_pane, schedule_json, watch_json, notify_on_success, notify_on_failure, created_at, updated_at
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(id) DO UPDATE SET
               name=excluded.name, source_json=excluded.source_json,
               destination_json=excluded.destination_json, preset=excluded.preset,
               options_json=excluded.options_json, trust_deletes=excluded.trust_deletes,
+              source_pane=excluded.source_pane,
               schedule_json=excluded.schedule_json, watch_json=excluded.watch_json,
               notify_on_success=excluded.notify_on_success, notify_on_failure=excluded.notify_on_failure,
               updated_at=excluded.updated_at`,
@@ -182,6 +183,7 @@ export class DiskPushStore {
         profile.preset,
         JSON.stringify(profile.options),
         profile.trustDeletes ? 1 : 0,
+        profile.sourcePane,
         JSON.stringify(profile.schedule),
         JSON.stringify(profile.watch),
         profile.notifyOnSuccess ? 1 : 0,
@@ -572,6 +574,7 @@ function rowToProfile(row: Row): SyncProfile {
     preset: String(row.preset),
     options: JSON.parse(String(row.options_json)),
     trustDeletes: Number(row.trust_deletes) === 1,
+    sourcePane: String(row.source_pane),
     schedule: JSON.parse(String(row.schedule_json)),
     watch: JSON.parse(String(row.watch_json)),
     notifyOnSuccess: Number(row.notify_on_success) === 1,

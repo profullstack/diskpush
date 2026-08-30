@@ -145,6 +145,8 @@ export const ProfileSaveSchema = z.object({
   source: EndpointRefSchema,
   destination: EndpointRefSchema,
   options: TransferOptionsSchema,
+  /** Which pane the source was on, so loading puts both back where they were. */
+  sourcePane: z.enum(['left', 'right']).default('left'),
 })
 
 export const RemotePathRequestSchema = z.object({
