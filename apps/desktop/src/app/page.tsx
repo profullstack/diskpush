@@ -2,14 +2,39 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import Image from 'next/image'
-import { CircleCheck, Settings, Users } from 'lucide-react'
+import {
+  CircleAlert,
+  CircleCheck,
+  ExternalLink,
+  FileDown,
+  MonitorOff,
+  Plus,
+  Settings,
+  Users,
+  X,
+} from 'lucide-react'
 import { ConnectionDialog } from '@/components/connection-dialog'
 import { endpointLabel, loadPane, Pane, type PaneEndpoint, type PaneState } from '@/components/pane'
 import { TransferRail } from '@/components/transfer-rail'
 import { MirrorPreviewDialog, TransferBand, type ActiveJob } from '@/components/transfer-panel'
 import { Button } from '@/components/ui/button'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { api, unwrap, type Connection, type PreviewResult, type TransferEvent } from '@/lib/api'
 import { withTrailingSlash } from '@/lib/format'
+
+/** A row in the header menu. Plain button, styled once. */
+function MenuItem({ icon, label, onClick }: { icon: React.ReactNode; label: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="focus-ring flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-[12.5px] text-dim transition-colors hover:bg-secondary hover:text-foreground"
+    >
+      <span className="text-faint">{icon}</span>
+      {label}
+    </button>
+  )
+}
 
 const blankPane = (endpoint: PaneEndpoint, path: string): PaneState => ({
   endpoint,
@@ -45,6 +70,17 @@ export default function Workspace() {
       setError(caught instanceof Error ? caught.message : String(caught))
     }
   }, [])
+
+  const importSshConfig = useCallback(async () => {
+    setError(null)
+    try {
+      const imported = await unwrap(api()?.connections.importSshConfig())
+      if (imported.length === 0) setError('No importable hosts found in ~/.ssh/config.')
+      else await refreshConnections()
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught))
+    }
+  }, [refreshConnections])
 
   useEffect(() => {
     if (!api()) {
@@ -176,10 +212,16 @@ export default function Workspace() {
   if (outsideShell) {
     return (
       <div className="flex h-full items-center justify-center p-8">
-        <p className="max-w-md rounded-lg border border-line bg-card p-4 text-[13px] text-muted-foreground">
-          This is the DiskPush renderer. It runs inside the desktop shell, which provides the filesystem and transfer
-          bridge.
-        </p>
+        <div className="elevation-panel max-w-md rounded-xl border border-line bg-card p-5 text-center">
+          <span className="mx-auto mb-3 flex size-9 items-center justify-center rounded-full bg-secondary text-faint">
+            <MonitorOff className="size-[18px]" />
+          </span>
+          <p className="text-[13px] font-medium text-dim">Not running in the desktop shell</p>
+          <p className="mt-1 text-[12px] leading-relaxed text-muted-foreground">
+            This is the DiskPush renderer. It needs the desktop shell, which provides the filesystem and transfer
+            bridge.
+          </p>
+        </div>
       </div>
     )
   }
@@ -194,7 +236,7 @@ export default function Workspace() {
 
   return (
     <div className="flex h-full flex-col">
-      <header className="flex h-[52px] shrink-0 items-center gap-4 border-b border-line bg-chrome px-4">
+      <header className="flex h-[52px] shrink-0 items-center gap-3.5 border-b border-line bg-chrome px-4">
         {/*
           Two files, not one. logo.dark.png is the lockup FOR a dark background:
           its "Disk" is white, so on the light theme it vanished and the header
@@ -218,24 +260,84 @@ export default function Workspace() {
           priority
         />
         <div className="h-5 w-px bg-line" />
-        <div className="flex items-center gap-2 text-[12px] text-muted-foreground">
-          <CircleCheck className="size-3.5 text-ok" />
-          <span className="text-foreground">{connected}</span>
-          <span>server{connected === 1 ? '' : 's'} available</span>
+        <div className="flex items-center gap-1.5 text-[12px] text-muted-foreground">
+          {connected > 0 ? (
+            <CircleCheck className="size-3.5 text-ok" />
+          ) : (
+            <CircleAlert className="size-3.5 text-warn" />
+          )}
+          {connected > 0 ? (
+            <>
+              <span className="numeric font-medium text-foreground">{connected}</span>
+              <span>server{connected === 1 ? '' : 's'} available</span>
+            </>
+          ) : (
+            <span>No servers yet</span>
+          )}
         </div>
         <div className="ml-auto flex items-center gap-2">
-          <Button variant="outline" onClick={() => setShowConnection(true)} className="h-[30px] gap-2 border-line-strong text-[12px]">
+          <Button
+            variant="outline"
+            onClick={() => setShowConnection(true)}
+            className="h-[var(--control)] gap-2 border-line-strong text-[12px]"
+          >
             <Users className="size-3.5" />
             New server
           </Button>
-          <Button variant="outline" className="h-[30px] w-[30px] border-line-strong p-0 text-muted-foreground">
-            <Settings className="size-[15px]" />
-          </Button>
+
+          {/*
+            This gear had no onClick at all -- a control in the top-right corner
+            of the window that did nothing when pressed, which on its own is
+            enough to make an app feel half-built. It now opens the two actions
+            that already exist behind the bridge, plus the project link.
+          */}
+          <Popover>
+            <PopoverTrigger
+              render={
+                <Button
+                  variant="outline"
+                  aria-label="Menu"
+                  className="size-[var(--control)] border-line-strong p-0 text-muted-foreground"
+                />
+              }
+            >
+              <Settings className="size-[15px]" />
+            </PopoverTrigger>
+            <PopoverContent align="end" className="w-[236px] gap-0.5 p-1.5">
+              <MenuItem
+                icon={<Plus className="size-3.5" />}
+                onClick={() => setShowConnection(true)}
+                label="Add a server…"
+              />
+              <MenuItem
+                icon={<FileDown className="size-3.5" />}
+                onClick={() => void importSshConfig()}
+                label="Import from ~/.ssh/config"
+              />
+              <div className="my-1 h-px bg-line" />
+              <MenuItem
+                icon={<ExternalLink className="size-3.5" />}
+                onClick={() => void api()?.shell.openExternal('https://diskpush.com')}
+                label="diskpush.com"
+              />
+            </PopoverContent>
+          </Popover>
         </div>
       </header>
 
       {error ? (
-        <div className="selectable border-b border-danger-line bg-danger-surface px-4 py-2 text-[12px] text-danger-ink">{error}</div>
+        <div className="flex shrink-0 items-start gap-2.5 border-b border-danger-line bg-danger-surface px-4 py-2.5 text-[12px] text-danger-ink">
+          <CircleAlert className="mt-px size-3.5 shrink-0 text-destructive" />
+          <span className="selectable min-w-0 flex-1">{error}</span>
+          <button
+            type="button"
+            aria-label="Dismiss"
+            onClick={() => setError(null)}
+            className="focus-ring -mr-1 shrink-0 rounded p-0.5 text-danger-ink/70 transition-colors hover:text-danger-ink"
+          >
+            <X className="size-3.5" />
+          </button>
+        </div>
       ) : null}
 
       <div className="flex min-h-0 flex-1 gap-0 p-3.5">
@@ -281,6 +383,7 @@ export default function Workspace() {
       <TransferBand
         job={job}
         route={route}
+        mirror={mirror}
         onCancel={() => {
           if (job) void api()?.transfers.cancel(job.jobId)
         }}
@@ -292,20 +395,21 @@ export default function Workspace() {
         deletes. A command line nobody can trust is worse than none, so it is
         built from the same state the transfer is.
       */}
-      <footer className="flex h-[30px] shrink-0 items-center gap-3 border-t border-line bg-background px-4 text-[11px] text-faint">
+      <footer className="flex h-[28px] shrink-0 items-center gap-2.5 border-t border-line bg-background px-4 text-[11px] text-faint">
         <span>Incremental</span>
         <span className="text-line-strong">·</span>
         <span>Archive metadata</span>
         <span className="text-line-strong">·</span>
         <span>Resume</span>
         <span className="text-line-strong">·</span>
-        <span className={mirror ? 'font-medium text-destructive' : 'text-ok'}>
-          Deletes {mirror ? 'ON' : 'off'}
-        </span>
-        <span
-          className="selectable ml-auto max-w-[52%] truncate font-[family-name:var(--font-mono)] text-[10.5px]"
-          title={rsyncFlags}
-        >
+        <span className={mirror ? 'font-medium text-destructive' : 'text-ok'}>Deletes {mirror ? 'ON' : 'off'}</span>
+        {/*
+          The command used to run flush to the window edge and get sliced
+          mid-token by the truncation, so the last thing in the footer was
+          always half a word. It keeps a gutter now, and the full string is in
+          the tooltip.
+        */}
+        <span className="selectable numeric ml-auto min-w-0 max-w-[54%] truncate pl-4 text-[10.5px]" title={rsyncFlags}>
           {rsyncFlags}
         </span>
       </footer>

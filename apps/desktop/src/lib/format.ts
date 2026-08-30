@@ -27,10 +27,23 @@ export function formatDuration(seconds: number): string {
   return `${minutes}:${String(secs).padStart(2, '0')}`
 }
 
+const pad = (value: number) => String(value).padStart(2, '0')
+
+/**
+ * Local time, not UTC.
+ *
+ * This was `toISOString()`, so every mtime in both panes was rendered in UTC
+ * while the clock in the corner of the screen said something else -- a file
+ * saved a minute ago could read as four hours old. A file manager's date
+ * column is compared against the user's own sense of when they touched
+ * something, so it has to be in their zone.
+ */
 export function formatDate(iso: string): string {
   if (!iso) return '-'
   const date = new Date(iso)
-  return Number.isNaN(date.getTime()) ? '-' : date.toISOString().slice(0, 16).replace('T', ' ')
+  if (Number.isNaN(date.getTime())) return '-'
+  const day = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+  return `${day} ${pad(date.getHours())}:${pad(date.getMinutes())}`
 }
 
 export function formatMode(mode: number): string {

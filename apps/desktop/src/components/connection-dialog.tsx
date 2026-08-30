@@ -76,7 +76,7 @@ export function ConnectionDialog({
 
   return (
     <Dialog open={open} onOpenChange={(next) => (next ? undefined : onClose())}>
-      <DialogContent className="max-w-lg gap-0 border-line-strong bg-popover p-0">
+      <DialogContent className="max-w-lg gap-0 border-line-strong bg-popover p-0 [--dialog-pad:0px]">
         <DialogHeader className="flex-row items-center gap-3 space-y-0 border-b border-line px-[18px] py-4">
           <span className="flex size-[30px] items-center justify-center rounded-lg bg-info-surface text-primary">
             <Server className="size-[17px]" />
@@ -114,17 +114,25 @@ export function ConnectionDialog({
 
           <div className="flex flex-col gap-2">
             <Label className="text-[10.5px] uppercase tracking-[0.08em] text-faint">Authentication</Label>
-            <div className="flex gap-2">
+            {/* A segmented control rather than two loose buttons: these are two
+                values of one setting, and spacing them apart made them read as
+                two independent actions. */}
+            <div
+              role="radiogroup"
+              className="inline-flex self-start rounded-lg border border-line-strong bg-sunken p-0.5"
+            >
               {AUTH.map((option) => (
                 <button
                   key={option.id}
                   type="button"
+                  role="radio"
+                  aria-checked={auth === option.id}
                   onClick={() => setAuth(option.id)}
                   className={cn(
-                    'h-8 rounded-lg border px-3 text-[12px] font-medium transition-colors',
+                    'focus-ring h-[28px] rounded-[7px] px-3 text-[12px] font-medium transition-colors',
                     auth === option.id
-                      ? 'border-info-line bg-info-surface text-info-ink'
-                      : 'border-line-strong text-muted-foreground hover:text-foreground',
+                      ? 'bg-primary text-primary-foreground'
+                      : 'text-muted-foreground hover:text-foreground',
                   )}
                 >
                   {option.label}
