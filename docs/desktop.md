@@ -95,6 +95,13 @@ script editor, and the results — and **the action bar is pinned outside all
 of them**. Run is on screen at the 960×600 minimum window size just as it is
 maximised.
 
+The command strip above the editor holds the shipped recipes and anything you
+have saved. Editing the script or the settings offers **Save these settings**,
+which stores the script, the interpreter, sudo, the timeout, how many servers
+at a time, and whether a failure stops the rest — picking it again restores all
+of it. A saved command carries an × to delete it; a shipped recipe does not,
+because it is copied rather than edited.
+
 Saved **lists** sit at the top of the sidebar, above the tag chips. Clicking
 one ticks exactly its members; ticking servers by hand offers **Save these 3**;
 the × on a chip deletes the list and leaves the servers alone. A member whose

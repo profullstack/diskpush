@@ -173,9 +173,27 @@ diskpush fleet commands copy upgrade my-upgrade    # built-ins are copied, not e
 diskpush fleet run --command reload-nginx          # --on comes from the saved default
 ```
 
-A built-in cannot be edited or deleted, only copied, so upgrading DiskPush
-never silently changes a command you rely on. A saved command with the same
-name as a built-in shadows it.
+A saved command remembers **the settings, not just the script**: the
+interpreter, whether it runs through sudo, the timeout, how many servers at a
+time, and whether a failure stops the rest. Picking one restores all of it.
+Those last two matter — "reload nginx" and "upgrade the database tier" want
+very different answers, and re-choosing them on every run is how a saved
+command still gets run wrong.
+
+```bash
+diskpush fleet commands save careful "systemctl reload nginx" \
+  --sudo --concurrency 2 --stop-on-error --timeout 45 --on tag:web
+
+diskpush fleet run --command careful          # 2 at a time, stops on failure
+diskpush fleet run --command careful --concurrency 8   # a flag still wins
+```
+
+In the desktop app the same commands are the strip above the editor. Editing
+anything offers **Save these settings**; a saved command carries an × to
+delete it. A shipped recipe has no × — it is copied, not edited, so upgrading
+DiskPush never silently changes a command you rely on.
+
+A saved command with the same name as a built-in shadows it.
 
 ### `fleet runs` and `fleet show`
 

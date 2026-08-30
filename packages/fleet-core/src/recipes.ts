@@ -1,4 +1,4 @@
-import { FLEET_DEFAULT_TIMEOUT_SECONDS, type FleetCommand } from '@diskpush/schemas'
+import { FLEET_DEFAULT_CONCURRENCY, FLEET_DEFAULT_TIMEOUT_SECONDS, type FleetCommand } from '@diskpush/schemas'
 import { buildUpgradeScript, CHECK_SCRIPT } from './upgrade.js'
 
 /**
@@ -25,6 +25,14 @@ function recipe(
     sudo: false,
     workingDirectory: null,
     timeoutSeconds: FLEET_DEFAULT_TIMEOUT_SECONDS,
+    /*
+     * Stated, not inherited. These objects are plain literals typed as
+     * FleetCommand — nothing parses them through the schema, so a field the
+     * schema defaults is simply `undefined` here. That reached the desktop as
+     * `setConcurrency(undefined)` and broke the input.
+     */
+    concurrency: FLEET_DEFAULT_CONCURRENCY,
+    onFailure: 'continue',
     targets: [],
     tags: ['builtin'],
     builtin: true,
@@ -134,6 +142,10 @@ export function copyRecipe(recipeToCopy: FleetCommand, name: string): Omit<Fleet
     sudo: recipeToCopy.sudo,
     workingDirectory: recipeToCopy.workingDirectory,
     timeoutSeconds: recipeToCopy.timeoutSeconds,
+    // A copy that lost the pacing would run the same script at a different
+    // speed, which is the one thing a copy must not do.
+    concurrency: recipeToCopy.concurrency,
+    onFailure: recipeToCopy.onFailure,
     targets: recipeToCopy.targets,
     tags: recipeToCopy.tags.filter((tag) => tag !== 'builtin'),
     builtin: false,

@@ -71,6 +71,8 @@ export function FleetView({ onAddServer }: { onAddServer: () => void }) {
   const [lists, setLists] = useState<FleetList[]>([])
   const [savingList, setSavingList] = useState(false)
   const [newListName, setNewListName] = useState('')
+  const [savingCommand, setSavingCommand] = useState(false)
+  const [newCommandName, setNewCommandName] = useState('')
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [tagFilter, setTagFilter] = useState<string | null>(null)
 
@@ -221,8 +223,50 @@ export function FleetView({ onAddServer }: { onAddServer: () => void }) {
     setInterpreter(command.interpreter)
     setSudo(command.sudo)
     setTimeoutSeconds(command.timeoutSeconds)
+    // The pacing is part of the command: "reload nginx" and "upgrade the
+    // database tier" want very different answers, and leaving whatever was
+    // last on screen is how a saved command still gets run wrong.
+    setConcurrency(command.concurrency)
+    setStopOnError(command.onFailure === 'stop')
     setHazards([])
   }
+
+  /** Saves everything on screen except the servers, which are chosen per run. */
+  const saveCommand = useCallback(async () => {
+    const name = newCommandName.trim()
+    if (!name || !script.trim()) return
+    setError(null)
+    try {
+      await unwrap(
+        api()?.fleet.saveCommand({
+          name,
+          script,
+          interpreter,
+          sudo,
+          workingDirectory: null,
+          timeoutSeconds,
+          concurrency,
+          onFailure: stopOnError ? 'stop' : 'continue',
+        }),
+      )
+      setNewCommandName('')
+      setSavingCommand(false)
+      setLabel(name)
+      setCommands(await unwrap(api()?.fleet.commands()))
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught))
+    }
+  }, [newCommandName, script, interpreter, sudo, timeoutSeconds, concurrency, stopOnError])
+
+  const removeCommand = useCallback(async (name: string) => {
+    setError(null)
+    try {
+      await unwrap(api()?.fleet.removeCommand(name))
+      setCommands(await unwrap(api()?.fleet.commands()))
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught))
+    }
+  }, [])
 
   const requestBody = useCallback(
     (hazardsConfirmed: boolean) => ({
@@ -457,19 +501,77 @@ export function FleetView({ onAddServer }: { onAddServer: () => void }) {
         <section className="flex min-w-0 flex-1 flex-col">
           <div className="shrink-0 border-b border-line px-3 pb-2.5 pt-2">
             <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
-              <span className="mr-1 text-[11px] text-faint">Recipes</span>
+              <span className="mr-1 text-[11px] text-faint">Commands</span>
               {commands.map((command) => (
-                <button
+                <span
                   key={command.id}
-                  type="button"
-                  title={command.description}
-                  onClick={() => pickCommand(command)}
-                  disabled={running}
-                  className="focus-ring rounded-md border border-line-strong px-2 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:opacity-50"
+                  className="group/cmd inline-flex items-center overflow-hidden rounded-md border border-line-strong"
                 >
-                  {command.name}
-                </button>
+                  <button
+                    type="button"
+                    title={
+                      `${command.description}\n${command.concurrency} at a time · ${command.timeoutSeconds}s` +
+                      `${command.sudo ? ' · sudo' : ''}${command.onFailure === 'stop' ? ' · stops on failure' : ''}`
+                    }
+                    onClick={() => pickCommand(command)}
+                    disabled={running}
+                    className="focus-ring px-2 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:opacity-50"
+                  >
+                    {command.name}
+                  </button>
+                  {/*
+                    Only what someone saved can be deleted. A shipped recipe is
+                    copied, not edited, so upgrading DiskPush never silently
+                    changes a command anyone relies on.
+                  */}
+                  {command.builtin ? null : (
+                    <button
+                      type="button"
+                      aria-label={`Delete the command ${command.name}`}
+                      title={`Delete the saved command ${command.name}`}
+                      onClick={() => void removeCommand(command.name)}
+                      disabled={running}
+                      className="focus-ring pr-1 text-faint opacity-0 transition-opacity hover:text-destructive group-hover/cmd:opacity-100"
+                    >
+                      <X className="size-2.5" />
+                    </button>
+                  )}
+                </span>
               ))}
+
+              {script.trim() && !savingCommand ? (
+                <button
+                  type="button"
+                  onClick={() => setSavingCommand(true)}
+                  disabled={running}
+                  className="focus-ring inline-flex items-center gap-1 rounded-md border border-dashed border-line-strong px-2 py-0.5 text-[11px] text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+                >
+                  <BookmarkPlus className="size-2.5" />
+                  Save these settings
+                </button>
+              ) : null}
+
+              {savingCommand ? (
+                <span className="inline-flex items-center gap-1">
+                  <Input
+                    autoFocus
+                    value={newCommandName}
+                    onChange={(event) => setNewCommandName(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') void saveCommand()
+                      if (event.key === 'Escape') {
+                        setSavingCommand(false)
+                        setNewCommandName('')
+                      }
+                    }}
+                    placeholder="command name"
+                    className="h-6 w-[150px] text-[11.5px]"
+                  />
+                  <Button size="xs" onClick={() => void saveCommand()} disabled={!newCommandName.trim()} className="text-[11px]">
+                    Save
+                  </Button>
+                </span>
+              ) : null}
             </div>
 
             {/*

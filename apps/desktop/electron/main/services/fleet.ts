@@ -173,6 +173,36 @@ export async function startFleet(request: FleetRequest, sender: WebContents): Pr
   }
 }
 
+// --- saved commands ---------------------------------------------------------
+
+/**
+ * Saves a command from the Fleet view.
+ *
+ * `builtin` is not settable here: the store forces it false, so a saved
+ * command can shadow a shipped recipe by name but can never claim to be one.
+ */
+export async function saveFleetCommand(input: {
+  name: string
+  description: string
+  script: string
+  interpreter: 'sh' | 'bash' | 'raw'
+  sudo: boolean
+  workingDirectory: string | null
+  timeoutSeconds: number
+  concurrency: number
+  onFailure: 'continue' | 'stop'
+  targets: string[]
+}): Promise<FleetCommand> {
+  return (await store()).saveFleetCommand({ ...input, tags: [] })
+}
+
+export async function removeFleetCommand(name: string): Promise<boolean> {
+  if (BUILTIN_RECIPES.some((recipe) => recipe.name === name)) {
+    throw new Error(`${name} is a recipe DiskPush ships and cannot be deleted. Save a copy under another name instead.`)
+  }
+  return (await store()).deleteFleetCommand(name)
+}
+
 // --- saved lists ------------------------------------------------------------
 
 export async function fleetLists(): Promise<FleetList[]> {

@@ -40,6 +40,19 @@ describe('the recipes DiskPush ships', () => {
     }
   })
 
+  it('state every field, since nothing parses them through the schema', () => {
+    // These are plain literals typed as FleetCommand. A field the schema
+    // merely defaults is `undefined` here, and reached the desktop as
+    // `setConcurrency(undefined)`.
+    for (const entry of BUILTIN_RECIPES) {
+      expect(entry.concurrency, entry.name).toBeGreaterThan(0)
+      expect(['continue', 'stop'], entry.name).toContain(entry.onFailure)
+      expect(entry.timeoutSeconds, entry.name).toBeGreaterThan(0)
+      expect(entry.workingDirectory, entry.name).toBeNull()
+      expect(Array.isArray(entry.targets), entry.name).toBe(true)
+    }
+  })
+
   it('have unique names, so one cannot shadow another', () => {
     const names = BUILTIN_RECIPES.map((recipe) => recipe.name)
     expect(new Set(names).size).toBe(names.length)
@@ -68,6 +81,10 @@ describe('copyRecipe', () => {
     expect(copy.builtin).toBe(false)
     expect(copy.tags).not.toContain('builtin')
     expect(copy.script).toBe(findRecipe('upgrade')!.script)
+    // A copy that lost the pacing would run the same script at a different
+    // speed, which is the one thing a copy must not do.
+    expect(copy.concurrency).toBe(findRecipe('upgrade')!.concurrency)
+    expect(copy.onFailure).toBe(findRecipe('upgrade')!.onFailure)
   })
 })
 
