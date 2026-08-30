@@ -37,19 +37,6 @@ Skip unchanged files: On
 Delete destination-only files: Off
 ```
 
-## Sending only what is selected
-
-Tick entries in the source pane and the transfer button changes from
-**Sync to web-01** to **Send 2 → web-01**: only those entries move, the way an
-SFTP client behaves. Nothing ticked means the whole directory, which is what
-the two panes have always meant.
-
-A selected folder comes across whole, with its contents. The selection travels
-as entry names — the renderer never builds a path, so it cannot address
-anything the pane is not already showing.
-
-`--only` is the same thing from the CLI. See [cli.md](cli.md).
-
 ## Mirror
 
 The destination pane stays browsable right up to the confirmation: you can
@@ -107,6 +94,11 @@ So the layout has exactly three scrolling regions — the server list, the
 script editor, and the results — and **the action bar is pinned outside all
 of them**. Run is on screen at the 960×600 minimum window size just as it is
 maximised.
+
+Saved **lists** sit at the top of the sidebar, above the tag chips. Clicking
+one ticks exactly its members; ticking servers by hand offers **Save these 3**;
+the × on a chip deletes the list and leaves the servers alone. A member whose
+connection has been deleted is named rather than silently skipped.
 
 Ticking servers is the same thing `--on` does in the CLI, and tag chips filter
 the list. The two share one local database, so a command saved in one runs

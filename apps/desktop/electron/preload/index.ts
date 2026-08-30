@@ -58,6 +58,11 @@ const api = {
     check: (connectionIds: string[], concurrency = 4, timeoutSeconds = 180) =>
       call(IPC.fleetCheck, { connectionIds, concurrency, timeoutSeconds }),
     runs: (limit = 25) => call(IPC.fleetRuns, { limit }),
+    lists: () => call(IPC.fleetLists),
+    saveList: (name: string, connectionIds: string[], description = '') =>
+      call(IPC.fleetListSave, { name, connectionIds, description }),
+    renameList: (from: string, to: string) => call(IPC.fleetListRename, { from, to }),
+    removeList: (name: string) => call<boolean>(IPC.fleetListRemove, { name }),
     runDetail: (runId: string) => call(IPC.fleetRunDetail, { runId }),
   },
   shell: {

@@ -7,18 +7,15 @@ import {
   intersectCapabilities,
   planTransfer,
   runPlan,
-  writeSelectionList,
-  describeSelection,
   summarizeChangesFrom,
   type ExecutionPlan,
-  type SelectionList,
 } from './transfer-helpers.js'
 import type { Change, RsyncOptions } from '@diskpush/schemas'
 import { summarizeChanges, topologyOf } from '@diskpush/schemas'
 import { EXIT } from '../exit-codes.js'
 import { estimateRemaining, formatBytes, formatDuration, formatRate, pluralize, table } from '../format.js'
 import { failure, type Output } from '../output.js'
-import { flagValue, flagValues, hasFlag, type ParsedArgv } from '../parse-argv.js'
+import { flagValue, hasFlag, type ParsedArgv } from '../parse-argv.js'
 import { detectLocalCapabilities, optionsFromFlags, resolveEndpoint } from '../resolve.js'
 import type { RsyncCapabilities } from '@diskpush/rsync-core'
 
@@ -64,61 +61,6 @@ export async function runTransfer(
 
   if (alias.deleteMode !== 'off') options.deleteMode = alias.deleteMode
 
-  /*
-   * `--only NAME` transfers just the entries named, rather than everything in
-   * the source directory — the thing an SFTP client makes trivial and a bare
-   * rsync does not.
-   *
-   * The names go to rsync as a NUL-separated `--files-from` list, which is not
-   * bounded by the command-line length limit and can express any name a
-   * filesystem allows. `writeSelectionList` refuses `..` and absolute paths:
-   * a selection is a choice among what the source directory holds, so a name
-   * is the only thing it can be.
-   */
-  const only = flagValues(parsed, '--only')
-  let selection: SelectionList | null = null
-  if (only.length > 0) {
-    if (options.filesFrom) {
-      return failure(output, '--only and --files-from both choose what to send; use one.', EXIT.usage)
-    }
-    try {
-      selection = writeSelectionList(only)
-    } catch (error) {
-      return failure(output, (error as Error).message, EXIT.usage)
-    }
-    options.filesFrom = selection.path
-    options.from0 = true
-  }
-
-  try {
-    return await runResolvedTransfer(
-      command,
-      parsed,
-      store,
-      output,
-      alias,
-      sourceInput,
-      destinationInput,
-      options,
-      only,
-    )
-  } finally {
-    // rsync reads the list at startup, but it is not gone until the run is.
-    selection?.cleanup()
-  }
-}
-
-async function runResolvedTransfer(
-  command: string,
-  parsed: ParsedArgv,
-  store: DiskPushStore,
-  output: Output,
-  alias: (typeof TRANSFER_ALIASES)[string],
-  sourceInput: string,
-  destinationInput: string,
-  options: RsyncOptions,
-  only: readonly string[],
-): Promise<number> {
   const source = await resolveEndpoint(store, sourceInput)
   const destination = await resolveEndpoint(store, destinationInput)
   const topology = topologyOf(source.endpoint, destination.endpoint)
@@ -238,9 +180,6 @@ async function runResolvedTransfer(
   output.line(`DiskPush: ${alias.label} ${describe(sourceInput)} -> ${describe(destinationInput)}`)
   output.line(`Source:      ${sourceInput}`)
   output.line(`Destination: ${destinationInput}`)
-  // Named before the transfer runs, for the same reason a mirror shows its
-  // delete list: what is about to move is worth stating.
-  if (only.length > 0) output.line(`Only:        ${describeSelection(only)}`)
   if (topology === 'remote-to-remote') {
     output.line('')
     output.line(`Direct path:    ${source.endpoint.type === 'ssh' ? source.endpoint.host : '?'} -> ${destination.endpoint.type === 'ssh' ? destination.endpoint.host : '?'}`)

@@ -35,6 +35,49 @@ host:10.0.0.*      a glob over hostnames
 Includes are unioned, then exclusions are subtracted, so order does not
 matter: `tag:web !web-03` and `!web-03 tag:web` select the same servers.
 
+### Saved lists
+
+A tag says what a server *is*. A list is a set you assembled by hand and want
+back — "the four boxes behind the EU load balancer" is not a property of any
+one of them.
+
+```bash
+diskpush fleet lists save eu-edge --on 'web-*,cache-01' --description "behind the EU LB"
+diskpush fleet lists                       # read
+diskpush fleet lists show eu-edge
+diskpush fleet lists rename eu-edge edge
+diskpush fleet lists remove edge           # the servers themselves are untouched
+
+diskpush fleet run "uptime" --on list:eu-edge
+diskpush fleet upgrade --on 'list:eu-edge,!web-03' --sudo
+```
+
+`list:` is a prefix so a list and a server may share a name without either
+shadowing the other: `--on production` is the server, `--on list:production`
+is the list.
+
+A list stores each member's **connection id and the name it had when saved**.
+The id is what resolves, so a renamed server stays in the list. The name is
+what keeps the list readable afterwards — and a member whose connection has
+been deleted is **named and refused**, not silently skipped:
+
+```text
+The list "pair" names 1 server(s) that no longer exist: web-02.
+Save the list again to drop them.
+```
+
+That is the same rule a selector term follows. A list that quietly got smaller
+is how a command misses the one server it most needed to reach.
+
+Saving resolves the selector **now** and stores the result. A list is a set
+someone chose, not a query that might mean something different next week — use
+a tag when you want the dynamic behaviour.
+
+In the desktop app the lists appear as chips at the top of the server sidebar,
+above the tags. Clicking one ticks exactly its members; ticking servers by hand
+offers **Save these 3**; the × on a chip deletes the list and leaves the
+servers alone.
+
 Both saved connections and `~/.ssh/config` hosts are selectable. A saved
 connection wins a name clash. `diskpush fleet servers` lists what is available
 and where each entry came from.

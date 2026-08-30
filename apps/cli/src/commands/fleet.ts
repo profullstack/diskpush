@@ -10,12 +10,15 @@ import {
   describeHazards,
   inspectScript,
   needsAttention,
+  parseSelector,
   runFleet,
   selectConnections,
   SelectionError,
   type SudoMode,
 } from '@diskpush/fleet-core'
 import {
+  isListTerm,
+  listTermName,
   FLEET_DEFAULT_CONCURRENCY,
   FLEET_DEFAULT_TIMEOUT_SECONDS,
   FleetInterpreterSchema,
@@ -72,6 +75,9 @@ async function dispatch(parsed: ParsedArgv, store: DiskPushStore, output: Output
       return fleetServers(parsed, store, output)
     case 'commands':
       return fleetCommands(parsed, store, output)
+    case 'lists':
+    case 'list':
+      return fleetLists(parsed, store, output)
     case 'runs':
       return fleetRuns(parsed, store, output)
     case 'show':
@@ -80,7 +86,7 @@ async function dispatch(parsed: ParsedArgv, store: DiskPushStore, output: Output
       return failure(
         output,
         `Unknown subcommand ${JSON.stringify(subcommand)}. ` +
-          'Try: run, script, upgrade, check, servers, commands, runs, show.',
+          'Try: run, script, upgrade, check, servers, lists, commands, runs, show.',
         EXIT.usage,
       )
   }
@@ -116,7 +122,7 @@ async function resolveTargets(parsed: ParsedArgv, store: DiskPushStore, fallback
   }
 
   const available = await availableConnections(store)
-  const selection = selectConnections(available, terms)
+  const selection = await resolveSelector(terms, store, available)
 
   if (selection.unmatched.length > 0) {
     // A typo'd host is not a smaller fleet. Refusing here is the difference
@@ -131,6 +137,70 @@ async function resolveTargets(parsed: ParsedArgv, store: DiskPushStore, fallback
   }
 
   return { connections: selection.matched, selector: terms }
+}
+
+/**
+ * Parse, expand any `list:` terms, then select.
+ *
+ * The order matters and got it wrong once: `parseSelector` is what splits
+ * `--on 'all,!list:web'` into terms, so expanding before that leaves
+ * `all,!list:web` as one unrecognised string and the exclusion silently does
+ * nothing. Everything that resolves a selector goes through here so there is
+ * one order rather than one per caller.
+ */
+async function resolveSelector(
+  terms: readonly string[],
+  store: DiskPushStore,
+  available: readonly Connection[],
+): Promise<ReturnType<typeof selectConnections>> {
+  return selectConnections(available, await expandLists(parseSelector(terms), store, available))
+}
+
+/**
+ * Turns `list:production` into the servers that list holds.
+ *
+ * Expanded here rather than inside `selectConnections`, which is a pure
+ * function over connections and has no business reaching for a database.
+ *
+ * A member whose connection has since been deleted is named and refused
+ * rather than skipped: a list that quietly shrinks is how a command misses
+ * the one server it most needed to reach.
+ */
+async function expandLists(
+  terms: readonly string[],
+  store: DiskPushStore,
+  available: readonly Connection[],
+): Promise<string[]> {
+  const byId = new Map(available.map((connection) => [connection.id, connection]))
+  const expandedTerms: string[] = []
+
+  for (const term of terms) {
+    const negated = term.startsWith('!')
+    const bare = negated ? term.slice(1) : term
+    if (!isListTerm(bare)) {
+      expandedTerms.push(term)
+      continue
+    }
+
+    const name = listTermName(bare)
+    const list = await store.findFleetList(name)
+    if (!list) throw new SelectionError(`No saved list named ${JSON.stringify(name)}. Run \`diskpush fleet lists\`.`)
+    if (list.members.length === 0) throw new SelectionError(`The list ${JSON.stringify(name)} has no servers in it.`)
+
+    const missing = list.members.filter((member) => !byId.has(member.connectionId))
+    if (missing.length > 0) {
+      throw new SelectionError(
+        `The list ${JSON.stringify(name)} names ${missing.length} server(s) that no longer exist: ` +
+          `${missing.map((member) => member.connectionName).join(', ')}. ` +
+          'Save the list again to drop them.',
+      )
+    }
+    // Ids, not names: a list resolves to exactly the servers it was saved with,
+    // even if one has been renamed since.
+    for (const member of list.members) expandedTerms.push(`${negated ? '!' : ''}${member.connectionId}`)
+  }
+
+  return expandedTerms
 }
 
 // --- prompts ---------------------------------------------------------------
@@ -680,7 +750,7 @@ function formatUptime(seconds: number): string {
 async function fleetServers(parsed: ParsedArgv, store: DiskPushStore, output: Output): Promise<number> {
   const available = await availableConnections(store)
   const selector = flagValues(parsed, '--on')
-  const shown = selector.length > 0 ? selectConnections(available, selector).matched : available
+  const shown = selector.length > 0 ? (await resolveSelector(selector, store, available)).matched : available
 
   if (output.isJson) {
     output.json({ status: 'ok', servers: shown })
@@ -812,6 +882,125 @@ async function fleetCommands(parsed: ParsedArgv, store: DiskPushStore, output: O
   }
 
   return failure(output, `Unknown action ${JSON.stringify(action)}. Try: list, show, save, copy, remove.`, EXIT.usage)
+}
+
+/**
+ * Saved sets of servers.
+ *
+ * Tags say what a server *is*; a list is a set someone assembled by hand and
+ * wants back. Used as `--on list:NAME`, prefixed so a list and a server may
+ * share a name without either shadowing the other.
+ */
+async function fleetLists(parsed: ParsedArgv, store: DiskPushStore, output: Output): Promise<number> {
+  const action = parsed.positionals[1] ?? 'list'
+
+  if (action === 'list') {
+    const lists = await store.listFleetLists()
+    if (output.isJson) {
+      output.json({ status: 'ok', lists })
+      return EXIT.ok
+    }
+    if (lists.length === 0) {
+      output.line('No saved lists. Make one with: diskpush fleet lists save NAME --on tag:production')
+      return EXIT.ok
+    }
+    output.line(
+      table(
+        lists.map((list) => [
+          list.name,
+          String(list.members.length),
+          list.members.slice(0, 4).map((member) => member.connectionName).join(', ') +
+            (list.members.length > 4 ? ', ...' : ''),
+          list.description.slice(0, 40),
+        ]),
+        ['LIST', 'SERVERS', 'MEMBERS', 'DESCRIPTION'],
+      ),
+    )
+    return EXIT.ok
+  }
+
+  if (action === 'show') {
+    const name = parsed.positionals[2]
+    if (!name) return failure(output, 'Usage: diskpush fleet lists show NAME', EXIT.usage)
+    const list = await store.findFleetList(name)
+    if (!list) return failure(output, `No saved list named ${JSON.stringify(name)}.`, EXIT.configuration)
+
+    if (output.isJson) {
+      output.json({ status: 'ok', list })
+      return EXIT.ok
+    }
+
+    // A member whose connection has gone is shown as missing rather than
+    // dropped: that is the difference between a list you can trust and one
+    // that quietly got smaller.
+    const available = await availableConnections(store)
+    const byId = new Map(available.map((connection) => [connection.id, connection]))
+    output.line(`${list.name}${list.description ? `  ${list.description}` : ''}`)
+    output.line()
+    output.line(
+      table(
+        list.members.map((member) => {
+          const live = byId.get(member.connectionId)
+          return [
+            member.connectionName,
+            live ? `${live.username}@${live.host}:${live.port}` : '-',
+            live ? 'ok' : 'MISSING',
+          ]
+        }),
+        ['SERVER', 'TARGET', 'STATE'],
+      ),
+    )
+    return EXIT.ok
+  }
+
+  if (action === 'save') {
+    const name = parsed.positionals[2]
+    if (!name) return failure(output, 'Usage: diskpush fleet lists save NAME --on SELECTOR', EXIT.usage)
+    if (isListTerm(name)) {
+      return failure(output, `A list is named without the ${JSON.stringify('list:')} prefix.`, EXIT.usage)
+    }
+
+    // Resolved now, and stored as members. A list is a set someone chose, not
+    // a query that might mean something different next week.
+    const targets = await resolveTargets(parsed, store)
+    const saved = await store.saveFleetList({
+      name,
+      description: flagValue(parsed, '--description') ?? '',
+      members: targets.connections.map((connection) => ({
+        connectionId: connection.id,
+        connectionName: connection.name,
+      })),
+    })
+
+    if (output.isJson) output.json({ status: 'ok', list: saved })
+    else {
+      output.line(`Saved list ${saved.name} with ${saved.members.length} server(s).`)
+      output.line(`Use it with: diskpush fleet run "uptime" --on list:${saved.name}`)
+    }
+    return EXIT.ok
+  }
+
+  if (action === 'rename') {
+    const [, , from, to] = parsed.positionals
+    if (!from || !to) return failure(output, 'Usage: diskpush fleet lists rename NAME NEW-NAME', EXIT.usage)
+    const renamed = await store.renameFleetList(from, to)
+    if (!renamed) return failure(output, `No saved list named ${JSON.stringify(from)}.`, EXIT.configuration)
+    if (output.isJson) output.json({ status: 'ok', list: renamed })
+    else output.line(`Renamed list ${from} to ${renamed.name}.`)
+    return EXIT.ok
+  }
+
+  if (action === 'remove' || action === 'rm') {
+    const name = parsed.positionals[2]
+    if (!name) return failure(output, 'Usage: diskpush fleet lists remove NAME', EXIT.usage)
+    const removed = await store.deleteFleetList(name)
+    if (!removed) return failure(output, `No saved list named ${JSON.stringify(name)}.`, EXIT.configuration)
+    if (output.isJson) output.json({ status: 'ok', removed: name })
+    else output.line(`Removed list ${name}. The servers themselves are untouched.`)
+    return EXIT.ok
+  }
+
+  return failure(output, `Unknown action ${JSON.stringify(action)}. Try: list, show, save, rename, remove.`, EXIT.usage)
 }
 
 async function fleetRuns(parsed: ParsedArgv, store: DiskPushStore, output: Output): Promise<number> {

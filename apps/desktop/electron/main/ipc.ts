@@ -10,6 +10,8 @@ import {
   DeleteEntryRequestSchema,
   ExternalUrlSchema,
   FleetCheckRequestSchema,
+  FleetListRenameSchema,
+  FleetListSaveSchema,
   FleetRequestSchema,
   FleetRunIdSchema,
   IPC,
@@ -25,8 +27,12 @@ import {
   cancelFleet,
   checkFleetServers,
   fleetCommands,
+  fleetLists,
   fleetRunDetail,
   fleetServers,
+  removeFleetList,
+  renameFleetList,
+  saveFleetList,
   previewFleet,
   startFleet,
 } from './services/fleet.js'
@@ -324,6 +330,16 @@ export function registerIpc(): void {
   )
 
   handle(IPC.fleetRunDetail, z.object({ runId: FleetRunIdSchema }), async ({ runId }) => fleetRunDetail(runId))
+
+  handle(IPC.fleetLists, z.undefined(), async () => fleetLists())
+
+  handle(IPC.fleetListSave, FleetListSaveSchema, async (input) => saveFleetList(input))
+
+  handle(IPC.fleetListRename, FleetListRenameSchema, async ({ from, to }) => renameFleetList(from, to))
+
+  handle(IPC.fleetListRemove, z.object({ name: z.string().min(1).max(128) }), async ({ name }) =>
+    removeFleetList(name),
+  )
 
   // --- shell ---------------------------------------------------------------
 

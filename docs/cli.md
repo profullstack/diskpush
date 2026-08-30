@@ -121,13 +121,14 @@ diskpush fleet upgrade --on SELECTOR --sudo    # install them
 diskpush fleet run "COMMAND" --on SELECTOR
 diskpush fleet run --command NAME --on SELECTOR
 diskpush fleet script FILE --on SELECTOR
+diskpush fleet lists [list|show|save|rename|remove]
 diskpush fleet commands [list|show|save|copy|remove]
 diskpush fleet runs [--limit N]
 diskpush fleet show RUN-ID [--all]
 ```
 
-`--on` takes names, globs, `tag:NAME`, `host:GLOB`, `all`, and `!TERM` to
-exclude. Terms may be repeated or comma-separated. A term that matches nothing
+`--on` takes names, globs, `tag:NAME`, `host:GLOB`, `list:NAME`, `all`, and
+`!TERM` to exclude. Terms may be repeated or comma-separated. A term that matches nothing
 is an error rather than a smaller fleet.
 
 | Option | Effect |
@@ -171,7 +172,6 @@ job would need a background daemon, which does not exist yet.
 
 | Option | Effect |
 | --- | --- |
-| `--only NAME` | Send only this entry from the source directory, rather than all of it. Repeatable. |
 | `-n`, `--dry-run` | Show the change set; transfer nothing. |
 | `--print-args` | Print the exact rsync command and exit. |
 | `--preset NAME` | `fast-sync`, `exact-mirror`, `maximum-metadata`, `slow-wan`, `verify-everything`. |
@@ -197,36 +197,6 @@ job would need a background daemon, which does not exist yet.
 `--compress` takes its value only in the `--compress=zlib` form. As a bare
 flag it is a boolean, so that `diskpush sync --compress ./a/ ./b/` cannot
 mistake an endpoint for its value.
-
-## Sending only some of a directory
-
-`--only` transfers just the entries named, rather than everything in the
-source — the thing an SFTP client makes trivial and a bare rsync does not.
-
-```bash
-diskpush ./site/ prod:/var/www/ --only index.html --only assets
-diskpush pull prod:/var/log/ ./logs/ --only 'app.log'
-```
-
-Each name is one entry **inside the source directory**. A folder comes across
-whole, with its contents. Names with spaces are fine. `..` and absolute paths
-are refused: a selection is a choice among what the source holds, so a name is
-the only thing it can be.
-
-The names reach rsync as a NUL-separated `--files-from` list, which has two
-consequences worth knowing:
-
-- **`--files-from` turns recursion off, and `--archive` does not turn it back
-  on.** DiskPush restates `--recursive` so a selected folder arrives with its
-  contents rather than as an empty directory. Verified against rsync 3.4.1 —
-  it is not what the flag summary suggests.
-- **`--delete` stays scoped to the selection.** `diskpush mirror SRC DST --only
-  cache` removes destination files inside `cache/` and leaves the rest of the
-  destination alone.
-
-In the desktop app this is the pane selection: tick entries in the source pane
-and the transfer button changes from *Sync to web-01* to *Send 2 → web-01*.
-Nothing ticked means the whole directory, as before.
 
 ## Pass-through
 

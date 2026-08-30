@@ -148,4 +148,29 @@ export const MIGRATIONS: Migration[] = [
       `CREATE INDEX IF NOT EXISTS idx_fleet_run_hosts_state ON fleet_run_hosts(run_id, state)`,
     ],
   },
+  {
+    name: '003-fleet-lists',
+    statements: [
+      /*
+       * A saved set of servers, assembled by hand.
+       *
+       * Members are JSON rather than a join table, and carry the name each
+       * connection had when the list was saved as well as its id. The id is
+       * what resolves; the name is what lets a list stay readable after a
+       * connection is deleted, so a member that has gone away can be named
+       * rather than silently dropped.
+       *
+       * No foreign key to `connections` for the same reason, and because a
+       * member may be a `~/.ssh/config` host, which has no row there at all.
+       */
+      `CREATE TABLE IF NOT EXISTS fleet_lists (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        description TEXT NOT NULL DEFAULT '',
+        members_json TEXT NOT NULL DEFAULT '[]',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )`,
+    ],
+  },
 ]

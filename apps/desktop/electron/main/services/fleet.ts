@@ -8,7 +8,7 @@ import {
   type Hazard,
   type SudoMode,
 } from '@diskpush/fleet-core'
-import type { Connection, FleetCommand, FleetHostResult, HostUpdateReport } from '@diskpush/schemas'
+import type { Connection, FleetCommand, FleetHostResult, FleetList, HostUpdateReport } from '@diskpush/schemas'
 import { sshConfigConnections } from '@diskpush/ssh-core'
 import { IPC, type FleetRequest } from '../../shared/contract.js'
 import { dropSession, sessionFor } from './sessions.js'
@@ -171,6 +171,44 @@ export async function startFleet(request: FleetRequest, sender: WebContents): Pr
     runId,
     hosts: connections.map((connection) => ({ connectionId: connection.id, connectionName: connection.name })),
   }
+}
+
+// --- saved lists ------------------------------------------------------------
+
+export async function fleetLists(): Promise<FleetList[]> {
+  return (await store()).listFleetLists()
+}
+
+/**
+ * Saves the ticked servers as a named list.
+ *
+ * The ids are resolved here and each member's *current* name stored beside it,
+ * so the list can still name a member after that connection is gone.
+ */
+export async function saveFleetList(input: {
+  name: string
+  description: string
+  connectionIds: readonly string[]
+}): Promise<FleetList> {
+  const connections = await connectionsFor(input.connectionIds)
+  return (await store()).saveFleetList({
+    name: input.name,
+    description: input.description,
+    members: connections.map((connection) => ({
+      connectionId: connection.id,
+      connectionName: connection.name,
+    })),
+  })
+}
+
+export async function renameFleetList(from: string, to: string): Promise<FleetList> {
+  const renamed = await (await store()).renameFleetList(from, to)
+  if (!renamed) throw new Error(`No saved list named ${JSON.stringify(from)}.`)
+  return renamed
+}
+
+export async function removeFleetList(name: string): Promise<boolean> {
+  return (await store()).deleteFleetList(name)
 }
 
 export function cancelFleet(runId: string): boolean {
