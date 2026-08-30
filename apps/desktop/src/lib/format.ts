@@ -16,6 +16,17 @@ export function formatRate(bytesPerSecond: number): string {
   return bytesPerSecond > 0 ? `${formatBytes(bytesPerSecond, 0)}/s` : '-'
 }
 
+/** m:ss, or h:mm:ss past an hour. Used for elapsed and estimated time. */
+export function formatDuration(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds < 0) return '-'
+  const total = Math.round(seconds)
+  const hours = Math.floor(total / 3600)
+  const minutes = Math.floor((total % 3600) / 60)
+  const secs = total % 60
+  if (hours > 0) return `${hours}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`
+  return `${minutes}:${String(secs).padStart(2, '0')}`
+}
+
 export function formatDate(iso: string): string {
   if (!iso) return '-'
   const date = new Date(iso)

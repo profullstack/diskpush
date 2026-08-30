@@ -3,7 +3,7 @@ import { readdir, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { isAbsolute, join, resolve } from 'node:path'
 import { ipcMain, shell, type IpcMainInvokeEvent } from 'electron'
-import { probeConnection, parseSshConfig } from '@diskpush/ssh-core'
+import { probeConnection, parseSshConfig, sshConfigConnections } from '@diskpush/ssh-core'
 import { z } from 'zod'
 import {
   ConnectionInputSchema,
@@ -109,6 +109,19 @@ export function registerIpc(): void {
       imported.push(host.alias)
     }
     return imported
+  })
+
+  /**
+   * Hosts from ~/.ssh/config, offered alongside saved connections.
+   *
+   * Read-only and never persisted: the picker shows them so a machine that
+   * already has its servers in ssh_config needs no re-entry, and saving one is
+   * a separate, deliberate act through connections:save.
+   */
+  handle(IPC.connectionsSshConfig, z.undefined(), async () => {
+    const db = await store()
+    const savedNames = new Set((await db.listConnections()).map((connection) => connection.name))
+    return sshConfigConnections().filter((connection) => !savedNames.has(connection.name))
   })
 
   // --- browsing ------------------------------------------------------------

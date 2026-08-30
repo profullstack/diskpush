@@ -1,14 +1,17 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import Image from 'next/image'
+import { CircleCheck, Settings, Users } from 'lucide-react'
 import { ConnectionDialog } from '@/components/connection-dialog'
-import { Pane, endpointLabel, loadPane, type PaneEndpoint, type PaneState } from '@/components/pane'
-import { MirrorPreviewDialog, TransferQueue, type ActiveJob } from '@/components/transfer-panel'
-import { Banner, Button, Checkbox, Dialog } from '@/components/ui'
+import { endpointLabel, loadPane, Pane, type PaneEndpoint, type PaneState } from '@/components/pane'
+import { TransferRail } from '@/components/transfer-rail'
+import { MirrorPreviewDialog, TransferBand, type ActiveJob } from '@/components/transfer-panel'
+import { Button } from '@/components/ui/button'
 import { api, unwrap, type Connection, type PreviewResult, type TransferEvent } from '@/lib/api'
 import { withTrailingSlash } from '@/lib/format'
 
-const EMPTY_PANE = (endpoint: PaneEndpoint, path: string): PaneState => ({
+const blankPane = (endpoint: PaneEndpoint, path: string): PaneState => ({
   endpoint,
   path,
   entries: [],
@@ -18,46 +21,26 @@ const EMPTY_PANE = (endpoint: PaneEndpoint, path: string): PaneState => ({
   transfersDisabled: false,
 })
 
-type Options = {
-  archive: boolean
-  checksum: boolean
-  compression: 'auto' | 'zstd'
-  hardLinks: boolean
-  acls: boolean
-  xattrs: boolean
-  excludes: string[]
-}
-
-const DEFAULT_OPTIONS: Options = {
-  archive: true,
-  checksum: false,
-  compression: 'auto',
-  hardLinks: false,
-  acls: false,
-  xattrs: false,
-  excludes: [],
-}
-
 export default function Workspace() {
-  const [connections, setConnections] = useState<Connection[]>([])
-  const [left, setLeft] = useState<PaneState>(EMPTY_PANE({ kind: 'local' }, '/'))
-  const [right, setRight] = useState<PaneState>(EMPTY_PANE({ kind: 'local' }, '/'))
+  const [saved, setSaved] = useState<Connection[]>([])
+  const [sshConfig, setSshConfig] = useState<Connection[]>([])
+  const [left, setLeft] = useState<PaneState>(blankPane({ kind: 'local' }, '/'))
+  const [right, setRight] = useState<PaneState>(blankPane({ kind: 'local' }, '/'))
+  const [active, setActive] = useState<'left' | 'right'>('left')
   const [direction, setDirection] = useState<'ltr' | 'rtl'>('ltr')
-  const [options, setOptions] = useState<Options>(DEFAULT_OPTIONS)
+  const [mirror, setMirror] = useState(false)
+  const [trust, setTrust] = useState(false)
   const [preview, setPreview] = useState<PreviewResult | null>(null)
   const [previewOpen, setPreviewOpen] = useState(false)
-  const [mirrorMode, setMirrorMode] = useState(false)
   const [job, setJob] = useState<ActiveJob | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [showConnection, setShowConnection] = useState(false)
-  const [showOptions, setShowOptions] = useState(false)
   const [outsideShell, setOutsideShell] = useState(false)
-
-  // --- bootstrap -----------------------------------------------------------
 
   const refreshConnections = useCallback(async () => {
     try {
-      setConnections(await unwrap(api()?.connections.list()))
+      setSaved(await unwrap(api()?.connections.list()))
+      setSshConfig(await unwrap(api()?.connections.sshConfigHosts()))
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught))
     }
@@ -70,37 +53,32 @@ export default function Workspace() {
     }
     void (async () => {
       const home = await unwrap(api()?.fs.homeLocal())
-      setLeft(EMPTY_PANE({ kind: 'local' }, home))
-      setRight(EMPTY_PANE({ kind: 'local' }, home))
+      setLeft(blankPane({ kind: 'local' }, home))
+      setRight(blankPane({ kind: 'local' }, home))
       await refreshConnections()
     })().catch((caught: unknown) => setError(caught instanceof Error ? caught.message : String(caught)))
   }, [refreshConnections])
 
-  // --- pane loading --------------------------------------------------------
-
-  const navigate = useCallback(
-    async (side: 'left' | 'right', endpoint: PaneEndpoint, path: string) => {
-      const set = side === 'left' ? setLeft : setRight
-      set((current) => ({ ...current, endpoint, path, loading: true, error: null, selected: new Set() }))
-      try {
-        const result = await loadPane(endpoint, path)
-        set((current) => ({ ...current, path: result.path, entries: result.entries, loading: false }))
-      } catch (caught) {
-        set((current) => ({
-          ...current,
-          loading: false,
-          entries: [],
-          error: caught instanceof Error ? caught.message : String(caught),
-        }))
-      }
-    },
-    [],
-  )
+  const navigate = useCallback(async (side: 'left' | 'right', endpoint: PaneEndpoint, path: string) => {
+    const set = side === 'left' ? setLeft : setRight
+    set((current) => ({ ...current, endpoint, path, loading: true, error: null, selected: new Set() }))
+    try {
+      const result = await loadPane(endpoint, path)
+      set((current) => ({ ...current, path: result.path, entries: result.entries, loading: false }))
+    } catch (caught) {
+      set((current) => ({
+        ...current,
+        loading: false,
+        entries: [],
+        error: caught instanceof Error ? caught.message : String(caught),
+      }))
+    }
+  }, [])
 
   useEffect(() => {
     if (outsideShell || left.path === '/') return
     void navigate('left', left.endpoint, left.path)
-    // Only re-run when the endpoint itself changes; path changes go through navigate.
+    // Endpoint changes reload; path changes go through navigate itself.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [left.endpoint])
 
@@ -110,41 +88,27 @@ export default function Workspace() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [right.endpoint])
 
-  // --- job events ----------------------------------------------------------
-
   useEffect(() => {
     const bridge = api()
     if (!bridge) return
-    return bridge.events.onTransfer(({ jobId, event }) => {
-      setJob((current) => reduceJob(current, jobId, event))
-    })
+    return bridge.events.onTransfer(({ jobId, event }) => setJob((current) => reduceJob(current, jobId, event)))
   }, [])
-
-  // --- transfer ------------------------------------------------------------
 
   const source = direction === 'ltr' ? left : right
   const destination = direction === 'ltr' ? right : left
+  const allConnections = useMemo(() => [...saved, ...sshConfig], [saved, sshConfig])
+  const route = `${endpointLabel(source.endpoint, allConnections)} → ${endpointLabel(destination.endpoint, allConnections)}`
 
   const request = useMemo(
     () => ({
-      // The trailing slash is added deliberately: the panes show directory
-      // contents, so a sync between them means "make these contents match",
-      // not "nest this directory inside that one".
+      // The panes show directory contents, so a sync between them means "make
+      // these contents match", not "nest this directory inside that one".
       source: refFor(source, withTrailingSlash(source.path)),
       destination: refFor(destination, withTrailingSlash(destination.path)),
-      options: {
-        archive: options.archive,
-        checksum: options.checksum,
-        compression: options.compression,
-        deleteMode: mirrorMode ? ('delay' as const) : ('off' as const),
-        hardLinks: options.hardLinks,
-        acls: options.acls,
-        xattrs: options.xattrs,
-        excludes: options.excludes,
-      },
+      options: { deleteMode: mirror ? ('delay' as const) : ('off' as const) },
       deletesConfirmed: false,
     }),
-    [source, destination, options, mirrorMode],
+    [source, destination, mirror],
   )
 
   const runPreview = useCallback(async () => {
@@ -171,6 +135,8 @@ export default function Workspace() {
           bytesTransferred: 0,
           bytesPerSecond: 0,
           files: 0,
+          currentFile: '',
+          elapsedSeconds: 0,
           finished: false,
           resumable: false,
           message: '',
@@ -182,154 +148,118 @@ export default function Workspace() {
     [request],
   )
 
-  const sync = useCallback(async () => {
-    // Mirror always previews first. A plain sync does not, because its dry run
-    // costs a full scan and buys no safety: nothing is deleted either way.
-    if (mirrorMode) await runPreview()
+  const run = useCallback(async () => {
+    // Mirror always previews. A plain sync does not: its dry run costs a full
+    // scan and buys no safety, because nothing is deleted either way.
+    if (mirror) await runPreview()
     else await start(false)
-  }, [mirrorMode, runPreview, start])
+  }, [mirror, runPreview, start])
 
   if (outsideShell) {
     return (
       <div className="flex h-full items-center justify-center p-8">
-        <div className="max-w-md">
-          <Banner kind="info">
-            This is the DiskPush renderer. It runs inside the desktop shell, which provides the
-            filesystem and transfer bridge. Start it with <code className="font-mono">pnpm start</code> in
-            apps/desktop.
-          </Banner>
-        </div>
+        <p className="max-w-md rounded-lg border border-line bg-card p-4 text-[13px] text-muted-foreground">
+          This is the DiskPush renderer. It runs inside the desktop shell, which provides the filesystem and transfer
+          bridge.
+        </p>
       </div>
     )
   }
 
+  const connected = saved.length + sshConfig.length
+
   return (
     <div className="flex h-full flex-col">
-      <header className="flex items-center gap-3 border-b border-line px-3 py-2">
-        <span className="font-semibold tracking-tight">DiskPush</span>
-        <span className="text-[11px] text-muted">Push files fast. Sync only what changed.</span>
-        <div className="ml-auto flex gap-2">
-          <Button onClick={() => setShowConnection(true)}>New server</Button>
-          <Button onClick={() => setShowOptions(true)}>Transfer options</Button>
+      <header className="flex h-[52px] shrink-0 items-center gap-4 border-b border-line bg-chrome px-4">
+        <Image src="/logo.dark.png" alt="DiskPush" width={2172} height={724} className="h-[22px] w-auto" priority />
+        <div className="h-5 w-px bg-line" />
+        <div className="flex items-center gap-2 text-[12px] text-muted-foreground">
+          <CircleCheck className="size-3.5 text-ok" />
+          <span className="text-foreground">{connected}</span>
+          <span>server{connected === 1 ? '' : 's'} available</span>
+        </div>
+        <div className="ml-auto flex items-center gap-2">
+          <Button variant="outline" onClick={() => setShowConnection(true)} className="h-[30px] gap-2 border-line-strong text-[12px]">
+            <Users className="size-3.5" />
+            New server
+          </Button>
+          <Button variant="outline" className="h-[30px] w-[30px] border-line-strong p-0 text-muted-foreground">
+            <Settings className="size-[15px]" />
+          </Button>
         </div>
       </header>
 
       {error ? (
-        <div className="px-3 pt-2">
-          <Banner kind="danger">{error}</Banner>
-        </div>
+        <div className="selectable border-b border-[#45202e] bg-[#1c1119] px-4 py-2 text-[12px] text-[#fca5a5]">{error}</div>
       ) : null}
 
-      <div className="flex min-h-0 flex-1 gap-px bg-line p-px">
+      <div className="flex min-h-0 flex-1 gap-0 p-3.5">
         <Pane
-          title="Left: Local / Server 1"
+          role="Source"
           state={left}
-          connections={connections}
+          saved={saved}
+          sshConfig={sshConfig}
+          active={active === 'left'}
+          onFocus={() => setActive('left')}
           onChange={(patch) => setLeft((current) => ({ ...current, ...patch }))}
           onNavigate={(path) => void navigate('left', left.endpoint, path)}
-          onEndpointChange={(endpoint) => setLeft(EMPTY_PANE(endpoint, defaultPathFor(endpoint, connections)))}
+          onEndpointChange={(endpoint) => setLeft(blankPane(endpoint, defaultPathFor(endpoint, allConnections)))}
           onAddServer={() => setShowConnection(true)}
         />
+
+        <TransferRail
+          direction={direction}
+          mirror={mirror}
+          busy={job !== null && !job.finished}
+          onDirection={setDirection}
+          onToggleMirror={() => setMirror((value) => !value)}
+          onPreview={runPreview}
+          onRun={run}
+        />
+
         <Pane
-          title="Right: Remote / Server 2"
+          role="Destination"
           state={right}
-          connections={connections}
+          saved={saved}
+          sshConfig={sshConfig}
+          active={active === 'right'}
+          onFocus={() => setActive('right')}
           onChange={(patch) => setRight((current) => ({ ...current, ...patch }))}
           onNavigate={(path) => void navigate('right', right.endpoint, path)}
-          onEndpointChange={(endpoint) => setRight(EMPTY_PANE(endpoint, defaultPathFor(endpoint, connections)))}
+          onEndpointChange={(endpoint) => setRight(blankPane(endpoint, defaultPathFor(endpoint, allConnections)))}
           onAddServer={() => setShowConnection(true)}
         />
       </div>
 
-      <div className="flex flex-wrap items-center gap-2 border-y border-line px-3 py-2">
-        <span className="text-[11px] text-muted">
-          Source: <strong className="text-text">{endpointLabel(source.endpoint, connections)}</strong> → Destination:{' '}
-          <strong className="text-text">{endpointLabel(destination.endpoint, connections)}</strong>
-        </span>
-        <div className="ml-auto flex items-center gap-2">
-          <Button onClick={() => setDirection('ltr')} variant={direction === 'ltr' ? 'primary' : 'default'}>
-            Sync →
-          </Button>
-          <Button onClick={() => setDirection('rtl')} variant={direction === 'rtl' ? 'primary' : 'default'}>
-            ← Sync
-          </Button>
-          <Button onClick={runPreview}>Preview changes</Button>
-          <label className="flex cursor-pointer items-center gap-1.5 text-[11px] text-muted">
-            <input
-              type="checkbox"
-              checked={mirrorMode}
-              onChange={(event) => setMirrorMode(event.target.checked)}
-              className="accent-[var(--color-danger)]"
-            />
-            <span className={mirrorMode ? 'text-danger' : ''}>Mirror (deletes)</span>
-          </label>
-          <Button variant={mirrorMode ? 'danger' : 'primary'} onClick={sync} disabled={job !== null && !job.finished}>
-            {mirrorMode ? 'Mirror…' : 'Run sync'}
-          </Button>
-        </div>
-      </div>
-
-      <div className="border-b border-line px-3 py-1 text-[11px] text-muted">
-        Mode: {mirrorMode ? 'Mirror' : 'Incremental Sync'} · Archive metadata: {options.archive ? 'On' : 'Off'} ·
-        Resume partial transfers: On · Skip unchanged files: {options.checksum ? 'By checksum' : 'On'} ·
-        Delete destination-only files: {mirrorMode ? 'On' : 'Off'}
-      </div>
-
-      <TransferQueue
+      <TransferBand
         job={job}
+        route={route}
         onCancel={() => {
           if (job) void api()?.transfers.cancel(job.jobId)
         }}
       />
 
-      <ConnectionDialog
-        open={showConnection}
-        onClose={() => setShowConnection(false)}
-        onSaved={() => void refreshConnections()}
-      />
+      <footer className="flex h-[26px] shrink-0 items-center gap-3.5 border-t border-line bg-background px-4 text-[11px] text-faint">
+        <span>Incremental sync</span>
+        <span>Archive metadata on</span>
+        <span>Resume on</span>
+        <span className={mirror ? 'text-destructive' : 'text-ok'}>Deletes {mirror ? 'ON' : 'off'}</span>
+        <span className="selectable ml-auto font-[family-name:var(--font-mono)]">
+          rsync --archive --partial-dir=.rsync-partial --info=progress2
+        </span>
+      </footer>
+
+      <ConnectionDialog open={showConnection} onClose={() => setShowConnection(false)} onSaved={() => void refreshConnections()} />
 
       <MirrorPreviewDialog
         preview={preview}
         open={previewOpen}
+        route={route}
+        trust={trust}
+        onTrustChange={setTrust}
         onCancel={() => setPreviewOpen(false)}
         onConfirm={() => void start(true)}
       />
-
-      <Dialog open={showOptions} title="Transfer options" onClose={() => setShowOptions(false)}>
-        <div className="space-y-3">
-          <div>
-            <div className="mb-1 text-[11px] uppercase tracking-wider text-muted">General</div>
-            <Checkbox
-              checked={options.archive}
-              onChange={(value) => setOptions({ ...options, archive: value })}
-              label="Archive metadata"
-              hint="Permissions, timestamps, symlinks, owner and group where permitted."
-            />
-            <Checkbox
-              checked={options.checksum}
-              onChange={(value) => setOptions({ ...options, checksum: value })}
-              label="Verify by checksum"
-              hint="Reads every candidate file on both ends. Much slower on large trees."
-            />
-            <Checkbox
-              checked={options.compression === 'zstd'}
-              onChange={(value) => setOptions({ ...options, compression: value ? 'zstd' : 'auto' })}
-              label="Compress during transfer"
-              hint="Worth it on a slow link, not on a fast one."
-            />
-          </div>
-          <div>
-            <div className="mb-1 text-[11px] uppercase tracking-wider text-muted">Metadata</div>
-            <Checkbox checked={options.hardLinks} onChange={(v) => setOptions({ ...options, hardLinks: v })} label="Preserve hard links" />
-            <Checkbox checked={options.acls} onChange={(v) => setOptions({ ...options, acls: v })} label="Preserve ACLs" />
-            <Checkbox checked={options.xattrs} onChange={(v) => setOptions({ ...options, xattrs: v })} label="Preserve extended attributes" />
-          </div>
-          <Banner kind="info">
-            Partial-file resume is always on, and destination-only files are never deleted unless
-            Mirror is enabled.
-          </Banner>
-        </div>
-      </Dialog>
     </div>
   )
 }
@@ -355,10 +285,11 @@ function reduceJob(current: ActiveJob | null, jobId: string, event: TransferEven
         percent: event.progress.percent,
         bytesTransferred: event.progress.bytesTransferred,
         bytesPerSecond: event.progress.bytesPerSecond,
+        elapsedSeconds: event.progress.elapsedSeconds,
       }
     case 'change':
       return event.change.action === 'add' || event.change.action === 'update'
-        ? { ...current, files: current.files + 1 }
+        ? { ...current, files: current.files + 1, currentFile: event.change.path }
         : current
     case 'exit':
       return {

@@ -18,6 +18,7 @@ const api = {
     remove: (id: string) => call(IPC.connectionsRemove, { id }),
     test: (id: string) => call(IPC.connectionsTest, { id }),
     importSshConfig: (path?: string) => call(IPC.connectionsImport, path ? { path } : {}),
+    sshConfigHosts: () => call(IPC.connectionsSshConfig),
   },
   fs: {
     homeLocal: () => call<string>(IPC.fsHomeLocal),

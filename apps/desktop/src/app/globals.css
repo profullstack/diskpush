@@ -1,7 +1,15 @@
 @import 'tailwindcss';
+@import 'tw-animate-css';
+@import 'shadcn/tailwind.css';
 
-/* Sampled from logo.dark.png: primary #0054fc–#006cfc, cyan #009cfc, and the
-   navy #001830 of the wordmark. The greys are cool to sit under them. */
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * The brand, sampled from logo.dark.png: primary #0054fc-#006cfc, cyan
+ * #009cfc, and the navy #001830 of the wordmark. These are the raw tokens;
+ * the shadcn contract below is expressed in terms of them so the two never
+ * disagree.
+ */
 @theme {
   --color-ink: #070c16;
   --color-chrome: #0b111d;
@@ -10,53 +18,73 @@
   --color-sunken: #0c1320;
   --color-line: #1f2a3c;
   --color-line-strong: #22304a;
-  --color-text: #e8edf6;
   --color-dim: #b8c4d9;
-  --color-muted: #8d9bb3;
   --color-faint: #64748b;
-  /* Lifted from the logo blue so it stays legible as text on the dark ground;
-     accent-strong is the logo blue itself, used behind white. */
-  --color-accent: #3d86ff;
-  --color-accent-strong: #0b62fd;
+  --color-brand: #0b62fd;
+  --color-brand-lift: #3d86ff;
   --color-cyan: #009cfc;
   --color-ok: #4ade80;
-  --color-danger: #f87171;
   --color-warn: #fbbf24;
 }
 
-:root { color-scheme: dark; }
+/*
+ * Dark is the default rather than a `.dark` opt-in: this is a file manager,
+ * not a document, and it should not flash white before a class lands.
+ */
+:root {
+  color-scheme: dark;
+  --radius: 0.625rem;
 
-html, body { height: 100%; }
-
-body {
-  margin: 0;
-  background: var(--color-ink);
-  color: var(--color-text);
-  font-size: 13px;
-  overflow: hidden;
-  -webkit-font-smoothing: antialiased;
-  /* A file manager is chrome, not a document: nothing here should feel
-     selectable and draggable by accident. Text that matters opts back in. */
-  user-select: none;
+  --background: #070c16;
+  --foreground: #e8edf6;
+  --card: #0e1522;
+  --card-foreground: #e8edf6;
+  --popover: #141d2c;
+  --popover-foreground: #e8edf6;
+  --primary: #0b62fd;
+  --primary-foreground: #ffffff;
+  --secondary: #141d2c;
+  --secondary-foreground: #e8edf6;
+  --muted: #141d2c;
+  --muted-foreground: #8d9bb3;
+  --accent: #16203a;
+  --accent-foreground: #e8edf6;
+  --destructive: #f87171;
+  --border: #1f2a3c;
+  --input: #1f2a3c;
+  --ring: #3d86ff;
+  --sidebar: #0b111d;
+  --sidebar-foreground: #e8edf6;
+  --sidebar-primary: #0b62fd;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #16203a;
+  --sidebar-accent-foreground: #e8edf6;
+  --sidebar-border: #1f2a3c;
+  --sidebar-ring: #3d86ff;
 }
-
-/* Paths, sizes and commands are the things people copy, so they select. */
-.selectable { user-select: text; }
-
-/* A scrollbar that does not shout inside a dark pane. */
-*::-webkit-scrollbar { width: 10px; height: 10px; }
-*::-webkit-scrollbar-track { background: transparent; }
-*::-webkit-scrollbar-thumb {
-  background: #22304a;
-  border-radius: 6px;
-  border: 3px solid transparent;
-  background-clip: content-box;
-}
-*::-webkit-scrollbar-thumb:hover { background: #33445f; background-clip: content-box; }
 
 @media (prefers-color-scheme: light) {
   :root {
     color-scheme: light;
+    --background: #ffffff;
+    --foreground: #001830;
+    --card: #ffffff;
+    --card-foreground: #001830;
+    --popover: #ffffff;
+    --popover-foreground: #001830;
+    --primary: #0b62fd;
+    --primary-foreground: #ffffff;
+    --secondary: #f2f5fa;
+    --secondary-foreground: #001830;
+    --muted: #f2f5fa;
+    --muted-foreground: #55627a;
+    --accent: #eaf1ff;
+    --accent-foreground: #001830;
+    --destructive: #d93a4a;
+    --border: #dfe4ed;
+    --input: #dfe4ed;
+    --ring: #0b62fd;
+
     --color-ink: #ffffff;
     --color-chrome: #f7f9fc;
     --color-surface: #ffffff;
@@ -64,11 +92,72 @@ body {
     --color-sunken: #f7f9fc;
     --color-line: #dfe4ed;
     --color-line-strong: #cbd4e2;
-    --color-text: #001830;
     --color-dim: #35435c;
-    --color-muted: #55627a;
     --color-faint: #7a869c;
-    --color-accent: #0b62fd;
-    --color-accent-strong: #0b62fd;
   }
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--background);
+  color: var(--foreground);
+  font-size: 13px;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+  /* Chrome, not a document: nothing should feel selectable by accident.
+     The things people copy — paths, sizes, commands — opt back in. */
+  user-select: none;
+}
+
+.selectable {
+  user-select: text;
+}
+
+/* A scrollbar that does not shout inside a dark pane. */
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--color-line-strong);
+  border-radius: 6px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: #33445f;
+  background-clip: content-box;
 }

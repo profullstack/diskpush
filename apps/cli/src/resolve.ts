@@ -1,8 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
-import { homedir } from 'node:os'
-import { join } from 'node:path'
-import { parseSshConfig } from '@diskpush/ssh-core'
+import { sshConfigConnections } from '@diskpush/ssh-core'
 import {
   EXCLUDE_PRESETS,
   parseEndpoint,
@@ -43,57 +40,21 @@ export type ResolvedEndpoint = {
  * read ssh_config. Without this, `diskpush prod:/srv/` would transfer happily
  * while `diskpush ls prod:/srv/` claimed the host did not exist.
  */
-export function sshConfigConnection(alias: string, env: NodeJS.ProcessEnv = process.env): Connection | null {
-  const path = env.DISKPUSH_SSH_CONFIG ?? join(homedir(), '.ssh', 'config')
-  let contents: string
-  try {
-    contents = readFileSync(path, 'utf8')
-  } catch {
-    return null
-  }
-
-  const host = parseSshConfig(contents).find((candidate) => candidate.alias === alias)
-  if (!host) return null
-
-  const identity = host.identityFile ? host.identityFile.replace(/^~/, homedir()) : null
-  const now = new Date().toISOString()
-
-  return {
-    // Not persisted: the id marks where it came from, for diagnostics.
-    id: `ssh-config:${alias}`,
-    name: alias,
-    host: host.hostName ?? alias,
-    port: host.port ?? 22,
-    username: host.user ?? env.USER ?? 'root',
-    authType: identity ? 'key' : 'agent',
-    keyPath: identity,
-    defaultLocalPath: null,
-    defaultRemotePath: null,
-    jumpHost: host.proxyJump,
-    rsyncPath: null,
-    connectTimeoutSeconds: 15,
-    keepaliveSeconds: host.serverAliveInterval ?? 30,
-    forwardAgent: false,
-    tags: ['ssh-config'],
-    notes: `From ${path}`,
-    createdAt: now,
-    updatedAt: now,
-  }
-}
-
+/**
+ * One `~/.ssh/config` entry as an unsaved connection.
+ *
+ * Transfers get ssh_config for free, because rsync shells out to ssh and ssh
+ * reads the file. Browsing does not: SFTP goes through ssh2, which has never
+ * read it. Without this, `diskpush prod:/srv/` would transfer happily while
+ * `diskpush ls prod:/srv/` claimed the host did not exist.
+ */
 /** Every host in ~/.ssh/config, as unsaved connections. */
 export function sshConfigHosts(env: NodeJS.ProcessEnv = process.env): Connection[] {
-  const path = env.DISKPUSH_SSH_CONFIG ?? join(homedir(), '.ssh', 'config')
-  let contents: string
-  try {
-    contents = readFileSync(path, 'utf8')
-  } catch {
-    return []
-  }
-  return parseSshConfig(contents)
-    .filter((host) => host.hostName || host.user)
-    .map((host) => sshConfigConnection(host.alias, env))
-    .filter((connection): connection is Connection => connection !== null)
+  return sshConfigConnections(env)
+}
+
+export function sshConfigConnection(alias: string, env: NodeJS.ProcessEnv = process.env): Connection | null {
+  return sshConfigConnections(env).find((connection) => connection.name === alias) ?? null
 }
 
 export async function resolveEndpoint(store: DiskPushStore, input: string): Promise<ResolvedEndpoint> {

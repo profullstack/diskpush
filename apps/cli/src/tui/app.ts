@@ -93,6 +93,12 @@ export class Tui {
   private readonly sessions = new Map<string, SshSession>()
   /** Open endpoint picker, or null. It owns the keyboard while it is up. */
   private picker: { index: number } | null = null
+  /**
+   * A first connection to a host asks about its key, and the TUI owns the
+   * keyboard, so the question is a prompt on screen rather than readline. The
+   * resolver is held until a key answers it.
+   */
+  private hostKey: { host: string; fingerprint: string; keyType: string; decide: (trust: boolean) => void } | null = null
 
   constructor(
     left: Pane,
@@ -105,7 +111,26 @@ export class Tui {
   private async session(connection: Connection): Promise<SshSession> {
     const existing = this.sessions.get(connection.id)
     if (existing) return existing
-    const session = await SshSession.connect(connection, { knownHostsPath: knownHostsPath() })
+
+    const session = await SshSession.connect(connection, {
+      knownHostsPath: knownHostsPath(),
+      // Without this the first connection to any host fails with "not in
+      // known_hosts and DiskPush was not given a way to ask about it" — true,
+      // and useless: the answer is a keystroke away.
+      onUnknownHostKey: (details) =>
+        new Promise<boolean>((resolve) => {
+          this.hostKey = {
+            host: details.host,
+            fingerprint: details.fingerprint,
+            keyType: details.keyType,
+            decide: (trust) => {
+              this.hostKey = null
+              resolve(trust)
+            },
+          }
+          this.render()
+        }),
+    })
     this.sessions.set(connection.id, session)
     return session
   }
@@ -183,6 +208,7 @@ export class Tui {
 
     let frame = out.join('\n')
     if (this.picker) frame += this.renderPicker(columns, rows)
+    if (this.hostKey) frame += this.renderHostKey(columns, rows)
     process.stdout.write(frame)
   }
 
@@ -204,6 +230,12 @@ export class Tui {
   /** Returns false when the app should exit. */
   async onKey(key: Key): Promise<boolean> {
     if (isChar(key, CTRL_C)) return false
+
+    if (this.hostKey) {
+      if (isChar(key, 'y') || isChar(key, 'Y')) this.hostKey.decide(true)
+      else if (key === 'escape' || isChar(key, 'n') || isChar(key, 'N') || key === 'enter') this.hostKey.decide(false)
+      return true
+    }
 
     if (this.picker) {
       // Escape closes the picker rather than the app: inside a dialog it means
@@ -339,6 +371,28 @@ export class Tui {
 
     line(top + 2 + shown.length, `${ansi.blue}|${ansi.reset}${ansi.dim}${pad(' enter select   esc cancel', inner)}${ansi.reset}${ansi.blue}|${ansi.reset}`)
     line(top + 3 + shown.length, `${ansi.blue}+${'-'.repeat(inner)}+${ansi.reset}`)
+    return out.join('')
+  }
+
+  /** The host-key question, drawn over everything. */
+  private renderHostKey(columns: number, rows: number): string {
+    const key = this.hostKey!
+    const width = Math.max(40, Math.min(72, columns - 6))
+    const left = Math.max(1, Math.floor((columns - width) / 2))
+    const top = Math.max(1, Math.floor(rows / 2) - 4)
+    const inner = width - 2
+    const out: string[] = []
+    const line = (row: number, body: string) => out.push(`${ansi.moveTo(row, left)}${body}`)
+
+    line(top, `${ansi.yellow}+${'-'.repeat(inner)}+${ansi.reset}`)
+    line(top + 1, `${ansi.yellow}|${ansi.reset}${ansi.bold}${pad(` Unknown host: ${key.host}`, inner)}${ansi.reset}${ansi.yellow}|${ansi.reset}`)
+    line(top + 2, `${ansi.yellow}|${ansi.reset}${pad('', inner)}${ansi.yellow}|${ansi.reset}`)
+    line(top + 3, `${ansi.yellow}|${ansi.reset}${pad(` ${key.keyType} key fingerprint:`, inner)}${ansi.yellow}|${ansi.reset}`)
+    line(top + 4, `${ansi.yellow}|${ansi.reset}${ansi.dim}${pad(` ${truncate(key.fingerprint, inner - 2)}`, inner)}${ansi.reset}${ansi.yellow}|${ansi.reset}`)
+    line(top + 5, `${ansi.yellow}|${ansi.reset}${pad('', inner)}${ansi.yellow}|${ansi.reset}`)
+    line(top + 6, `${ansi.yellow}|${ansi.reset}${ansi.dim}${pad(' Compare it with the server before trusting it.', inner)}${ansi.reset}${ansi.yellow}|${ansi.reset}`)
+    line(top + 7, `${ansi.yellow}|${ansi.reset}${pad(' y  trust and continue        n  cancel', inner)}${ansi.yellow}|${ansi.reset}`)
+    line(top + 8, `${ansi.yellow}+${'-'.repeat(inner)}+${ansi.reset}`)
     return out.join('')
   }
 

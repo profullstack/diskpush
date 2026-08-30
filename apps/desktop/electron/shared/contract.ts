@@ -15,6 +15,7 @@ export const IPC = {
   connectionsRemove: 'connections:remove',
   connectionsTest: 'connections:test',
   connectionsImport: 'connections:import',
+  connectionsSshConfig: 'connections:ssh-config',
 
   fsListLocal: 'fs:list-local',
   fsListRemote: 'fs:list-remote',

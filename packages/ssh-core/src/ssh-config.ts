@@ -6,6 +6,11 @@
  * pre-fill a form the user then confirms.
  */
 
+import { homedir } from 'node:os'
+import { join } from 'node:path'
+import { readFileSync } from 'node:fs'
+import type { Connection } from '@diskpush/schemas'
+
 export type SshConfigHost = {
   alias: string
   hostName: string | null
@@ -82,4 +87,58 @@ function applySetting(host: SshConfigHost, key: string, value: string): void {
     default:
       break
   }
+}
+
+/**
+ * The hosts in ~/.ssh/config, shaped as unsaved connections.
+ *
+ * Shared by the CLI and the desktop app so both offer the same servers. They
+ * are not persisted: the id records where each came from, and a saved
+ * connection of the same name takes precedence, because it carries a port, a
+ * key and a default path that an ssh_config entry does not.
+ */
+export function sshConfigConnections(env: NodeJS.ProcessEnv = process.env): Connection[] {
+  const path = env.DISKPUSH_SSH_CONFIG ?? join(homedir(), '.ssh', 'config')
+
+  let contents: string
+  try {
+    contents = readFileSync(path, 'utf8')
+  } catch {
+    return []
+  }
+
+  const now = new Date().toISOString()
+  const seen = new Set<string>()
+
+  return parseSshConfig(contents)
+    .filter((host) => host.hostName || host.user)
+    .filter((host) => {
+      // ~/.ssh/config really does list some aliases more than once.
+      if (seen.has(host.alias)) return false
+      seen.add(host.alias)
+      return true
+    })
+    .map((host): Connection => {
+      const identity = host.identityFile ? host.identityFile.replace(/^~/, homedir()) : null
+      return {
+        id: `ssh-config:${host.alias}`,
+        name: host.alias,
+        host: host.hostName ?? host.alias,
+        port: host.port ?? 22,
+        username: host.user ?? env.USER ?? 'root',
+        authType: identity ? 'key' : 'agent',
+        keyPath: identity,
+        defaultLocalPath: null,
+        defaultRemotePath: null,
+        jumpHost: host.proxyJump,
+        rsyncPath: null,
+        connectTimeoutSeconds: 15,
+        keepaliveSeconds: host.serverAliveInterval ?? 30,
+        forwardAgent: false,
+        tags: ['ssh-config'],
+        notes: `From ${path}`,
+        createdAt: now,
+        updatedAt: now,
+      }
+    })
 }

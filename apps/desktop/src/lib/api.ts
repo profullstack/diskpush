@@ -70,6 +70,7 @@ type Api = {
     remove(id: string): Promise<IpcResult<boolean>>
     test(id: string): Promise<IpcResult<unknown>>
     importSshConfig(path?: string): Promise<IpcResult<string[]>>
+    sshConfigHosts(): Promise<IpcResult<Connection[]>>
   }
   fs: {
     homeLocal(): Promise<IpcResult<string>>
