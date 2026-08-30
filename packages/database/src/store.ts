@@ -6,12 +6,14 @@ import {
   ConnectionSchema,
   FleetCommandSchema,
   FleetHostResultSchema,
+  FleetListSchema,
   FleetRunSchema,
   SyncProfileSchema,
   TransferJobSchema,
   type Connection,
   type FleetCommand,
   type FleetHostResult,
+  type FleetList,
   type FleetRun,
   type JobState,
   type SyncProfile,
@@ -364,6 +366,58 @@ export class DiskPushStore {
     return result.rowsAffected > 0
   }
 
+  // --- fleet lists ---------------------------------------------------------
+
+  async listFleetLists(): Promise<FleetList[]> {
+    const result = await this.client.execute('SELECT * FROM fleet_lists ORDER BY name')
+    return result.rows.map(rowToFleetList)
+  }
+
+  async findFleetList(nameOrId: string): Promise<FleetList | null> {
+    const result = await this.client.execute({
+      sql: 'SELECT * FROM fleet_lists WHERE name = ? OR id = ? LIMIT 1',
+      args: [nameOrId, nameOrId],
+    })
+    const row = result.rows[0]
+    return row ? rowToFleetList(row) : null
+  }
+
+  /** Create or replace. Saving an existing name updates it in place. */
+  async saveFleetList(input: Omit<FleetList, 'id' | 'createdAt' | 'updatedAt'> & { id?: string }): Promise<FleetList> {
+    const now = new Date().toISOString()
+    const existing = input.id ? await this.findFleetList(input.id) : await this.findFleetList(input.name)
+    const list = FleetListSchema.parse({
+      ...input,
+      id: existing?.id ?? input.id ?? randomUUID(),
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+    })
+
+    await this.client.execute({
+      sql: `INSERT INTO fleet_lists (id, name, description, members_json, created_at, updated_at)
+            VALUES (?,?,?,?,?,?)
+            ON CONFLICT(id) DO UPDATE SET
+              name=excluded.name, description=excluded.description,
+              members_json=excluded.members_json, updated_at=excluded.updated_at`,
+      args: [list.id, list.name, list.description, JSON.stringify(list.members), list.createdAt, list.updatedAt],
+    })
+    return list
+  }
+
+  async renameFleetList(nameOrId: string, newName: string): Promise<FleetList | null> {
+    const existing = await this.findFleetList(nameOrId)
+    if (!existing) return null
+    return this.saveFleetList({ ...existing, name: newName })
+  }
+
+  async deleteFleetList(nameOrId: string): Promise<boolean> {
+    const result = await this.client.execute({
+      sql: 'DELETE FROM fleet_lists WHERE name = ? OR id = ?',
+      args: [nameOrId, nameOrId],
+    })
+    return result.rowsAffected > 0
+  }
+
   // --- fleet runs ----------------------------------------------------------
 
   async createFleetRun(run: Omit<FleetRun, 'createdAt'> & { createdAt?: string }): Promise<FleetRun> {
@@ -537,6 +591,17 @@ function rowToFleetCommand(row: Row): FleetCommand {
     targets: JSON.parse(String(row.targets)),
     tags: JSON.parse(String(row.tags)),
     builtin: false,
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at),
+  })
+}
+
+function rowToFleetList(row: Row): FleetList {
+  return FleetListSchema.parse({
+    id: String(row.id),
+    name: String(row.name),
+    description: String(row.description),
+    members: JSON.parse(String(row.members_json)),
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
   })

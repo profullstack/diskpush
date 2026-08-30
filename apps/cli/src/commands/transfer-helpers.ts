@@ -8,10 +8,7 @@ export {
   planTransfer,
   runPlan,
   runToCompletion,
-  writeSelectionList,
-  describeSelection,
   type ExecutionPlan,
-  type SelectionList,
 } from '@diskpush/rsync-core'
 
 import { runToCompletion, type ExecutionPlan } from '@diskpush/rsync-core'

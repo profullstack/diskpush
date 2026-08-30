@@ -52,15 +52,6 @@ export const RsyncOptionsSchema = z.object({
   excludeFrom: z.string().min(1).nullable().default(null),
   includeFrom: z.string().min(1).nullable().default(null),
   filesFrom: z.string().min(1).nullable().default(null),
-  /**
-   * Read `--files-from` as NUL-separated rather than newline-separated.
-   *
-   * A newline is legal in a filename, so a newline-separated list cannot
-   * express every name a directory can hold — rsync splits such a name in two
-   * and fails both halves with "No such file or directory". Anything DiskPush
-   * generates uses this.
-   */
-  from0: z.boolean().default(false),
   maxSize: z.string().min(1).nullable().default(null),
   minSize: z.string().min(1).nullable().default(null),
   pruneEmptyDirs: z.boolean().default(false),

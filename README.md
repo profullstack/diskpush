@@ -14,8 +14,6 @@ diskpush ./data/ prod:/data/ -- --checksum # your own rsync flags
 ```
 
 - **Local → server**, **server → local**, and **server → server** directly.
-- **Sync a whole directory, or just what you picked.** Tick files and folders
-  in the pane, or `--only NAME` from the CLI.
 - **Archive metadata by default.** Permissions, timestamps, symlinks.
 - **Resumable by default.** An interrupted transfer keeps its partial data.
 - **Skips unchanged files.** Re-running a job moves almost nothing.

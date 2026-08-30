@@ -27,15 +27,12 @@ function Direction({
   label,
   armed,
   busy,
-  selectedCount,
   onClick,
 }: {
   side: 'left' | 'right'
   label: string
   armed: boolean
   busy: boolean
-  /** Ticked entries in the source pane. 0 means the whole directory. */
-  selectedCount: number
   onClick: () => void
 }) {
   const Arrow = side === 'right' ? ArrowRight : ArrowLeft
@@ -63,17 +60,11 @@ function Direction({
             armed ? 'text-primary-foreground/70' : 'text-faint',
           )}
         >
-          {armed && selectedCount > 0 ? `Send ${selectedCount}` : 'Sync to'}
+          Sync to
         </span>
         <span className="w-full truncate text-center text-[11px] font-semibold leading-none">{label}</span>
       </TooltipTrigger>
-      <TooltipContent>
-        {/* Only on the armed button: the count is the *source* pane's, and
-            the other button would make the other pane the source. */}
-        {armed && selectedCount > 0
-          ? `Copy the ${selectedCount} selected ${selectedCount === 1 ? 'entry' : 'entries'} into ${label}`
-          : `Copy into ${label}, overwriting what differs`}
-      </TooltipContent>
+      <TooltipContent>Copy into {label}, overwriting what differs</TooltipContent>
     </Tooltip>
   )
 }
@@ -127,7 +118,6 @@ export function TransferRail({
   direction,
   mirror,
   busy,
-  selectedCount,
   leftLabel,
   rightLabel,
   onDirection,
@@ -138,8 +128,6 @@ export function TransferRail({
   direction: 'ltr' | 'rtl'
   mirror: boolean
   busy: boolean
-  /** Ticked entries in the source pane. 0 means the whole directory. */
-  selectedCount: number
   leftLabel: string
   rightLabel: string
   onDirection: (direction: 'ltr' | 'rtl') => void
@@ -155,7 +143,6 @@ export function TransferRail({
     <div className="flex w-[116px] shrink-0 flex-col items-center justify-center gap-2 px-3">
       <Direction
         side="right"
-        selectedCount={selectedCount}
         label={rightLabel}
         armed={direction === 'ltr'}
         busy={busy}
@@ -166,7 +153,6 @@ export function TransferRail({
       />
       <Direction
         side="left"
-        selectedCount={selectedCount}
         label={leftLabel}
         armed={direction === 'rtl'}
         busy={busy}

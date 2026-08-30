@@ -11,6 +11,8 @@ import {
   Play,
   RefreshCw,
   ShieldAlert,
+  Bookmark,
+  BookmarkPlus,
   Square,
   TriangleAlert,
   X,
@@ -30,6 +32,7 @@ import {
   type FleetCommand,
   type FleetEvent,
   type FleetHostState,
+  type FleetList,
   type Hazard,
   type HostUpdateReport,
 } from '@/lib/api'
@@ -65,6 +68,9 @@ const STATE_META: Record<FleetHostState, { label: string; tone: string; icon: Re
 export function FleetView({ onAddServer }: { onAddServer: () => void }) {
   const [servers, setServers] = useState<Connection[]>([])
   const [commands, setCommands] = useState<FleetCommand[]>([])
+  const [lists, setLists] = useState<FleetList[]>([])
+  const [savingList, setSavingList] = useState(false)
+  const [newListName, setNewListName] = useState('')
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [tagFilter, setTagFilter] = useState<string | null>(null)
 
@@ -92,12 +98,14 @@ export function FleetView({ onAddServer }: { onAddServer: () => void }) {
 
   const refresh = useCallback(async () => {
     try {
-      const [serverList, commandList] = await Promise.all([
+      const [serverList, commandList, listList] = await Promise.all([
         unwrap(api()?.fleet.servers()),
         unwrap(api()?.fleet.commands()),
+        unwrap(api()?.fleet.lists()),
       ])
       setServers(serverList)
       setCommands(commandList)
+      setLists(listList)
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught))
     }
@@ -157,6 +165,54 @@ export function FleetView({ onAddServer }: { onAddServer: () => void }) {
       }
       return next
     })
+
+  /**
+   * Ticks exactly the servers a list holds.
+   *
+   * Replaces the selection rather than adding to it: picking a list is saying
+   * "these", and a list that quietly unioned with whatever was already ticked
+   * would run on servers nobody chose.
+   *
+   * A member whose connection has gone is reported rather than skipped, the
+   * same rule the CLI selector follows.
+   */
+  const pickList = (list: FleetList) => {
+    const known = new Set(servers.map((server) => server.id))
+    const missing = list.members.filter((member) => !known.has(member.connectionId))
+    if (missing.length > 0) {
+      setError(
+        `The list "${list.name}" names ${missing.length} server(s) that no longer exist: ` +
+          `${missing.map((member) => member.connectionName).join(', ')}. Save it again to drop them.`,
+      )
+      return
+    }
+    setError(null)
+    setSelected(new Set(list.members.map((member) => member.connectionId)))
+  }
+
+  const saveList = useCallback(async () => {
+    const name = newListName.trim()
+    if (!name || selected.size === 0) return
+    setError(null)
+    try {
+      await unwrap(api()?.fleet.saveList(name, [...selected]))
+      setNewListName('')
+      setSavingList(false)
+      setLists(await unwrap(api()?.fleet.lists()))
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught))
+    }
+  }, [newListName, selected])
+
+  const removeList = useCallback(async (name: string) => {
+    setError(null)
+    try {
+      await unwrap(api()?.fleet.removeList(name))
+      setLists(await unwrap(api()?.fleet.lists()))
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught))
+    }
+  }, [])
 
   const pickCommand = (command: FleetCommand) => {
     setScript(command.script)
@@ -269,6 +325,82 @@ export function FleetView({ onAddServer }: { onAddServer: () => void }) {
               </Button>
             ) : null}
           </div>
+
+          {/*
+            Saved lists first, then tags. A tag says what a server *is*; a list
+            is a set someone assembled by hand and wants back, so it is the
+            more deliberate of the two and sits above.
+          */}
+          {lists.length > 0 || selected.size > 0 ? (
+            <div className="shrink-0 px-3 pb-2">
+              <div className="flex flex-wrap items-center gap-1">
+                {lists.map((list) => (
+                  <span
+                    key={list.id}
+                    className="group/list inline-flex items-center overflow-hidden rounded-full border border-line-strong"
+                  >
+                    <button
+                      type="button"
+                      title={`${list.members.length} server${list.members.length === 1 ? '' : 's'}${
+                        list.description ? ` — ${list.description}` : ''
+                      }`}
+                      onClick={() => pickList(list)}
+                      disabled={running}
+                      className="focus-ring flex items-center gap-1 py-0.5 pl-2 pr-1 text-[10.5px] text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+                    >
+                      <Bookmark className="size-2.5" />
+                      {list.name}
+                      <span className="numeric text-faint">{list.members.length}</span>
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={`Delete the list ${list.name}`}
+                      title={`Delete the list ${list.name} (the servers are untouched)`}
+                      onClick={() => void removeList(list.name)}
+                      disabled={running}
+                      className="focus-ring px-1 py-0.5 text-faint opacity-0 transition-opacity hover:text-destructive group-hover/list:opacity-100"
+                    >
+                      <X className="size-2.5" />
+                    </button>
+                  </span>
+                ))}
+
+                {selected.size > 0 && !savingList ? (
+                  <button
+                    type="button"
+                    onClick={() => setSavingList(true)}
+                    disabled={running}
+                    className="focus-ring inline-flex items-center gap-1 rounded-full border border-dashed border-line-strong px-2 py-0.5 text-[10.5px] text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+                  >
+                    <BookmarkPlus className="size-2.5" />
+                    Save these {selected.size}
+                  </button>
+                ) : null}
+              </div>
+
+              {savingList ? (
+                <div className="mt-1.5 flex items-center gap-1">
+                  <Input
+                    autoFocus
+                    value={newListName}
+                    onChange={(event) => setNewListName(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') void saveList()
+                      if (event.key === 'Escape') {
+                        setSavingList(false)
+                        setNewListName('')
+                      }
+                    }}
+                    placeholder="list name"
+                    className="h-6 flex-1 text-[11.5px]"
+                  />
+                  <Button size="xs" onClick={() => void saveList()} disabled={!newListName.trim()} className="text-[11px]">
+                    Save
+                  </Button>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
 
           {tags.length > 0 ? (
             <div className="flex shrink-0 flex-wrap gap-1 px-3 pb-2">

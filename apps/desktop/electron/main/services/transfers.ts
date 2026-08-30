@@ -2,8 +2,6 @@ import { randomUUID } from 'node:crypto'
 import type { WebContents } from 'electron'
 import {
   intersectCapabilities,
-  writeSelectionList,
-  type SelectionList,
   parseRsyncCapabilities,
   planTransfer,
   runPlan,
@@ -104,32 +102,11 @@ function optionsFrom(input: TransferOptions): RsyncOptions {
   })
 }
 
-/**
- * Turns the renderer's selection into a `--files-from` list.
- *
- * Returns null when nothing is selected, which means the whole directory —
- * the behaviour the two-pane view has always had. The caller removes the list
- * once rsync has exited.
- */
-function selectionFor(request: TransferRequest): SelectionList | null {
-  return request.selection.length > 0 ? writeSelectionList(request.selection) : null
-}
-
-async function buildPlan(
-  request: TransferRequest,
-  overrides: Partial<RsyncOptions> = {},
-  selection: SelectionList | null = null,
-): Promise<ExecutionPlan> {
+async function buildPlan(request: TransferRequest, overrides: Partial<RsyncOptions> = {}): Promise<ExecutionPlan> {
   const source = await resolveEndpoint(request.source)
   const destination = await resolveEndpoint(request.destination)
   const capabilities = await capabilitiesFor([source.connectionId, destination.connectionId])
   const options = { ...optionsFrom(request.options), ...overrides }
-  if (selection) {
-    options.filesFrom = selection.path
-    // NUL-separated: a newline is legal in a filename, so a newline-separated
-    // list cannot express every name a directory can hold.
-    options.from0 = true
-  }
 
   const isServerToServer = source.endpoint.type === 'ssh' && destination.endpoint.type === 'ssh'
   const sourceConnection = source.connectionId ? await resolveConnection(source.connectionId) : null
@@ -165,15 +142,7 @@ export type PreviewResult = {
 
 /** The dry run behind Preview Changes and behind every mirror. */
 export async function previewTransfer(request: TransferRequest): Promise<PreviewResult> {
-  const selection = selectionFor(request)
-  try {
-    return await previewWithPlan(await buildPlan(request, { dryRun: true }, selection))
-  } finally {
-    selection?.cleanup()
-  }
-}
-
-async function previewWithPlan(plan: ExecutionPlan): Promise<PreviewResult> {
+  const plan = await buildPlan(request, { dryRun: true })
   const result = await runToCompletion(plan)
   return {
     changes: result.changes,
@@ -190,10 +159,7 @@ async function previewWithPlan(plan: ExecutionPlan): Promise<PreviewResult> {
 export type StartedJob = { jobId: string; command: string; control: string | null; warnings: string[] }
 
 export async function startTransfer(request: TransferRequest, sender: WebContents): Promise<StartedJob> {
-  // rsync reads the list at startup, but the run owns it until it exits: the
-  // cleanup below is in the event loop's `finally`, not this function's.
-  const selection = selectionFor(request)
-  const plan = await buildPlan(request, {}, selection)
+  const plan = await buildPlan(request)
   const jobId = randomUUID()
   const db = await store()
 
@@ -255,7 +221,6 @@ export async function startTransfer(request: TransferRequest, sender: WebContent
       }
     }
     running.delete(jobId)
-    selection?.cleanup()
   })()
 
   return { jobId, command: plan.display, control: plan.controlDisplay ?? null, warnings: plan.warnings }
