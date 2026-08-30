@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { VERSION } from './help.js'
 import type { Output } from './output.js'
-import { readManifest, stateDirectory } from './commands/self.js'
+import { installerFlags, readManifest, stateDirectory } from './commands/self.js'
 
 /**
  * Startup update check.
@@ -105,7 +105,7 @@ export async function autoUpdate(command: string | null, output: Output, force =
     return 'failed'
   }
 
-  const run = spawnSync('sh', ['-s', '--', ...(manifest.desktop ? [] : ['--cli-only'])], {
+  const run = spawnSync('sh', ['-s', '--', ...installerFlags(manifest)], {
     input: script.stdout,
     stdio: ['pipe', 'ignore', 'inherit'],
   })

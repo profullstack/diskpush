@@ -52,6 +52,38 @@ export function readManifest(env: NodeJS.ProcessEnv = process.env): InstallManif
 }
 
 /**
+ * Which surface flags to hand the installer when re-running it to upgrade.
+ *
+ * The installer with no flag auto-detects a desktop session, so a CLI-only
+ * install is deliberately left to that detection: a machine that has grown a
+ * desktop since it was first installed gets the desktop app on its next
+ * update, which is what "update" is expected to mean. Pinning it to
+ * `--cli-only` — as this used to — meant an install made from a tty or over
+ * SSH could never gain the desktop app, no matter how many times it updated,
+ * and said nothing about why.
+ *
+ * A desktop install is pinned the other way, to `--desktop`. Updating one from
+ * a tty (a cron job, an SSH session) has no DISPLAY to detect, so auto-detect
+ * would quietly downgrade it to CLI-only and strip the app out from under a
+ * running desktop.
+ *
+ * An explicit flag on the update command always wins, so either direction
+ * stays reachable by hand.
+ */
+export function installerFlags(manifest: InstallManifest, parsed?: ParsedArgv): string[] {
+  if (parsed && hasFlag(parsed, '--cli-only')) return ['--cli-only']
+  if (parsed && hasFlag(parsed, '--desktop')) return ['--desktop']
+  return manifest.desktop ? ['--desktop'] : []
+}
+
+/** What `Surfaces:` prints, so an update never silently skips the desktop app. */
+function describeSurfaces(flags: string[]): string {
+  if (flags.includes('--cli-only')) return 'CLI only (--cli-only)'
+  if (flags.includes('--desktop')) return 'CLI and desktop app'
+  return 'CLI, plus the desktop app if this machine has a desktop session'
+}
+
+/**
  * Re-runs the installer that put this copy here. It is idempotent, so
  * updating is installing again, and the manifest remembers where it came
  * from — an installer served from a preview deployment keeps updating from
@@ -73,8 +105,10 @@ export async function runUpdate(parsed: ParsedArgv, output: Output): Promise<num
   }
 
   const installer = manifest.installer
+  const flags = installerFlags(manifest, parsed)
   output.line(`Current version: ${VERSION}`)
   output.line(`Updating from ${installer}`)
+  output.line(`Surfaces: ${describeSurfaces(flags)}`)
 
   if (hasFlag(parsed, '--dry-run')) {
     output.line('Dry run: would re-run the installer, which upgrades in place.')
@@ -91,7 +125,7 @@ export async function runUpdate(parsed: ParsedArgv, output: Output): Promise<num
     return failure(output, `Could not download the installer from ${installer}.`, EXIT.unavailable)
   }
 
-  const run = spawnSync('sh', ['-s', '--', ...(manifest.desktop ? [] : ['--cli-only'])], {
+  const run = spawnSync('sh', ['-s', '--', ...flags], {
     input: script.stdout,
     stdio: ['pipe', 'inherit', 'inherit'],
   })
