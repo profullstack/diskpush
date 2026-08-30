@@ -12,11 +12,89 @@
  * *format* compatibility at runtime, and the unit tests never start Electron.
  */
 import { spawnSync } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 
 const desktop = resolve(import.meta.dirname, '..', 'apps', 'desktop')
 const electron = join(desktop, 'node_modules', 'electron', 'dist', 'electron')
+
+/**
+ * Every asset the exported page asks for must resolve to a real file through
+ * the same function that serves it.
+ *
+ * The launch check below cannot see this: it dies at the display, so the
+ * renderer never runs. That is exactly how v0.2.0 shipped a window in which
+ * the stylesheet and all five chunks 404ed — Next emits root-absolute URLs
+ * (`/_next/static/...`), the app loaded the page over file://, and those
+ * resolved against the filesystem root instead of the bundle. The result was
+ * unstyled prerendered HTML that never hydrated, and nothing failed.
+ */
+async function checkRendererAssets() {
+  const out = join(desktop, 'out')
+  const index = join(out, 'index.html')
+  if (!existsSync(index)) {
+    console.error('out/index.html is missing; run pnpm --filter @diskpush/desktop build first.')
+    process.exit(1)
+  }
+
+  const helper = join(desktop, 'dist-electron', 'main', 'bundle-path.js')
+  if (!existsSync(helper)) {
+    console.error('dist-electron is missing; run pnpm --filter @diskpush/desktop build first.')
+    process.exit(1)
+  }
+  const { resolveBundlePath } = await import(helper)
+  const html = readFileSync(index, 'utf8')
+  // Only root-absolute references: those are the ones file:// resolved wrongly.
+  const referenced = [...html.matchAll(/(?:href|src)="(\/[^"]*)"/g)].map((m) => m[1])
+
+  if (referenced.length === 0) {
+    console.error('FAIL: no assets referenced by out/index.html — the export looks broken.')
+    process.exit(1)
+  }
+
+  const missing = referenced.filter((url) => {
+    const target = resolveBundlePath(out, url.split(/[?#]/)[0])
+    return !target || !existsSync(target)
+  })
+
+  if (missing.length > 0) {
+    console.error(`FAIL: ${missing.length} of ${referenced.length} renderer assets do not resolve inside the bundle.\n`)
+    missing.slice(0, 10).forEach((url) => console.error(`  ${url}`))
+    console.error('\nThe window would render unstyled and never hydrate.')
+    process.exit(1)
+  }
+
+  console.log(`ok: all ${referenced.length} renderer assets resolve inside the bundle.`)
+}
+
+/**
+ * The renderer must not be loaded over file:// again.
+ *
+ * Checking that the assets resolve is not enough on its own: they resolve
+ * whatever the window does with them. What broke the app was the *origin* —
+ * loadFile gives the page a file:// origin, under which the root-absolute URLs
+ * above point at the filesystem root rather than the bundle. So pin the
+ * mechanism, not just the paths.
+ */
+function checkRendererDelivery() {
+  const main = readFileSync(join(desktop, 'dist-electron', 'main', 'index.js'), 'utf8')
+
+  if (!main.includes('registerSchemesAsPrivileged')) {
+    console.error('FAIL: the main process no longer registers a scheme for the bundle.')
+    process.exit(1)
+  }
+  if (/\.loadFile\s*\(/.test(main)) {
+    console.error('FAIL: the main process loads the renderer with loadFile, which gives it a file:// origin.')
+    console.error("Next's root-absolute asset URLs resolve against the filesystem root there, so the")
+    console.error('window renders unstyled and never hydrates. Serve the bundle over its scheme instead.')
+    process.exit(1)
+  }
+
+  console.log('ok: the renderer is served over its own scheme, not file://.')
+}
+
+await checkRendererAssets()
+checkRendererDelivery()
 
 if (!existsSync(electron)) {
   console.error('electron binary not found; run pnpm install first.')
