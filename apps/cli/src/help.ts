@@ -47,6 +47,8 @@ COMMANDS
 
   doctor                  check rsync, ssh and the install
   update                  upgrade to the latest release  [alias: upgrade]
+                          updates the CLI, and the desktop app when this
+                          machine has a desktop  [--cli-only | --desktop]
   uninstall               remove DiskPush, keeping your connections and profiles
                           [alias: remove]
 

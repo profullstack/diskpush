@@ -1,6 +1,8 @@
-import { join } from 'node:path'
+import { readFile } from 'node:fs/promises'
+import { join, normalize } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { app, BrowserWindow, shell } from 'electron'
+import { app, BrowserWindow, protocol, shell } from 'electron'
+import { contentTypeFor, resolveBundlePath } from './bundle-path.js'
 import { registerIpc } from './ipc.js'
 import { checkForUpdates } from './services/updater.js'
 import { closeAllSessions } from './services/sessions.js'
@@ -18,6 +20,41 @@ const here = join(fileURLToPath(import.meta.url), '..')
 
 const isDev = !app.isPackaged && process.env.DISKPUSH_DEV === '1'
 const DEV_URL = 'http://localhost:3210'
+
+/**
+ * The exported renderer is served over a real scheme rather than loaded from
+ * file://.
+ *
+ * Next emits root-absolute asset URLs (`/_next/static/...`) and refuses to emit
+ * relative ones — `next/font` rejects an assetPrefix without a leading slash.
+ * Under file:// those resolve against the filesystem root, so every stylesheet
+ * and chunk 404s: the window shows unstyled prerendered HTML that never
+ * hydrates. A standard scheme gives the bundle an origin, so the same absolute
+ * paths resolve inside it, and CSP `'self'` means the bundle instead of the
+ * whole disk.
+ */
+const APP_SCHEME = 'diskpush-app'
+const APP_ORIGIN = `${APP_SCHEME}://bundle`
+
+// Must run before the app is ready, hence module scope rather than whenReady.
+protocol.registerSchemesAsPrivileged([
+  { scheme: APP_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true } },
+])
+
+/** Serves the exported renderer, and nothing outside it. */
+function serveBundle(): void {
+  const root = normalize(join(here, '..', '..', 'out'))
+  protocol.handle(APP_SCHEME, async (request) => {
+    const target = resolveBundlePath(root, new URL(request.url).pathname)
+    if (!target) return new Response('Forbidden', { status: 403 })
+    try {
+      const body = await readFile(target)
+      return new Response(body, { headers: { 'content-type': contentTypeFor(target) } })
+    } catch {
+      return new Response('Not found', { status: 404 })
+    }
+  })
+}
 
 function createWindow(): BrowserWindow {
   const window = new BrowserWindow({
@@ -43,7 +80,7 @@ function createWindow(): BrowserWindow {
   // Navigation is pinned to the app itself. A renderer compromise should not
   // be able to point the window at somewhere else.
   window.webContents.on('will-navigate', (event, url) => {
-    const allowed = isDev ? url.startsWith(DEV_URL) : url.startsWith('file://')
+    const allowed = isDev ? url.startsWith(DEV_URL) : url.startsWith(APP_ORIGIN)
     if (!allowed) event.preventDefault()
   })
 
@@ -78,13 +115,14 @@ function createWindow(): BrowserWindow {
   })
 
   if (isDev) void window.loadURL(DEV_URL)
-  else void window.loadFile(join(here, '..', '..', 'out', 'index.html'))
+  else void window.loadURL(`${APP_ORIGIN}/index.html`)
 
   return window
 }
 
 app.whenReady().then(() => {
   registerIpc()
+  if (!isDev) serveBundle()
   createWindow()
 
   // Not awaited: a slow or unreachable GitHub must not delay the window.
