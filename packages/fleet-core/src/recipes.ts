@@ -95,7 +95,27 @@ fi`.trim(),
     id: 'builtin:who',
     name: 'who',
     description: 'Who is logged in right now.',
-    script: 'who || w',
+    /*
+     * `who || w` was wrong, and wrong in a way that looked fine.
+     *
+     * `who` reads utmp, which on a systemd host with pty-less SSH sessions is
+     * routinely empty while people are very much logged in — and it exits 0
+     * either way. So `||` never reached `w`, and the recipe reported an empty
+     * result on a machine with users on it. The failure mode here is empty
+     * output, not a non-zero exit, and `||` cannot see the difference.
+     *
+     * It also ends by saying so out loud. A status command that prints
+     * nothing is indistinguishable from a broken one, which is exactly how
+     * this got reported.
+     */
+    script: `
+found=$(who 2>/dev/null)
+[ -z "$found" ] && found=$(w -h 2>/dev/null)
+if [ -n "$found" ]; then
+  printf '%s\n' "$found"
+else
+  echo "no interactive logins on this host"
+fi`.trim(),
     timeoutSeconds: 30,
   }),
 ]

@@ -102,6 +102,39 @@ describe('check-updates', () => {
   }, 90_000)
 })
 
+describe('no status recipe is ever silent', () => {
+  /*
+   * A status command that prints nothing is indistinguishable from a broken
+   * one. `who || w` shipped exactly that: `who` reads utmp, which is routinely
+   * empty on a systemd host with pty-less SSH sessions, and it exits 0 either
+   * way — so `||` never reached the fallback and the recipe reported nothing
+   * on a machine with users logged into it.
+   */
+  const reporting = BUILTIN_RECIPES.filter((entry) => entry.name !== 'upgrade')
+
+  for (const entry of reporting) {
+    it(`${entry.name} says something`, async () => {
+      const binary = entry.interpreter === 'bash' ? 'bash' : '/bin/sh'
+      const { code, stdout } = await runScript(binary, entry.script)
+      expect(code).toBe(0)
+      expect(stdout.trim(), `${entry.name} produced no output`).not.toBe('')
+    }, 90_000)
+  }
+})
+
+describe('who', () => {
+  it('falls back on empty output, not on a non-zero exit', () => {
+    // `||` cannot see the difference, and the difference is the whole bug.
+    const script = findRecipe('who')!.script
+    expect(script).not.toMatch(/who\s*\|\|/)
+    expect(script).toMatch(/-z "\$found"/)
+  })
+
+  it('states that nobody is logged in rather than printing nothing', () => {
+    expect(findRecipe('who')!.script).toMatch(/no interactive logins/)
+  })
+})
+
 describe('reboot-required', () => {
   it('succeeds when a reboot is needed but no package list exists', async () => {
     // The exact case the old `[ -f pkgs ] && cat pkgs` form got wrong: its
