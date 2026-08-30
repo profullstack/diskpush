@@ -63,8 +63,8 @@ web-02   Ubuntu 24.04.1 LTS  apt  0    0    no      48%   3d
 db-01    Rocky Linux 9.4     dnf  7    1    no      72%   9d
 ```
 
-`?` means DiskPush could not obtain that number, and `—` means the package
-manager cannot report it at all. Neither is ever shown as `0`: "nothing
+A count DiskPush could not obtain shows as `?`, and one this package manager
+cannot report at all shows as `-`. Neither is ever rendered as `0`: "nothing
 pending" is a claim, and it has to be earned.
 
 `--pending` hides the servers with nothing to do.
