@@ -296,6 +296,9 @@ type FleetInvocation = {
   timeoutSeconds: number
   commandId: string | null
   targetFallback: readonly string[]
+  /** From a saved command when it came from one; a flag always wins. */
+  concurrency?: number
+  onFailure?: 'continue' | 'stop'
   /**
    * The caller already asked about this script's hazards in terms specific to
    * what it does. `fleet upgrade --reboot` names the servers it will restart,
@@ -339,8 +342,8 @@ async function execute(
   output: Output,
 ): Promise<number> {
   const targets = await resolveTargets(parsed, store, invocation.targetFallback)
-  const concurrency = numberFlag(parsed, '--concurrency') ?? FLEET_DEFAULT_CONCURRENCY
-  const onFailure = hasFlag(parsed, '--stop-on-error') ? 'stop' : 'continue'
+  const concurrency = numberFlag(parsed, '--concurrency') ?? invocation.concurrency ?? FLEET_DEFAULT_CONCURRENCY
+  const onFailure = hasFlag(parsed, '--stop-on-error') ? 'stop' : (invocation.onFailure ?? 'continue')
   const env = envFromFlags(parsed)
   const assumeYes = hasFlag(parsed, '--yes')
 
@@ -550,6 +553,8 @@ async function fleetRun(parsed: ParsedArgv, store: DiskPushStore, output: Output
         sudo: command.sudo || hasFlag(parsed, '--sudo'),
         workingDirectory: flagValue(parsed, '--cwd') ?? command.workingDirectory,
         timeoutSeconds: numberFlag(parsed, '--timeout') ?? command.timeoutSeconds,
+        concurrency: numberFlag(parsed, '--concurrency') ?? command.concurrency,
+        onFailure: hasFlag(parsed, '--stop-on-error') ? 'stop' : command.onFailure,
         commandId: command.builtin ? null : command.id,
         targetFallback: command.targets,
       },
@@ -841,6 +846,11 @@ async function fleetCommands(parsed: ParsedArgv, store: DiskPushStore, output: O
       sudo: hasFlag(parsed, '--sudo'),
       workingDirectory: flags.workingDirectory,
       timeoutSeconds: flags.timeoutSeconds,
+      // Pacing is part of the command, not of the invocation: a saved command
+      // that forgets it was meant to run two at a time is a saved command that
+      // still gets run wrong.
+      concurrency: numberFlag(parsed, '--concurrency') ?? FLEET_DEFAULT_CONCURRENCY,
+      onFailure: hasFlag(parsed, '--stop-on-error') ? 'stop' : 'continue',
       targets: flagValues(parsed, '--on'),
       tags: flagValues(parsed, '--tag'),
     })

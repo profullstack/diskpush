@@ -333,12 +333,13 @@ export class DiskPushStore {
     await this.client.execute({
       sql: `INSERT INTO fleet_commands (
               id, name, description, script, interpreter, sudo, working_directory,
-              timeout_seconds, targets, tags, created_at, updated_at
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+              timeout_seconds, concurrency, on_failure, targets, tags, created_at, updated_at
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(id) DO UPDATE SET
               name=excluded.name, description=excluded.description, script=excluded.script,
               interpreter=excluded.interpreter, sudo=excluded.sudo,
               working_directory=excluded.working_directory, timeout_seconds=excluded.timeout_seconds,
+              concurrency=excluded.concurrency, on_failure=excluded.on_failure,
               targets=excluded.targets, tags=excluded.tags, updated_at=excluded.updated_at`,
       args: [
         command.id,
@@ -349,6 +350,8 @@ export class DiskPushStore {
         command.sudo ? 1 : 0,
         command.workingDirectory,
         command.timeoutSeconds,
+        command.concurrency,
+        command.onFailure,
         JSON.stringify(command.targets),
         JSON.stringify(command.tags),
         command.createdAt,
@@ -588,6 +591,8 @@ function rowToFleetCommand(row: Row): FleetCommand {
     sudo: Number(row.sudo) === 1,
     workingDirectory: row.working_directory === null ? null : String(row.working_directory),
     timeoutSeconds: Number(row.timeout_seconds),
+    concurrency: Number(row.concurrency),
+    onFailure: String(row.on_failure),
     targets: JSON.parse(String(row.targets)),
     tags: JSON.parse(String(row.tags)),
     builtin: false,

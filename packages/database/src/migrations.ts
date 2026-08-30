@@ -173,4 +173,20 @@ export const MIGRATIONS: Migration[] = [
       )`,
     ],
   },
+  {
+    name: '004-fleet-command-pacing',
+    statements: [
+      /*
+       * A saved command captured what to run and where, but not how fast.
+       * "reload nginx" and "upgrade the database tier" want very different
+       * answers to those two, and re-choosing them on every run is how a
+       * saved command still gets run wrong.
+       *
+       * Defaults match the schema's, so every existing row reads back exactly
+       * as it behaved before.
+       */
+      `ALTER TABLE fleet_commands ADD COLUMN concurrency INTEGER NOT NULL DEFAULT 4`,
+      `ALTER TABLE fleet_commands ADD COLUMN on_failure TEXT NOT NULL DEFAULT 'continue'`,
+    ],
+  },
 ]

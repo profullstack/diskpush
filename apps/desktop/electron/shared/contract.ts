@@ -45,6 +45,8 @@ export const IPC = {
   fleetCancel: 'fleet:cancel',
   fleetCheck: 'fleet:check',
   fleetRuns: 'fleet:runs',
+  fleetCommandSave: 'fleet:command-save',
+  fleetCommandRemove: 'fleet:command-remove',
   fleetLists: 'fleet:lists',
   fleetListSave: 'fleet:list-save',
   fleetListRename: 'fleet:list-rename',
@@ -242,6 +244,29 @@ export const FleetRunIdSchema = z.string().min(1).max(128)
  */
 export const FleetListNameSchema = z.string().min(1).max(128).refine((name) => name.trim() === name, {
   message: 'A name cannot begin or end with a space.',
+})
+
+/**
+ * Saving a command from the Fleet view.
+ *
+ * The same shape the run request takes, minus the servers and the password:
+ * a saved command is the *settings*, and which servers to point them at is a
+ * separate choice made at run time (or remembered as `targets`).
+ */
+export const FleetCommandSaveSchema = z.object({
+  name: z.string().min(1).max(128).refine((value) => value.trim() === value, {
+    message: 'A name cannot begin or end with a space.',
+  }),
+  description: z.string().max(500).default(''),
+  script: z.string().min(1).max(256 * 1024),
+  interpreter: z.enum(['sh', 'bash', 'raw']).default('sh'),
+  sudo: z.boolean().default(false),
+  workingDirectory: PathSchema.nullable().default(null),
+  timeoutSeconds: z.number().int().min(1).max(86400).default(900),
+  concurrency: z.number().int().min(1).max(64).default(4),
+  onFailure: z.enum(['continue', 'stop']).default('continue'),
+  /** Remembered so a saved command can carry the servers it is usually for. */
+  targets: z.array(z.string().min(1).max(128)).max(500).default([]),
 })
 
 export const FleetListSaveSchema = z.object({

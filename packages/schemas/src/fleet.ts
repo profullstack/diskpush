@@ -61,6 +61,13 @@ export const FleetCommandSchema = z.object({
    * Default target selector, in the same syntax `--on` takes. Saved with the
    * command so `diskpush fleet run deploy-reload` needs no `--on` at all.
    */
+  /**
+   * How the run is paced. Stored with the command because "reload nginx" and
+   * "upgrade the database tier" want very different answers, and re-choosing
+   * them every time is how a saved command still gets run wrong.
+   */
+  concurrency: z.number().int().positive().default(FLEET_DEFAULT_CONCURRENCY),
+  onFailure: FleetFailureModeSchema.default('continue'),
   targets: z.array(z.string().min(1)).default([]),
   tags: z.array(z.string()).default([]),
   /**

@@ -104,9 +104,25 @@ export type FleetCommand = {
   sudo: boolean
   workingDirectory: string | null
   timeoutSeconds: number
+  concurrency: number
+  onFailure: 'continue' | 'stop'
   targets: string[]
   tags: string[]
   builtin: boolean
+}
+
+/** Everything a saved command remembers. The servers are chosen at run time. */
+export type FleetCommandSave = {
+  name: string
+  description?: string
+  script: string
+  interpreter: 'sh' | 'bash' | 'raw'
+  sudo: boolean
+  workingDirectory: string | null
+  timeoutSeconds: number
+  concurrency: number
+  onFailure: 'continue' | 'stop'
+  targets?: string[]
 }
 
 export type Hazard = { kind: string; explanation: string; line: string; lineNumber: number }
@@ -209,6 +225,8 @@ type Api = {
     check(connectionIds: string[], concurrency?: number, timeoutSeconds?: number): Promise<IpcResult<HostUpdateReport[]>>
     runs(limit?: number): Promise<IpcResult<unknown[]>>
     runDetail(runId: string): Promise<IpcResult<{ run: unknown; hosts: FleetHostResult[] } | null>>
+    saveCommand(input: FleetCommandSave): Promise<IpcResult<FleetCommand>>
+    removeCommand(name: string): Promise<IpcResult<boolean>>
     lists(): Promise<IpcResult<FleetList[]>>
     saveList(name: string, connectionIds: string[], description?: string): Promise<IpcResult<FleetList>>
     renameList(from: string, to: string): Promise<IpcResult<FleetList>>

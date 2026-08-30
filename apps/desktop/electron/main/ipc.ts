@@ -10,6 +10,7 @@ import {
   DeleteEntryRequestSchema,
   ExternalUrlSchema,
   FleetCheckRequestSchema,
+  FleetCommandSaveSchema,
   FleetListRenameSchema,
   FleetListSaveSchema,
   FleetRequestSchema,
@@ -29,6 +30,8 @@ import {
   fleetCommands,
   fleetLists,
   fleetRunDetail,
+  removeFleetCommand,
+  saveFleetCommand,
   fleetServers,
   removeFleetList,
   renameFleetList,
@@ -330,6 +333,12 @@ export function registerIpc(): void {
   )
 
   handle(IPC.fleetRunDetail, z.object({ runId: FleetRunIdSchema }), async ({ runId }) => fleetRunDetail(runId))
+
+  handle(IPC.fleetCommandSave, FleetCommandSaveSchema, async (input) => saveFleetCommand(input))
+
+  handle(IPC.fleetCommandRemove, z.object({ name: z.string().min(1).max(128) }), async ({ name }) =>
+    removeFleetCommand(name),
+  )
 
   handle(IPC.fleetLists, z.undefined(), async () => fleetLists())
 
