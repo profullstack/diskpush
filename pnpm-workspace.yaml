@@ -12,3 +12,6 @@ allowBuilds:
   # falls back to its pure-JS implementation.
   ssh2: false
   cpu-features: false
+
+minimumReleaseAgeExclude:
+  - '@profullstack/x402-gateway@0.1.0'
