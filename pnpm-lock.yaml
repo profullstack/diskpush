@@ -126,6 +126,9 @@ importers:
 
   apps/web:
     dependencies:
+      '@profullstack/x402-gateway':
+        specifier: ^0.1.0
+        version: 0.1.0
       marked:
         specifier: ^15.0.7
         version: 15.0.12
@@ -1109,6 +1112,10 @@ packages:
   '@pkgjs/parseargs@0.11.0':
     resolution: {integrity: sha512-+1VkjdD0QBLPodGrJUeqarH8VAIvQODIbwh9XpP5Syisf7YoQgsJKPNFoqqLQlu+VQ/tVSshMR6loPMn8U+dPg==}
     engines: {node: '>=14'}
+
+  '@profullstack/x402-gateway@0.1.0':
+    resolution: {integrity: sha512-B7tWvWk/bIEoqyec6UoyRF1pO7X/+b+wFRv2ZFIClqskmEpyxoA559ZgdTvnxqAIvuDeE9v56nVpYRQ+lmOZQQ==}
+    engines: {node: '>=20.11'}
 
   '@radix-ui/primitive@1.1.7':
     resolution: {integrity: sha512-rqWnm76nYT8HoNNqEjpgJ7Pw/DrBj5iBTrmEPo6HTX5+VJyBNOqTdv4g89G63HuR5g0AaENoAcH7Is5fF2kZ8Q==}
@@ -4980,6 +4987,8 @@ snapshots:
 
   '@pkgjs/parseargs@0.11.0':
     optional: true
+
+  '@profullstack/x402-gateway@0.1.0': {}
 
   '@radix-ui/primitive@1.1.7': {}
 
