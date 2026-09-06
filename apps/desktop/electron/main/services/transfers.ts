@@ -5,12 +5,11 @@ import {
   parseRsyncCapabilities,
   planTransfer,
   runPlan,
-  runToCompletion,
   unknownCapabilities,
   type ExecutionPlan,
   type RsyncCapabilities,
 } from '@diskpush/rsync-core'
-import { defaultRsyncOptions, summarizeChanges, type Change, type Endpoint, type RsyncOptions } from '@diskpush/schemas'
+import { defaultRsyncOptions, summarizeChanges, type Endpoint, type RsyncOptions } from '@diskpush/schemas'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { IPC, type EndpointRef, type TransferOptions, type TransferRequest } from '../../shared/contract.js'
@@ -129,31 +128,180 @@ async function buildPlan(request: TransferRequest, overrides: Partial<RsyncOptio
   })
 }
 
+/**
+ * The most deletions a preview will send to the renderer.
+ *
+ * The dialog exists so a person can see what is about to be destroyed, so the
+ * list is not summarised away -- but a first mirror into an empty destination
+ * can propose hundreds of thousands of them, and the renderer used to build a
+ * DOM node for every one. Past this point the count is still exact and still
+ * on the confirm button; it is only the enumeration that stops.
+ */
+export const PREVIEW_DELETE_LIMIT = 5000
+
+export type PreviewProgress = {
+  /** Entries rsync has compared so far, from its own `to-chk` counter. */
+  checked: number
+  /**
+   * Entries rsync currently knows about. It grows during the scan, because
+   * rsync builds the file list incrementally, so this is a moving target and
+   * never a promise.
+   */
+  total: number
+  /** Changes seen so far, and the deletions among them. */
+  changes: number
+  deletes: number
+  currentPath: string
+  elapsedSeconds: number
+}
+
 export type PreviewResult = {
-  changes: Change[]
   summary: ReturnType<typeof summarizeChanges>
+  /** Capped at PREVIEW_DELETE_LIMIT; `deleteTotal` is the real number. */
   deletes: string[]
+  deleteTotal: number
+  /** Every change rsync reported, deletions included. */
+  changeTotal: number
   command: string
   control: string | null
   warnings: string[]
   ok: boolean
   message: string
+  /** True when the user stopped the scan rather than it finishing. */
+  cancelled: boolean
 }
 
-/** The dry run behind Preview Changes and behind every mirror. */
-export async function previewTransfer(request: TransferRequest): Promise<PreviewResult> {
+type RunningPreview = { cancel: () => void; cancelled: boolean }
+const previews = new Map<string, RunningPreview>()
+
+/** How often scan progress is pushed to the renderer, at most. */
+const PREVIEW_TICK_MS = 120
+
+/**
+ * The dry run behind Preview Changes and behind every mirror.
+ *
+ * Three things it deliberately does not do, each of which it used to.
+ *
+ * It does not accumulate every change. A dry run of an ordinary source tree
+ * emits a few hundred thousand of them; keeping the array and returning it
+ * meant ~70MB crossing the IPC boundary by structured clone, for a field the
+ * renderer never read. Only the counts and the capped delete list survive.
+ *
+ * It does not run silently. Progress is streamed as it goes, so the dialog can
+ * show what is being compared instead of a spinner that is indistinguishable
+ * from a hang.
+ *
+ * It does not run unstoppably. The handle is registered under `previewId`, so
+ * Cancel kills the rsync process rather than only hiding the dialog and
+ * leaving the scan to finish into nothing.
+ */
+export async function previewTransfer(
+  request: TransferRequest & { previewId: string },
+  sender: WebContents,
+): Promise<PreviewResult> {
   const plan = await buildPlan(request, { dryRun: true })
-  const result = await runToCompletion(plan)
+
+  const summary = summarizeChanges([])
+  const deletes: string[] = []
+  let deleteTotal = 0
+  let changeTotal = 0
+  let checked = 0
+  let total = 0
+  let currentPath = ''
+  const startedAt = Date.now()
+
+  const handle = runPlan(plan)
+  const entry: RunningPreview = { cancel: handle.cancel, cancelled: false }
+  previews.set(request.previewId, entry)
+
+  let lastTick = 0
+  const emit = (force: boolean) => {
+    const now = Date.now()
+    if (!force && now - lastTick < PREVIEW_TICK_MS) return
+    lastTick = now
+    if (sender.isDestroyed()) return
+    sender.send(IPC.eventPreview, {
+      previewId: request.previewId,
+      progress: {
+        checked,
+        total,
+        changes: changeTotal,
+        deletes: deleteTotal,
+        currentPath,
+        elapsedSeconds: Math.round((now - startedAt) / 1000),
+      } satisfies PreviewProgress,
+    })
+  }
+
+  // Sent before rsync has said anything, so the dialog starts with a scan it
+  // can see rather than with an empty panel it has to explain.
+  emit(true)
+
+  let ok = false
+  let message = ''
+
+  try {
+    for await (const event of handle.events) {
+      switch (event.type) {
+        case 'change': {
+          changeTotal += 1
+          summary[event.change.action] += 1
+          currentPath = event.change.path
+          if (event.change.action === 'delete') {
+            deleteTotal += 1
+            if (deletes.length < PREVIEW_DELETE_LIMIT) deletes.push(event.change.path)
+          }
+          emit(false)
+          break
+        }
+        case 'progress': {
+          // rsync counts down: `to-chk=remaining/total`.
+          if (event.progress.filesTotal !== null) {
+            total = event.progress.filesTotal
+            checked = event.progress.filesTotal - (event.progress.filesRemaining ?? 0)
+          }
+          emit(false)
+          break
+        }
+        case 'exit': {
+          ok = event.code === 0 || event.code === 24
+          message = event.message
+          break
+        }
+        default:
+          break
+      }
+    }
+  } finally {
+    previews.delete(request.previewId)
+  }
+
+  emit(true)
+
   return {
-    changes: result.changes,
-    summary: summarizeChanges(result.changes),
-    deletes: result.changes.filter((change) => change.action === 'delete').map((change) => change.path),
+    summary,
+    deletes,
+    deleteTotal,
+    changeTotal,
     command: plan.display,
     control: plan.controlDisplay ?? null,
     warnings: plan.warnings,
-    ok: result.ok,
-    message: result.message,
+    // A scan the user stopped is not a scan that failed, and it must never be
+    // reported as one: `ok` gates the confirm button, and a cancelled preview
+    // has not established that anything is safe to delete.
+    ok: entry.cancelled ? false : ok,
+    message: entry.cancelled ? 'Scan cancelled.' : message,
+    cancelled: entry.cancelled,
   }
+}
+
+/** Stops a dry run that is still scanning. False when it already finished. */
+export function cancelPreview(previewId: string): boolean {
+  const entry = previews.get(previewId)
+  if (!entry) return false
+  entry.cancelled = true
+  entry.cancel()
+  return true
 }
 
 export type StartedJob = { jobId: string; command: string; control: string | null; warnings: string[] }
@@ -275,4 +423,11 @@ export function hasActiveTransfer(): boolean {
 
 export function cancelAll(): void {
   for (const job of running.values()) job.cancel()
+  // Previews too. A dry run is read-only, but it is still an rsync and an ssh
+  // walking a remote tree, and quitting mid-scan used to leave both running
+  // with nothing left to report to.
+  for (const preview of previews.values()) {
+    preview.cancelled = true
+    preview.cancel()
+  }
 }
