@@ -21,7 +21,7 @@ import { ProfileBar } from '@/components/profile-bar'
 import { ServerManager } from '@/components/server-manager'
 import { endpointLabel, loadPane, Pane, type PaneEndpoint, type PaneState } from '@/components/pane'
 import { TransferRail } from '@/components/transfer-rail'
-import { MirrorPreviewDialog, TransferBand, type ActiveJob } from '@/components/transfer-panel'
+import { TransferBand, TransferPreviewDialog, type ActiveJob } from '@/components/transfer-panel'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import {
@@ -75,6 +75,15 @@ function TabButton({
   )
 }
 
+/** What the renderer sends to preview or start a transfer. */
+type TransferDraft = {
+  source: ReturnType<typeof refFor>
+  destination: ReturnType<typeof refFor>
+  options: { deleteMode: 'off' | 'delay' }
+  deletesConfirmed: boolean
+  selection: string[]
+}
+
 const blankPane = (endpoint: PaneEndpoint, path: string): PaneState => ({
   endpoint,
   path,
@@ -93,7 +102,6 @@ export default function Workspace() {
   const [active, setActive] = useState<'left' | 'right'>('left')
   const [direction, setDirection] = useState<'ltr' | 'rtl'>('ltr')
   const [mirror, setMirror] = useState(false)
-  const [trust, setTrust] = useState(false)
   const [preview, setPreview] = useState<PreviewResult | null>(null)
   const [previewProgress, setPreviewProgress] = useState<PreviewProgress | null>(null)
   const [previewOpen, setPreviewOpen] = useState(false)
@@ -107,6 +115,14 @@ export default function Workspace() {
    * saw. Every result and every progress event is matched against this id.
    */
   const previewIdRef = useRef<string | null>(null)
+  /**
+   * The request the open preview was built from.
+   *
+   * Confirming runs THIS, not a request rebuilt from whatever the panes say by
+   * then. A dialog that says "delete 12 files" has to start the transfer it
+   * measured, even if something changed a pane underneath it.
+   */
+  const approvedRequestRef = useRef<TransferDraft | null>(null)
   const [job, setJob] = useState<ActiveJob | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [showConnection, setShowConnection] = useState(false)
@@ -216,16 +232,33 @@ export default function Workspace() {
   const allConnections = useMemo(() => [...saved, ...sshConfig], [saved, sshConfig])
   const route = `${endpointLabel(source.endpoint, allConnections)} → ${endpointLabel(destination.endpoint, allConnections)}`
 
-  const request = useMemo(
-    () => ({
-      // The panes show directory contents, so a sync between them means "make
-      // these contents match", not "nest this directory inside that one".
-      source: refFor(source, withTrailingSlash(source.path)),
-      destination: refFor(destination, withTrailingSlash(destination.path)),
-      options: { deleteMode: mirror ? ('delay' as const) : ('off' as const) },
-      deletesConfirmed: false,
-    }),
-    [source, destination, mirror],
+  /**
+   * The transfer for a given direction.
+   *
+   * It takes the direction rather than reading it, because the rail sets the
+   * direction and starts the transfer in the same click. `setDirection` does
+   * not change the value this render already closed over, so a request built
+   * from state ran the PREVIOUS direction: pressing "Sync to Local" while the
+   * other arrow was armed copied local over the server instead, and with
+   * Mirror on it would have deleted the wrong side.
+   */
+  const requestFor = useCallback(
+    (towards: 'ltr' | 'rtl'): TransferDraft => {
+      const from = towards === 'ltr' ? left : right
+      const to = towards === 'ltr' ? right : left
+      return {
+        // The panes show directory contents, so a sync between them means "make
+        // these contents match", not "nest this directory inside that one".
+        source: refFor(from, withTrailingSlash(from.path)),
+        destination: refFor(to, withTrailingSlash(to.path)),
+        options: { deleteMode: mirror ? ('delay' as const) : ('off' as const) },
+        deletesConfirmed: false,
+        // What the user ticked in the pane the files come FROM. Empty means the
+        // whole directory.
+        selection: [...from.selected],
+      }
+    },
+    [left, right, mirror],
   )
 
   /**
@@ -243,7 +276,9 @@ export default function Workspace() {
     if (previewId) void api()?.transfers.cancelPreview(previewId)
   }, [])
 
-  const runPreview = useCallback(async () => {
+  const runPreview = useCallback(async (towards: 'ltr' | 'rtl') => {
+    const request = requestFor(towards)
+    approvedRequestRef.current = request
     const previewId = crypto.randomUUID()
     // Supersedes any scan already running, so pressing Preview twice does not
     // leave two rsync processes walking the same trees.
@@ -268,10 +303,12 @@ export default function Workspace() {
       setPreviewOpen(false)
       setError(caught instanceof Error ? caught.message : String(caught))
     }
-  }, [request])
+  }, [requestFor])
 
   const start = useCallback(
     async (deletesConfirmed: boolean) => {
+      const request = approvedRequestRef.current
+      if (!request) return
       setError(null)
       previewIdRef.current = null
       setPreviewOpen(false)
@@ -294,7 +331,7 @@ export default function Workspace() {
         setError(caught instanceof Error ? caught.message : String(caught))
       }
     },
-    [request],
+    [],
   )
 
   /**
@@ -337,6 +374,10 @@ export default function Workspace() {
   const saveProfile = useCallback(
     async (name: string) => {
       setError(null)
+      // A profile stores the pair and its options. Not the selection: a saved
+      // pair is meant to be re-runnable later, and a list of entry names that
+      // were ticked once is not a thing that stays true.
+      const request = requestFor(direction)
       try {
         await unwrap(
           api()?.profiles.save({
@@ -354,7 +395,7 @@ export default function Workspace() {
         setError(caught instanceof Error ? caught.message : String(caught))
       }
     },
-    [request, direction],
+    [requestFor, direction],
   )
 
   const removeProfile = useCallback(async (id: string) => {
@@ -367,12 +408,26 @@ export default function Workspace() {
     }
   }, [])
 
-  const run = useCallback(async () => {
-    // Mirror always previews. A plain sync does not: its dry run costs a full
-    // scan and buys no safety, because nothing is deleted either way.
-    if (mirror) await runPreview()
-    else await start(false)
-  }, [mirror, runPreview, start])
+  /**
+   * Every manual transfer is previewed and approved. Mirror is not special.
+   *
+   * This used to start a plain sync immediately, on the reasoning that a dry
+   * run "buys no safety, because nothing is deleted either way". Deleting is
+   * not the only way to regret a transfer: the run that prompted this change
+   * was two selected folders that turned into forty thousand files, and by the
+   * time anything is on screen it is already copying. Now the same dialog that
+   * guards a mirror shows what a sync would do, and nothing starts until it is
+   * approved.
+   *
+   * The direction is passed in rather than read: the rail sets it and runs in
+   * one click, and the state has not updated yet.
+   */
+  const run = useCallback(
+    async (towards: 'ltr' | 'rtl') => {
+      await runPreview(towards)
+    },
+    [runPreview],
+  )
 
   if (outsideShell) {
     return (
@@ -567,8 +622,8 @@ export default function Workspace() {
             rightLabel={railLabel(right.endpoint, allConnections)}
             onDirection={setDirection}
             onToggleMirror={() => setMirror((value) => !value)}
-            onPreview={runPreview}
-            onRun={run}
+            onPreview={() => void runPreview(direction)}
+            onRun={(towards) => void run(towards)}
           />
 
           <Pane
@@ -633,13 +688,13 @@ export default function Workspace() {
 
       <ConnectionDialog open={showConnection} onClose={() => setShowConnection(false)} onSaved={() => void refreshConnections()} />
 
-      <MirrorPreviewDialog
+      <TransferPreviewDialog
         preview={preview}
         progress={previewProgress}
         open={previewOpen}
         route={route}
-        trust={trust}
-        onTrustChange={setTrust}
+        mirror={mirror}
+        selectionCount={approvedRequestRef.current?.selection.length ?? 0}
         onCancel={closePreview}
         onStopScan={closePreview}
         onConfirm={() => void start(true)}

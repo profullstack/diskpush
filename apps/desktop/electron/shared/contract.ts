@@ -75,6 +75,23 @@ export const PathSchema = z.string().min(1).max(4096)
 
 export const ConnectionIdSchema = z.string().min(1).max(128)
 
+/**
+ * A single entry name inside a directory — never a path.
+ *
+ * Every mutating operation takes a directory plus one of these and joins them
+ * in the main process, so the renderer cannot walk out of the folder it is
+ * showing. `..`, a separator or a NUL would each be a way to do exactly that.
+ */
+export const EntryNameSchema = z
+  .string()
+  .min(1)
+  .max(255)
+  .refine((name) => !name.includes('/') && !name.includes('\\') && !name.includes('\0'), {
+    message: 'A name cannot contain a path separator.',
+  })
+  .refine((name) => name !== '.' && name !== '..', { message: 'That name is reserved.' })
+  .refine((name) => name.trim() === name, { message: 'A name cannot begin or end with a space.' })
+
 export const EndpointRefSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('local'), path: PathSchema }),
   z.object({ type: z.literal('ssh'), connectionId: ConnectionIdSchema, path: PathSchema }),
@@ -134,6 +151,17 @@ export const TransferRequestSchema = z.object({
   options: TransferOptionsSchema,
   /** Only meaningful for a delete-enabled job, and only after a preview. */
   deletesConfirmed: z.boolean().default(false),
+  /**
+   * The entries the user picked in the source pane. Empty means the whole
+   * directory, which is what every transfer used to be.
+   *
+   * Names, never paths, and validated as such: the main process turns them
+   * into an rsync `--files-from` list rooted at the source directory, so a
+   * renderer that could put `../` or an absolute path in here would be
+   * choosing which files leave the machine. That is why this reuses
+   * EntryNameSchema rather than PathSchema.
+   */
+  selection: z.array(EntryNameSchema).max(10000).default([]),
 })
 export type TransferRequest = z.infer<typeof TransferRequestSchema>
 
@@ -180,23 +208,6 @@ export const RenameRequestSchema = z.object({
   from: PathSchema,
   to: PathSchema,
 })
-
-/**
- * A single entry name inside a directory — never a path.
- *
- * Every mutating operation takes a directory plus one of these and joins them
- * in the main process, so the renderer cannot walk out of the folder it is
- * showing. `..`, a separator or a NUL would each be a way to do exactly that.
- */
-export const EntryNameSchema = z
-  .string()
-  .min(1)
-  .max(255)
-  .refine((name) => !name.includes('/') && !name.includes('\\') && !name.includes('\0'), {
-    message: 'A name cannot contain a path separator.',
-  })
-  .refine((name) => name !== '.' && name !== '..', { message: 'That name is reserved.' })
-  .refine((name) => name.trim() === name, { message: 'A name cannot begin or end with a space.' })
 
 /** Create a directory or an empty file: `name` inside `directory`. */
 export const CreateEntryRequestSchema = z.object({

@@ -52,6 +52,15 @@ export const RsyncOptionsSchema = z.object({
   excludeFrom: z.string().min(1).nullable().default(null),
   includeFrom: z.string().min(1).nullable().default(null),
   filesFrom: z.string().min(1).nullable().default(null),
+  /**
+   * Read `filesFrom` as NUL-separated rather than one path per line.
+   *
+   * A newline is a legal character in a filename on every platform DiskPush
+   * runs on, so a line-separated list silently turns one such name into two
+   * paths that do not exist. Anything generating the list from real directory
+   * entries should set this.
+   */
+  from0: z.boolean().default(false),
   maxSize: z.string().min(1).nullable().default(null),
   minSize: z.string().min(1).nullable().default(null),
   pruneEmptyDirs: z.boolean().default(false),

@@ -98,6 +98,21 @@ export function buildRsyncArgs(input: BuildArgsInput): BuildArgsResult {
   if (options.archive) args.push('--archive')
   else args.push('--recursive')
 
+  /*
+   * `--files-from` turns rsync's recursion OFF, and `--archive` does not turn
+   * it back on. Without an explicit `--recursive` a selected directory copies
+   * as an empty directory and none of its contents, which looks like a
+   * successful transfer and is the worst possible failure for a sync tool.
+   *
+   *     rsync -a --files-from=list src/ dst/    ->  cd+++++++++ movieA/
+   *     rsync -a -r --files-from=list src/ dst/ ->  cd+++++++++ movieA/
+   *                                                 >f+++++++++ movieA/a.mkv
+   *
+   * Harmless when `--archive` already asked for recursion without a file list:
+   * rsync takes the last-wins flag and both say the same thing.
+   */
+  if (options.filesFrom && options.archive) args.push('--recursive')
+
   if (options.hardLinks) args.push('--hard-links')
   if (options.acls) {
     if (capabilities.acls || !capabilities.version) args.push('--acls')
@@ -140,7 +155,13 @@ export function buildRsyncArgs(input: BuildArgsInput): BuildArgsResult {
   if (options.includeFrom) args.push(`--include-from=${options.includeFrom}`)
   for (const exclude of options.excludes) args.push(`--exclude=${exclude}`)
   if (options.excludeFrom) args.push(`--exclude-from=${options.excludeFrom}`)
-  if (options.filesFrom) args.push(`--files-from=${options.filesFrom}`)
+  if (options.filesFrom) {
+    // Order between these two does not matter (rsync parses the whole argv
+    // before it opens the list); they are kept together so the separator and
+    // the file it applies to are read as one thing.
+    if (options.from0) args.push('--from0')
+    args.push(`--files-from=${options.filesFrom}`)
+  }
   if (options.pruneEmptyDirs) args.push('--prune-empty-dirs')
   if (options.relative) args.push('--relative')
   if (options.maxSize) args.push(`--max-size=${options.maxSize}`)

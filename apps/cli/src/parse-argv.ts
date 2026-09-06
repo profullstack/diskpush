@@ -33,6 +33,8 @@ export const VALUE_FLAGS = new Set([
   '--exclude-from',
   '--include-from',
   '--files-from',
+  // Repeatable: one entry name inside the source directory, per occurrence.
+  '--only',
   '--bwlimit',
   '--max-size',
   '--min-size',

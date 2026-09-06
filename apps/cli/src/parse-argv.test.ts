@@ -116,3 +116,28 @@ describe('commands', () => {
     expect(parsed.positionals).toEqual(['sync', './b/'])
   })
 })
+
+describe('--only', () => {
+  /*
+   * The bug: `--only` was not in VALUE_FLAGS, so it consumed nothing. Each
+   * name fell through to the positionals, `flagValues` came back empty, and
+   * `diskpush sync SRC DST --only movieA --only movieB` synced the whole
+   * directory anyway. Which is the exact bug --only exists to fix.
+   */
+  it('takes a value, and repeats', () => {
+    const parsed = parseArgv(['sync', 'dev:/srv/', './out/', '--only', 'movieA', '--only', 'movieB'])
+    expect(flagValues(parsed, '--only')).toEqual(['movieA', 'movieB'])
+    // The names are flag values, not endpoints.
+    expect(parsed.positionals).toEqual(['dev:/srv/', './out/'])
+  })
+
+  it('keeps a name with spaces in one piece', () => {
+    const parsed = parseArgv(['sync', 'dev:/srv/', './out/', '--only', 'The Movie (2019)'])
+    expect(flagValues(parsed, '--only')).toEqual(['The Movie (2019)'])
+  })
+
+  it('accepts the --only=NAME form too', () => {
+    const parsed = parseArgv(['sync', 'dev:/srv/', './out/', '--only=movieA'])
+    expect(flagValues(parsed, '--only')).toEqual(['movieA'])
+  })
+})

@@ -1,5 +1,5 @@
-import { readdirSync, statSync } from 'node:fs'
-import { homedir } from 'node:os'
+import { mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
 import { join, posix } from 'node:path'
 import { knownHostsPath } from '@diskpush/database'
 import { SftpBrowser, SshSession } from '@diskpush/ssh-core'
@@ -31,10 +31,19 @@ export type Pane = {
   index: number
   offset: number
   error: string | null
+  /**
+   * Entries marked with space. Empty means the whole directory, which is what
+   * every transfer here used to be: the pane had a cursor and no way to say
+   * "these two", so `s` always sent everything you were looking at.
+   *
+   * Names, not paths, and cleared whenever the pane moves, because a mark
+   * refers to a row in the directory currently on screen.
+   */
+  marked: Set<string>
 }
 
 const HELP =
-  'tab switch   arrows/jk move   enter open   left up   c change endpoint   s sync to other   p preview   r refresh   q quit'
+  'tab switch   arrows/jk move   space mark   enter open   left up   c endpoint   s sync   p preview   r refresh   q quit'
 
 /** Somewhere a pane can point at: this machine, or a server. */
 export type EndpointChoice = {
@@ -82,7 +91,7 @@ export function buildEndpointChoices(
 }
 
 export function blankPane(label: string, path: string, connection: Connection | null = null): Pane {
-  return { label, connection, path, entries: [], index: 0, offset: 0, error: null }
+  return { label, connection, path, entries: [], index: 0, offset: 0, error: null, marked: new Set() }
 }
 
 export class Tui {
@@ -99,6 +108,8 @@ export class Tui {
    * resolver is held until a key answers it.
    */
   private hostKey: { host: string; fingerprint: string; keyType: string; decide: (trust: boolean) => void } | null = null
+  /** The pending "transfer N files?" question, while it is on screen. */
+  private confirm: { headline: string; detail: string; decide: (approved: boolean) => void } | null = null
 
   constructor(
     left: Pane,
@@ -157,6 +168,9 @@ export class Tui {
       pane.entries = pane.connection ? await this.listRemote(pane) : listLocal(pane.path)
       pane.index = 0
       pane.offset = 0
+      // A mark names a row in the directory that was on screen. Carrying it
+      // into a new listing would transfer whatever happened to share the name.
+      pane.marked.clear()
     } catch (error) {
       pane.entries = []
       pane.error = error instanceof Error ? error.message : String(error)
@@ -210,10 +224,14 @@ export class Tui {
         const entry = pane.entries[pane.offset + row]
         if (!entry) return ''
         const selected = pane.offset + row === pane.index && side === this.active
+        const marked = pane.marked.has(entry.name)
         const name = entry.isDirectory ? `${entry.name}/` : entry.name
+        // The mark sits in its own column so a name never shifts when it is
+        // toggled, and it survives the reverse-video cursor.
         const size = entry.isDirectory ? '' : formatSize(entry.size)
-        const body = `${pad(truncate(name, paneWidth - 8), paneWidth - 8)} ${size.padStart(6)}`
-        return selected ? `${ansi.reverse}${body}${ansi.reset}` : body
+        const body = `${marked ? '*' : ' '}${pad(truncate(name, paneWidth - 9), paneWidth - 9)} ${size.padStart(6)}`
+        if (selected) return `${ansi.reverse}${body}${ansi.reset}`
+        return marked ? `${ansi.yellow}${body}${ansi.reset}` : body
       })
       out.push(` ${pad(cells[0] ?? '', paneWidth)} ${pad(cells[1] ?? '', paneWidth)}`)
     }
@@ -224,6 +242,7 @@ export class Tui {
     let frame = out.join('\n')
     if (this.picker) frame += this.renderPicker(columns, rows)
     if (this.hostKey) frame += this.renderHostKey(columns, rows)
+    if (this.confirm) frame += this.renderConfirm(columns, rows)
     process.stdout.write(frame)
   }
 
@@ -254,6 +273,16 @@ export class Tui {
       if (isChar(key, 'q')) return false
       if (isChar(key, 'y') || isChar(key, 'Y')) this.hostKey.decide(true)
       else if (key === 'escape' || isChar(key, 'n') || isChar(key, 'N') || key === 'enter') this.hostKey.decide(false)
+      return true
+    }
+
+    if (this.confirm) {
+      // Anything that is not an explicit yes cancels. A transfer is not the
+      // sort of thing to start because a key was mashed, and `q` here means
+      // "not this" rather than "quit", the same as it does in the picker.
+      const decide = this.confirm.decide
+      this.confirm = null
+      decide(isChar(key, 'y') || isChar(key, 'Y'))
       return true
     }
 
@@ -295,6 +324,8 @@ export class Tui {
       await this.goUp()
     } else if (key === 'right' || key === 'enter' || isChar(key, 'l')) {
       await this.enter()
+    } else if (isChar(key, ' ')) {
+      this.toggleMark()
     } else if (isChar(key, 'c')) {
       this.openPicker()
     } else if (isChar(key, 'r')) {
@@ -305,6 +336,21 @@ export class Tui {
       await this.transfer(false)
     }
     return true
+  }
+
+  /**
+   * Marks or unmarks the row under the cursor, then steps down.
+   *
+   * Stepping down is what every file manager does and what makes marking a
+   * run of files one key repeated rather than an alternation of two.
+   */
+  private toggleMark(): void {
+    const pane = this.current
+    const entry = pane.entries[pane.index]
+    if (!entry) return
+    if (pane.marked.has(entry.name)) pane.marked.delete(entry.name)
+    else pane.marked.add(entry.name)
+    this.move(1)
   }
 
   private move(delta: number): void {
@@ -395,6 +441,30 @@ export class Tui {
   }
 
   /** The host-key question, drawn over everything. */
+  private renderConfirm(columns: number, rows: number): string {
+    const ask = this.confirm!
+    const width = Math.max(40, Math.min(72, columns - 6))
+    const left = Math.max(1, Math.floor((columns - width) / 2))
+    const top = Math.max(1, Math.floor(rows / 2) - 2)
+    const inner = width - 2
+    const out: string[] = []
+    const line = (row: number, body: string) => out.push(`${ansi.moveTo(row, left)}${body}`)
+
+    line(top, `${ansi.blue}+${'-'.repeat(inner)}+${ansi.reset}`)
+    line(
+      top + 1,
+      `${ansi.blue}|${ansi.reset}${ansi.bold}${pad(` ${truncate(ask.headline, inner - 2)}`, inner)}${ansi.reset}${ansi.blue}|${ansi.reset}`,
+    )
+    line(
+      top + 2,
+      `${ansi.blue}|${ansi.reset}${ansi.dim}${pad(` ${truncate(ask.detail, inner - 2)}`, inner)}${ansi.reset}${ansi.blue}|${ansi.reset}`,
+    )
+    line(top + 3, `${ansi.blue}|${ansi.reset}${pad('', inner)}${ansi.blue}|${ansi.reset}`)
+    line(top + 4, `${ansi.blue}|${ansi.reset}${pad(' y  transfer                  n  cancel', inner)}${ansi.blue}|${ansi.reset}`)
+    line(top + 5, `${ansi.blue}+${'-'.repeat(inner)}+${ansi.reset}`)
+    return out.join('')
+  }
+
   private renderHostKey(columns: number, rows: number): string {
     const key = this.hostKey!
     const width = Math.max(40, Math.min(72, columns - 6))
@@ -432,28 +502,85 @@ export class Tui {
     await this.load(this.active)
   }
 
+  /**
+   * The marked entries as a file rsync can read, or null for the whole folder.
+   *
+   * NUL-separated, because a newline is legal in a filename and a
+   * line-separated list would split one such name into two paths that do not
+   * exist.
+   */
+  private markList(pane: Pane): { path: string; cleanup: () => void } | null {
+    if (pane.marked.size === 0) return null
+    const directory = mkdtempSync(join(tmpdir(), 'diskpush-marks-'))
+    const path = join(directory, 'files-from')
+    writeFileSync(path, `${[...pane.marked].join('\0')}\0`)
+    return { path, cleanup: () => rmSync(directory, { recursive: true, force: true }) }
+  }
+
+  /**
+   * Previews, then transfers what was previewed.
+   *
+   * `s` used to start an immediate transfer of the entire directory. There was
+   * no way to say "these two" and no moment at which anything could be
+   * refused: by the time a number was on screen the files were already moving.
+   * Now the dry run always runs first, and a real transfer waits on a yes.
+   */
   private async transfer(previewOnly: boolean): Promise<void> {
     const source = this.current
     const destination = this.other
+    const scope = source.marked.size > 0 ? `${source.marked.size} marked` : 'whole folder'
     this.busy = true
-    this.status = `${ansi.yellow}${previewOnly ? 'Previewing' : 'Syncing'} ${source.path} -> ${destination.path}${ansi.reset}`
+    this.status = `${ansi.yellow}Scanning ${source.path} -> ${destination.path} (${scope})${ansi.reset}`
     this.render()
 
+    const list = this.markList(source)
     try {
       const remote = source.connection ?? destination.connection
-      const plan = planTransfer({
+      const optionsFor = (dryRun: boolean) =>
+        defaultRsyncOptions({
+          dryRun,
+          stats: true,
+          ...(list ? { filesFrom: list.path, from0: true } : {}),
+        })
+      const shell = remote ? { remoteShell: { keyPath: remote.keyPath, port: remote.port } } : {}
+      const endpoints = {
         source: parseEndpoint(endpointString(source)),
         destination: parseEndpoint(endpointString(destination)),
-        options: defaultRsyncOptions({ dryRun: previewOnly, stats: true }),
-        ...(remote ? { remoteShell: { keyPath: remote.keyPath, port: remote.port } } : {}),
-      })
-      const result = await runToCompletion(plan)
+      }
+
+      const dry = await runToCompletion(planTransfer({ ...endpoints, options: optionsFor(true), ...shell }))
+      const preview = summarizeChanges(dry.changes)
+      const moving = preview.add + preview.update
+
+      if (!dry.ok) {
+        this.status = `${ansi.red}${truncate(dry.message, 200)}${ansi.reset}`
+        return
+      }
+      if (previewOnly) {
+        this.status = `${ansi.green}Preview (${scope}): ${preview.add} to add, ${preview.update} to update, ${preview.unchanged} unchanged${ansi.reset}`
+        return
+      }
+      if (moving === 0) {
+        this.status = `${ansi.green}Nothing to transfer (${scope}). The destination already matches.${ansi.reset}`
+        return
+      }
+
+      const approved = await this.ask(
+        `Transfer ${moving} file${moving === 1 ? '' : 's'} (${scope})?`,
+        `into ${destination.path}`,
+      )
+      if (!approved) {
+        this.status = `${ansi.yellow}Cancelled. Nothing was transferred.${ansi.reset}`
+        return
+      }
+
+      this.status = `${ansi.yellow}Syncing ${source.path} -> ${destination.path}${ansi.reset}`
+      this.render()
+      const result = await runToCompletion(planTransfer({ ...endpoints, options: optionsFor(false), ...shell }))
       const summary = summarizeChanges(result.changes)
 
       if (!result.ok) {
         this.status = `${ansi.red}${truncate(result.message, 200)}${ansi.reset}`
-      } else if (previewOnly) {
-        this.status = `${ansi.green}Preview: ${summary.add} to add, ${summary.update} to update, ${summary.unchanged} unchanged${ansi.reset}`
       } else {
         this.status = `${ansi.green}Synced ${summary.add + summary.update} files${ansi.reset}`
         await this.load(this.active === 'left' ? 'right' : 'left')
@@ -461,8 +588,24 @@ export class Tui {
     } catch (error) {
       this.status = `${ansi.red}${truncate(error instanceof Error ? error.message : String(error), 200)}${ansi.reset}`
     } finally {
+      list?.cleanup()
       this.busy = false
     }
+  }
+
+  /**
+   * A yes/no question over the panes. Resolves false on anything but y.
+   *
+   * Two lines, because `truncate` keeps the END of a string (the right choice
+   * for a path, the wrong one for a sentence). One combined line lost its own
+   * verb: "Transfer 4 files to /very/long/path?" rendered as "…r 4 files to
+   * /very/long/path?", which is a question about nothing.
+   */
+  private ask(headline: string, detail: string): Promise<boolean> {
+    return new Promise((resolve) => {
+      this.confirm = { headline, detail, decide: resolve }
+      this.render()
+    })
   }
 
   close(): void {
