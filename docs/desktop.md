@@ -24,6 +24,21 @@
 Either pane can be the local machine or any saved server, which is what makes
 `Server A → Server B` an ordinary case rather than a special mode.
 
+## Sorting
+
+Click **Name**, **Size** or **Modified** to sort a listing; click the same
+column again to reverse it. Size and Modified open on their largest and newest,
+because that is what you clicked them to find.
+
+Each pane sorts on its own, a server pane exactly like a local one. The rows
+are already in the app, so this is instant and re-reads nothing: no second
+listing, no SSH round trip, no rsync.
+
+Two rules hold in every direction. Directories stay above files, so reversing
+Size does not scatter folders through the list. And sorting by size leaves the
+folders on name — a directory reports its own inode size rather than the size
+of its contents, which is why the column shows an em dash for them.
+
 ## Defaults
 
 Dragging between panes uses the safe preset. No dialog appears first. The
