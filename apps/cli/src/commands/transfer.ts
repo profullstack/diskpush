@@ -1,4 +1,7 @@
 import { randomUUID } from 'node:crypto'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { createInterface } from 'node:readline/promises'
 import type { DiskPushStore } from '@diskpush/database'
 import { capabilityCacheKey } from '../resolve.js'
@@ -15,7 +18,7 @@ import { summarizeChanges, topologyOf } from '@diskpush/schemas'
 import { EXIT } from '../exit-codes.js'
 import { estimateRemaining, formatBytes, formatDuration, formatRate, pluralize, table } from '../format.js'
 import { failure, type Output } from '../output.js'
-import { flagValue, hasFlag, type ParsedArgv } from '../parse-argv.js'
+import { flagValue, flagValues, hasFlag, type ParsedArgv } from '../parse-argv.js'
 import { detectLocalCapabilities, optionsFromFlags, resolveEndpoint } from '../resolve.js'
 import type { RsyncCapabilities } from '@diskpush/rsync-core'
 
@@ -61,6 +64,39 @@ export async function runTransfer(
 
   if (alias.deleteMode !== 'off') options.deleteMode = alias.deleteMode
 
+  /*
+   * `--only NAME` narrows the transfer to entries inside the source directory,
+   * the CLI's version of ticking rows in the desktop's pane. It becomes an
+   * rsync `--files-from` list, which is why the names are checked here: a
+   * separator or a `..` would silently widen the transfer to somewhere the
+   * user did not name.
+   */
+  const only = flagValues(parsed, '--only')
+  let selectionCleanup: (() => void) | null = null
+  if (only.length > 0) {
+    const bad = only.find(
+      (name) => name.includes('/') || name.includes('\\') || name.includes('\0') || name === '.' || name === '..',
+    )
+    if (bad !== undefined) {
+      return failure(
+        output,
+        `--only takes a name inside the source directory, not a path: ${JSON.stringify(bad)}.`,
+        EXIT.usage,
+      )
+    }
+    const directory = mkdtempSync(join(tmpdir(), 'diskpush-only-'))
+    const listPath = join(directory, 'files-from')
+    // NUL-separated: a newline is legal in a filename, and a line-separated
+    // list would split one such name into two paths that do not exist.
+    writeFileSync(listPath, `${only.join('\0')}\0`)
+    options = { ...options, filesFrom: listPath, from0: true }
+    selectionCleanup = () => rmSync(directory, { recursive: true, force: true })
+    // Registered rather than called at each of this function's many returns:
+    // rsync has read the list long before the process ends, and one handler
+    // cannot be forgotten the way eight call sites can.
+    process.once('exit', selectionCleanup)
+  }
+
   const source = await resolveEndpoint(store, sourceInput)
   const destination = await resolveEndpoint(store, destinationInput)
   const topology = topologyOf(source.endpoint, destination.endpoint)
@@ -100,9 +136,20 @@ export async function runTransfer(
   }
 
   // --- preview ------------------------------------------------------------
-  // Mirror always previews before it can run. A plain sync previews only when
-  // asked, because its dry run costs a full scan for no safety benefit.
-  const wantsPreview = options.deleteMode !== 'off' || options.dryRun
+  /*
+   * Everything previews, not only a mirror.
+   *
+   * This used to skip the dry run for a plain sync, on the reasoning that it
+   * "costs a full scan for no safety benefit". Deleting is not the only way to
+   * regret a transfer: two named folders can turn into forty thousand files,
+   * and by the time anything is on screen it is already copying. A scan is
+   * cheap next to that.
+   *
+   * `--yes` still skips the question, which is what a script passes; the scan
+   * itself is skipped only by `--no-preview`, for someone who genuinely wants
+   * the old behaviour.
+   */
+  const wantsPreview = !hasFlag(parsed, '--no-preview')
   let preview: Awaited<ReturnType<typeof runPreview>> | null = null
 
   if (wantsPreview) {
@@ -144,6 +191,28 @@ export async function runTransfer(
     } else {
       deletesConfirmed = await confirm(`Delete ${pluralize(deleteCount, 'file')} at the destination?`)
       if (!deletesConfirmed) return failure(output, 'Mirror cancelled. Nothing was deleted.', EXIT.refused)
+    }
+  }
+
+  /*
+   * A plain sync is approved too, but only where there is somebody to ask.
+   *
+   * A script that pipes us, passes --non-interactive, or passes --yes has
+   * already decided, and turning those into a refusal would break every
+   * scheduled profile run. The prompt is for the interactive case, which is
+   * the one where a surprise is possible.
+   */
+  if (options.deleteMode === 'off' && preview) {
+    const moving = preview.changes.filter((c) => c.action === 'add' || c.action === 'update').length
+    const asking = !hasFlag(parsed, '--yes') && !hasFlag(parsed, '--non-interactive') && process.stdin.isTTY
+
+    if (moving === 0) {
+      return finish(output, EXIT.ok, 'Nothing to transfer. The destination already matches.', {
+        changes: summarizeChanges(preview.changes),
+      })
+    }
+    if (asking && !(await confirm(`${alias.label} ${pluralize(moving, 'file')}?`))) {
+      return failure(output, `${alias.label} cancelled. Nothing was transferred.`, EXIT.refused)
     }
   }
 

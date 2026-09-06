@@ -5,7 +5,6 @@ import { ArrowRight, ChevronRight, CircleCheck, Trash2, TriangleAlert } from 'lu
 import type { PreviewProgress, PreviewResult } from '@/lib/api'
 import { formatBytes, formatDuration, formatRate } from '@/lib/format'
 import { Button } from '@/components/ui/button'
-import { Checkbox } from '@/components/ui/checkbox'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Progress } from '@/components/ui/progress'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -116,13 +115,13 @@ function ScanProgress({ progress, onCancel }: { progress: PreviewProgress; onCan
  * hundreds of thousands and a DOM node each is what froze the window. The
  * count on the confirm button is always the true one.
  */
-export function MirrorPreviewDialog({
+export function TransferPreviewDialog({
   preview,
   progress,
   open,
   route,
-  trust,
-  onTrustChange,
+  mirror,
+  selectionCount,
   onCancel,
   onStopScan,
   onConfirm,
@@ -131,8 +130,10 @@ export function MirrorPreviewDialog({
   progress: PreviewProgress | null
   open: boolean
   route: string
-  trust: boolean
-  onTrustChange: (value: boolean) => void
+  /** Deletes are armed. Changes what this dialog is for, not only its wording. */
+  mirror: boolean
+  /** Entries ticked in the source pane. 0 means the whole folder. */
+  selectionCount: number
   onCancel: () => void
   onStopScan: () => void
   onConfirm: () => void
@@ -140,6 +141,9 @@ export function MirrorPreviewDialog({
   const deletes = preview?.deletes ?? []
   const deleteTotal = preview?.deleteTotal ?? 0
   const hidden = Math.max(0, deleteTotal - deletes.length)
+  // Additions and updates: what a plain sync actually moves. Deletions are
+  // counted separately, on the button that arms them.
+  const changeTotal = (preview?.summary.add ?? 0) + (preview?.summary.update ?? 0)
   const summary = preview?.summary
   const cancelRef = useRef<HTMLButtonElement>(null)
 
@@ -162,16 +166,43 @@ export function MirrorPreviewDialog({
         initialFocus={cancelRef}
         className="max-w-2xl grid-rows-[auto_minmax(0,1fr)_auto] gap-0 border-line-strong bg-popover p-0 [--dialog-pad:0px]"
       >
+        {/*
+          The header says which of the two things this is. Every manual
+          transfer comes through here now, not only a mirror, and a plain sync
+          wearing a red warning triangle and the word "Mirror" would be its own
+          kind of wrong.
+        */}
         <DialogHeader className="flex-row items-center gap-3 space-y-0 border-b border-line px-[18px] py-4">
-          <span className="flex size-[30px] shrink-0 items-center justify-center rounded-lg bg-danger-surface text-destructive">
-            <TriangleAlert className="size-[17px]" />
+          <span
+            className={cn(
+              'flex size-[30px] shrink-0 items-center justify-center rounded-lg',
+              mirror ? 'bg-danger-surface text-destructive' : 'bg-primary/15 text-primary',
+            )}
+          >
+            {mirror ? <TriangleAlert className="size-[17px]" /> : <ArrowRight className="size-[17px]" />}
           </span>
           <div className="min-w-0 text-left">
-            <DialogTitle className="text-[14px]">Mirror</DialogTitle>
+            <DialogTitle className="text-[14px]">{mirror ? 'Mirror' : 'Sync'}</DialogTitle>
             <DialogDescription className="selectable mt-0.5 truncate font-[family-name:var(--font-mono)] text-[11.5px]">
               {route}
             </DialogDescription>
           </div>
+          {/*
+            The scope, stated up front. Two ticked folders that turn into forty
+            thousand files is the failure this dialog exists to catch, and the
+            counts below only ever say how many, never how many of what was
+            asked for.
+          */}
+          <span
+            className={cn(
+              'ml-auto shrink-0 rounded-md px-2 py-1 text-[10.5px] font-medium',
+              selectionCount > 0 ? 'bg-primary/12 text-primary' : 'bg-secondary text-muted-foreground',
+            )}
+          >
+            {selectionCount > 0
+              ? `${selectionCount.toLocaleString()} selected item${selectionCount === 1 ? '' : 's'}`
+              : 'Whole folder'}
+          </span>
         </DialogHeader>
 
         {/* One scrolling body, so a preview with a long delete list keeps its
@@ -280,13 +311,16 @@ export function MirrorPreviewDialog({
           to render throughout the scan, so a full-strength Mirror button sat
           under the spinner offering to run a mirror whose delete list did not
           exist yet -- inert, which reads as a control that ignores you.
+
+          There is no "trust this pair from now on" in here any more either. It
+          set a piece of renderer state that nothing read, and it could not have
+          worked if it were wired: saveProfile hard-codes `trustDeletes: false`
+          on purpose, because unattended mirroring is the one way a delete list
+          runs with nobody looking at it. A checkbox offering to skip a
+          confirmation that is deliberately never skipped is worse than none.
         */}
         {preview ? (
-          <DialogFooter className="items-center border-t border-line px-[18px] py-3.5 sm:justify-between">
-            <label className="flex cursor-pointer items-center gap-2 text-[12px] text-muted-foreground">
-              <Checkbox checked={trust} onCheckedChange={(next) => onTrustChange(next === true)} />
-              Trust this pair from now on
-            </label>
+          <DialogFooter className="items-center border-t border-line px-[18px] py-3.5 sm:justify-end">
             <div className="flex gap-2">
               {/*
                 Focus opens on Cancel, not on the confirm and not on the trust
@@ -299,10 +333,16 @@ export function MirrorPreviewDialog({
               </Button>
               <Button
                 onClick={onConfirm}
-                disabled={!preview?.ok}
+                disabled={!preview?.ok || (changeTotal === 0 && deleteTotal === 0)}
                 className={cn('h-[33px] font-semibold', deleteTotal > 0 && 'bg-danger-solid text-white hover:bg-danger-solid-lift')}
               >
-                {deleteTotal > 0 ? `Delete ${deleteTotal.toLocaleString()} and mirror` : 'Mirror'}
+                {deleteTotal > 0
+                  ? `Delete ${deleteTotal.toLocaleString()} and mirror`
+                  : mirror
+                    ? 'Mirror'
+                    : changeTotal > 0
+                      ? `Sync ${changeTotal.toLocaleString()} file${changeTotal === 1 ? '' : 's'}`
+                      : 'Nothing to sync'}
               </Button>
             </div>
           </DialogFooter>

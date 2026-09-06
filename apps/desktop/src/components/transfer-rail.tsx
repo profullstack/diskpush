@@ -133,7 +133,14 @@ export function TransferRail({
   onDirection: (direction: 'ltr' | 'rtl') => void
   onToggleMirror: () => void
   onPreview: () => void
-  onRun: () => void
+  /*
+   * Takes the direction it is starting. The rail sets the direction and starts
+   * the run in the same click, and `setDirection` does not change what this
+   * render already closed over, so a caller reading the direction from state
+   * ran the previous one: the arrow you pressed and the way the files moved
+   * disagreed on the first press.
+   */
+  onRun: (towards: 'ltr' | 'rtl') => void
 }) {
   return (
     // Every control in the rail is now one width and one corner radius. It
@@ -148,7 +155,7 @@ export function TransferRail({
         busy={busy}
         onClick={() => {
           onDirection('ltr')
-          onRun()
+          onRun('ltr')
         }}
       />
       <Direction
@@ -158,7 +165,7 @@ export function TransferRail({
         busy={busy}
         onClick={() => {
           onDirection('rtl')
-          onRun()
+          onRun('rtl')
         }}
       />
 

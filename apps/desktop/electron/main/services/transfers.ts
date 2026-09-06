@@ -1,4 +1,7 @@
 import { randomUUID } from 'node:crypto'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import type { WebContents } from 'electron'
 import {
   intersectCapabilities,
@@ -101,31 +104,85 @@ function optionsFrom(input: TransferOptions): RsyncOptions {
   })
 }
 
-async function buildPlan(request: TransferRequest, overrides: Partial<RsyncOptions> = {}): Promise<ExecutionPlan> {
+/**
+ * A selection, as a file rsync can read.
+ *
+ * NUL-separated (`--from0`) rather than one name per line, because a newline is
+ * a legal character in a filename and a line-separated list would silently
+ * split such a name into two paths that do not exist.
+ *
+ * The names were validated as entry names on the way in, so none of them can
+ * contain a separator or `..`; rsync resolves each one against the source
+ * directory and nothing here can point outside it.
+ *
+ * Returns the file path and the cleanup to run once rsync has exited. rsync
+ * reads the list at startup, but deleting it early is a race nobody needs.
+ */
+async function writeSelectionList(
+  selection: readonly string[],
+): Promise<{ path: string; cleanup: () => Promise<void> }> {
+  const directory = await mkdtemp(join(tmpdir(), 'diskpush-selection-'))
+  const path = join(directory, 'files-from')
+  await writeFile(path, `${selection.join('\0')}\0`, 'utf8')
+  return {
+    // Awaited rather than fire-and-forget, so "the run is over" and "the list
+    // is gone" are the same moment. A detached rm leaves a window where a
+    // caller cannot tell whether cleanup happened or simply had not yet.
+    path,
+    cleanup: () => rm(directory, { recursive: true, force: true }).catch(() => {}),
+  }
+}
+
+type BuiltPlan = { plan: ExecutionPlan; cleanup: () => Promise<void> }
+
+async function buildPlan(request: TransferRequest, overrides: Partial<RsyncOptions> = {}): Promise<BuiltPlan> {
   const source = await resolveEndpoint(request.source)
   const destination = await resolveEndpoint(request.destination)
   const capabilities = await capabilitiesFor([source.connectionId, destination.connectionId])
-  const options = { ...optionsFrom(request.options), ...overrides }
+
+  /*
+   * A selection narrows the transfer to what the user picked. Without this the
+   * request only ever carried the directory, so ticking two folders and
+   * pressing Sync copied the entire tree: the panes let you select, and the
+   * selection reached nothing.
+   */
+  const selection = request.selection ?? []
+  const list = selection.length > 0 ? await writeSelectionList(selection) : null
+  const options = {
+    ...optionsFrom(request.options),
+    ...(list ? { filesFrom: list.path, from0: true } : {}),
+    ...overrides,
+  }
+  const cleanup = async () => {
+    await list?.cleanup()
+  }
 
   const isServerToServer = source.endpoint.type === 'ssh' && destination.endpoint.type === 'ssh'
   const sourceConnection = source.connectionId ? await resolveConnection(source.connectionId) : null
 
-  return planTransfer({
-    source: source.endpoint,
-    destination: destination.endpoint,
-    options,
-    capabilities,
-    deletesConfirmed: request.deletesConfirmed,
-    ...(isServerToServer
-      ? {
-          sourceShell: await shellOptionsFor(source.connectionId),
-          destinationShell: await shellOptionsFor(destination.connectionId),
-          sourceRsyncPath: sourceConnection?.rsyncPath ?? null,
-        }
-      : {
-          remoteShell: await shellOptionsFor(source.connectionId ?? destination.connectionId),
-        }),
-  })
+  try {
+    const plan = planTransfer({
+      source: source.endpoint,
+      destination: destination.endpoint,
+      options,
+      capabilities,
+      deletesConfirmed: request.deletesConfirmed,
+      ...(isServerToServer
+        ? {
+            sourceShell: await shellOptionsFor(source.connectionId),
+            destinationShell: await shellOptionsFor(destination.connectionId),
+            sourceRsyncPath: sourceConnection?.rsyncPath ?? null,
+          }
+        : {
+            remoteShell: await shellOptionsFor(source.connectionId ?? destination.connectionId),
+          }),
+    })
+    return { plan, cleanup }
+  } catch (error) {
+    // A rejected plan still wrote a list file.
+    await cleanup()
+    throw error
+  }
 }
 
 /**
@@ -199,7 +256,7 @@ export async function previewTransfer(
   request: TransferRequest & { previewId: string },
   sender: WebContents,
 ): Promise<PreviewResult> {
-  const plan = await buildPlan(request, { dryRun: true })
+  const { plan, cleanup } = await buildPlan(request, { dryRun: true })
 
   const summary = summarizeChanges([])
   const deletes: string[] = []
@@ -274,6 +331,7 @@ export async function previewTransfer(
     }
   } finally {
     previews.delete(request.previewId)
+    await cleanup()
   }
 
   emit(true)
@@ -307,7 +365,7 @@ export function cancelPreview(previewId: string): boolean {
 export type StartedJob = { jobId: string; command: string; control: string | null; warnings: string[] }
 
 export async function startTransfer(request: TransferRequest, sender: WebContents): Promise<StartedJob> {
-  const plan = await buildPlan(request)
+  const { plan, cleanup } = await buildPlan(request)
   const jobId = randomUUID()
   const db = await store()
 
@@ -369,6 +427,7 @@ export async function startTransfer(request: TransferRequest, sender: WebContent
       }
     }
     running.delete(jobId)
+    await cleanup()
   })()
 
   return { jobId, command: plan.display, control: plan.controlDisplay ?? null, warnings: plan.warnings }
