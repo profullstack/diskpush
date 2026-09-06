@@ -17,6 +17,7 @@ import {
   FleetRunIdSchema,
   IPC,
   JobIdSchema,
+  OpenWithRequestSchema,
   PreviewRequestSchema,
   PathSchema,
   RemotePathRequestSchema,
@@ -43,6 +44,7 @@ import {
 } from './services/fleet.js'
 import { browserFor, dropSession, sessionFor } from './services/sessions.js'
 import { store } from './services/store.js'
+import { handlersFor, openWith } from './services/open-with.js'
 import { cancelPreview, cancelTransfer, previewTransfer, saveProfile, startTransfer } from './services/transfers.js'
 
 /**
@@ -297,6 +299,17 @@ export function registerIpc(): void {
       return true
     }),
   )
+
+  // --- open with -----------------------------------------------------------
+  // Local only. A pane pointed at a server has no path this machine can open,
+  // and the renderer disables the item there rather than sending a remote one.
+
+  handle(IPC.fsHandlers, z.object({ path: PathSchema }), async ({ path }) => handlersFor(resolveLocalPath(path)))
+
+  handle(IPC.fsOpenWith, OpenWithRequestSchema, async ({ path, handlerId }) => {
+    await openWith(resolveLocalPath(path), handlerId)
+    return true
+  })
 
   // --- transfers -----------------------------------------------------------
 
