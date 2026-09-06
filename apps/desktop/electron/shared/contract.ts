@@ -30,6 +30,9 @@ export const IPC = {
   fsCreateFileLocal: 'fs:create-file-local',
   fsHandlers: 'fs:handlers',
   fsOpenWith: 'fs:open-with',
+  fsOpenSeries: 'fs:open-series',
+  fsOpenSeriesAdvance: 'fs:open-series-advance',
+  fsOpenSeriesStop: 'fs:open-series-stop',
 
   transfersPreview: 'transfers:preview',
   transfersPreviewCancel: 'transfers:preview-cancel',
@@ -60,6 +63,8 @@ export const IPC = {
 
   /** Main -> renderer, one channel carrying every job event. */
   eventTransfer: 'event:transfer',
+  /** Main -> renderer, progress through a one-at-a-time open. */
+  eventOpenSeries: 'event:open-series',
   /** Main -> renderer, one channel carrying every fleet event. */
   eventFleet: 'event:fleet',
   /**
@@ -207,15 +212,31 @@ export const ProfileSaveSchema = z.object({
  * main process before anything is launched: a renderer that could pass a path
  * here would be choosing which program runs.
  */
+const HandlerIdSchema = z
+  .string()
+  .min(1)
+  .max(255)
+  .regex(/^[^/\\\0]+\.desktop$/, 'That is not an application id.')
+  .nullable()
+  .default(null)
+
+/**
+ * The files to open, and what to open them with.
+ *
+ * A list rather than a single path: the handler is chosen once for the whole
+ * selection, because being asked which application to use twelve times in a
+ * row is not a feature.
+ */
 export const OpenWithRequestSchema = z.object({
-  path: PathSchema,
-  handlerId: z
-    .string()
-    .min(1)
-    .max(255)
-    .regex(/^[^/\\\0]+\.desktop$/, 'That is not an application id.')
-    .nullable()
-    .default(null),
+  paths: z.array(PathSchema).min(1).max(500),
+  handlerId: HandlerIdSchema,
+})
+
+/** Opening a list one at a time, carrying the id it is advanced and stopped by. */
+export const OpenSeriesRequestSchema = z.object({
+  seriesId: JobIdSchema,
+  paths: z.array(PathSchema).min(1).max(500),
+  handlerId: HandlerIdSchema,
 })
 
 export const RemotePathRequestSchema = z.object({

@@ -31,8 +31,13 @@ const api = {
       call<boolean>(connectionId ? IPC.fsCreateFileRemote : IPC.fsCreateFileLocal, { connectionId, directory, name }),
     rename: (directory: string, from: string, to: string, connectionId?: string) =>
       call<boolean>(connectionId ? IPC.fsRenameRemote : IPC.fsRenameLocal, { connectionId, directory, from, to }),
-    handlers: (path: string) => call(IPC.fsHandlers, { path }),
-    openWith: (path: string, handlerId: string | null = null) => call<boolean>(IPC.fsOpenWith, { path, handlerId }),
+    handlers: (paths: string[]) => call(IPC.fsHandlers, { paths }),
+    openWith: (paths: string[], handlerId: string | null = null) =>
+      call<boolean>(IPC.fsOpenWith, { paths, handlerId }),
+    openSeries: (seriesId: string, paths: string[], handlerId: string | null = null) =>
+      call<boolean>(IPC.fsOpenSeries, { seriesId, paths, handlerId }),
+    advanceSeries: (seriesId: string) => call<boolean>(IPC.fsOpenSeriesAdvance, { seriesId }),
+    stopSeries: (seriesId: string) => call<boolean>(IPC.fsOpenSeriesStop, { seriesId }),
     remove: (directory: string, name: string, isDirectory: boolean, connectionId?: string) =>
       call<boolean>(connectionId ? IPC.fsDeleteRemote : IPC.fsDeleteLocal, {
         connectionId,
@@ -89,6 +94,11 @@ const api = {
       const wrapped = (_event: unknown, payload: { runId: string; event: unknown }) => listener(payload)
       ipcRenderer.on(IPC.eventFleet, wrapped)
       return () => ipcRenderer.off(IPC.eventFleet, wrapped)
+    },
+    onOpenSeries(listener: (payload: { seriesId: string; event: unknown }) => void): () => void {
+      const wrapped = (_event: unknown, payload: { seriesId: string; event: unknown }) => listener(payload)
+      ipcRenderer.on(IPC.eventOpenSeries, wrapped)
+      return () => ipcRenderer.off(IPC.eventOpenSeries, wrapped)
     },
     onPreview(listener: (payload: { previewId: string; progress: unknown }) => void): () => void {
       const wrapped = (_event: unknown, payload: { previewId: string; progress: unknown }) => listener(payload)
