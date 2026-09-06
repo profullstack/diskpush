@@ -423,4 +423,11 @@ export function hasActiveTransfer(): boolean {
 
 export function cancelAll(): void {
   for (const job of running.values()) job.cancel()
+  // Previews too. A dry run is read-only, but it is still an rsync and an ssh
+  // walking a remote tree, and quitting mid-scan used to leave both running
+  // with nothing left to report to.
+  for (const preview of previews.values()) {
+    preview.cancelled = true
+    preview.cancel()
+  }
 }

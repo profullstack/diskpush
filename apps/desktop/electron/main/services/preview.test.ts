@@ -71,7 +71,7 @@ vi.mock('@diskpush/rsync-core', () => ({
   unknownCapabilities: () => ({}),
 }))
 
-const { PREVIEW_DELETE_LIMIT, cancelPreview, previewTransfer } = await import('./transfers.js')
+const { PREVIEW_DELETE_LIMIT, cancelAll, cancelPreview, previewTransfer } = await import('./transfers.js')
 
 const REQUEST = {
   source: { type: 'local' as const, path: '/src/' },
@@ -221,5 +221,23 @@ describe('previewTransfer', () => {
     expect(result.ok).toBe(false)
     // The registration is gone, so a late Cancel cannot kill an unrelated run.
     expect(cancelPreview('p3')).toBe(false)
+  })
+
+  /*
+   * The bug: quitting cancelled transfers but not previews, so closing the
+   * window mid-scan left an rsync and an ssh walking a remote tree with
+   * nothing left to report to.
+   */
+  it('is stopped when the app quits', async () => {
+    runs.current = fakeRun()
+    const target = sender()
+    const pending = previewTransfer({ ...REQUEST, previewId: 'p4' }, target.webContents)
+
+    await until(() => target.sent.length > 0)
+    cancelAll()
+
+    const result = await pending
+    expect(runs.current.killed).toBe(true)
+    expect(result.cancelled).toBe(true)
   })
 })
