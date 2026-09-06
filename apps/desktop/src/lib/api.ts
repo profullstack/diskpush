@@ -47,6 +47,22 @@ export type Connection = {
   tags?: string[]
 }
 
+/** An application that can open a local file. */
+export type FileHandler = {
+  id: string
+  name: string
+  isDefault: boolean
+  /** Runs in a terminal; opening it from the desktop usually does nothing. */
+  terminal: boolean
+}
+
+export type HandlerList = {
+  contentType: string | null
+  handlers: FileHandler[]
+  /** Why the list is short or empty, when that is worth saying. */
+  note: string | null
+}
+
 export type Change = {
   action: 'add' | 'update' | 'metadata' | 'delete' | 'unchanged' | 'error'
   path: string
@@ -255,6 +271,10 @@ type Api = {
     createFile(directory: string, name: string, connectionId?: string): Promise<IpcResult<boolean>>
     rename(directory: string, from: string, to: string, connectionId?: string): Promise<IpcResult<boolean>>
     remove(directory: string, name: string, isDirectory: boolean, connectionId?: string): Promise<IpcResult<boolean>>
+    /** The applications registered for a local file, system default marked. */
+    handlers(path: string): Promise<IpcResult<HandlerList>>
+    /** Opens a local file; a null handler means the system default. */
+    openWith(path: string, handlerId?: string | null): Promise<IpcResult<boolean>>
   }
   transfers: {
     preview(request: unknown): Promise<IpcResult<PreviewResult>>

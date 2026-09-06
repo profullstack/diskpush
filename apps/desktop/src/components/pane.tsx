@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ChevronRight,
   CornerLeftUp,
+  ExternalLink,
   FilePlus2,
   FileText,
   Folder,
@@ -22,6 +23,7 @@ import { isNavigable } from '@/lib/entries'
 import { formatBytes, formatDate, formatMode, joinPath, parentPath } from '@/lib/format'
 import { EndpointSelect, type PaneEndpoint } from '@/components/endpoint-select'
 import { DeleteDialog, NameDialog } from '@/components/entry-dialogs'
+import { OpenWithDialog } from '@/components/open-with-dialog'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
   ContextMenu,
@@ -234,7 +236,14 @@ export function Pane({
   // space, which is what distinguishes "new file here" from "rename this".
   const [target, setTarget] = useState<FileEntry | null>(null)
   const [dialog, setDialog] = useState<'mkdir' | 'create-file' | 'rename' | 'delete' | null>(null)
+  /** The file the Open with dialog is about, or null while it is closed. */
+  const [openWithTarget, setOpenWithTarget] = useState<{ path: string; name: string } | null>(null)
   const [busy, setBusy] = useState(false)
+  /*
+   * "Open with" needs a file this machine can actually open. A pane pointed at
+   * a server names a path on that server, and a directory is not a document.
+   */
+  const canOpenWith = state.endpoint.kind === 'local' && target !== null && target.type !== 'directory'
   const [opError, setOpError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -591,6 +600,24 @@ export function Pane({
           </ContextMenuTrigger>
 
           <ContextMenuContent>
+            {/*
+              Local files only. A pane pointed at a server names a path on that
+              server, and there is nothing on this machine to hand to a local
+              application, so the item is disabled rather than failing after
+              the click. Directories are excluded for the same reason the rest
+              of this menu treats them differently: "open with" is a question
+              about a document.
+            */}
+            <ContextMenuItem
+              disabled={!canOpenWith}
+              onClick={() => {
+                if (target) setOpenWithTarget({ path: target.path, name: target.name })
+              }}
+            >
+              <ExternalLink className="size-[14px] text-faint" />
+              Open with…
+            </ContextMenuItem>
+            <ContextMenuSeparator />
             <ContextMenuItem onClick={() => onNavigate(state.path)}>
               <RefreshCw className="size-[14px] text-faint" />
               Refresh
@@ -648,6 +675,13 @@ export function Pane({
         onSubmit={(name) =>
           target && run(() => unwrap(api()?.fs.rename(state.path, target.name, name, connectionId)))
         }
+      />
+
+      <OpenWithDialog
+        open={openWithTarget !== null}
+        path={openWithTarget?.path ?? null}
+        name={openWithTarget?.name ?? null}
+        onClose={() => setOpenWithTarget(null)}
       />
 
       <DeleteDialog

@@ -28,6 +28,8 @@ export const IPC = {
   fsRenameLocal: 'fs:rename-local',
   fsDeleteLocal: 'fs:delete-local',
   fsCreateFileLocal: 'fs:create-file-local',
+  fsHandlers: 'fs:handlers',
+  fsOpenWith: 'fs:open-with',
 
   transfersPreview: 'transfers:preview',
   transfersPreviewCancel: 'transfers:preview-cancel',
@@ -196,6 +198,24 @@ export const ProfileSaveSchema = z.object({
   options: TransferOptionsSchema,
   /** Which pane the source was on, so loading puts both back where they were. */
   sourcePane: z.enum(['left', 'right']).default('left'),
+})
+
+/**
+ * Opening a local file, optionally with a chosen application.
+ *
+ * `handlerId` is a desktop entry id and is checked as a bare filename in the
+ * main process before anything is launched: a renderer that could pass a path
+ * here would be choosing which program runs.
+ */
+export const OpenWithRequestSchema = z.object({
+  path: PathSchema,
+  handlerId: z
+    .string()
+    .min(1)
+    .max(255)
+    .regex(/^[^/\\\0]+\.desktop$/, 'That is not an application id.')
+    .nullable()
+    .default(null),
 })
 
 export const RemotePathRequestSchema = z.object({

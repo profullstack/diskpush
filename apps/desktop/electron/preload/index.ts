@@ -31,6 +31,8 @@ const api = {
       call<boolean>(connectionId ? IPC.fsCreateFileRemote : IPC.fsCreateFileLocal, { connectionId, directory, name }),
     rename: (directory: string, from: string, to: string, connectionId?: string) =>
       call<boolean>(connectionId ? IPC.fsRenameRemote : IPC.fsRenameLocal, { connectionId, directory, from, to }),
+    handlers: (path: string) => call(IPC.fsHandlers, { path }),
+    openWith: (path: string, handlerId: string | null = null) => call<boolean>(IPC.fsOpenWith, { path, handlerId }),
     remove: (directory: string, name: string, isDirectory: boolean, connectionId?: string) =>
       call<boolean>(connectionId ? IPC.fsDeleteRemote : IPC.fsDeleteLocal, {
         connectionId,
