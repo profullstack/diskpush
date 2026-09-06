@@ -1,6 +1,6 @@
 {
   "name": "@diskpush/desktop",
-  "version": "0.2.16",
+  "version": "0.2.17",
   "private": true,
   "type": "module",
   "main": "dist-electron/main/index.js",
