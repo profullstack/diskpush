@@ -57,11 +57,29 @@ export type FileHandler = {
 }
 
 export type HandlerList = {
+  /** The type the whole selection shares, or null when it is mixed. */
   contentType: string | null
   handlers: FileHandler[]
   /** Why the list is short or empty, when that is worth saying. */
   note: string | null
 }
+
+/** Progress through a one-at-a-time open. */
+export type SeriesEvent =
+  | { type: 'opening'; index: number; total: number; path: string }
+  | {
+      type: 'finished-one'
+      index: number
+      total: number
+      path: string
+      /**
+       * The application handed the file to a copy that was already running, so
+       * we cannot tell when it is finished and will not advance on its own.
+       */
+      handedOff: boolean
+    }
+  | { type: 'done'; opened: number; total: number; stopped: boolean }
+  | { type: 'error'; message: string }
 
 export type Change = {
   action: 'add' | 'update' | 'metadata' | 'delete' | 'unchanged' | 'error'
@@ -271,10 +289,15 @@ type Api = {
     createFile(directory: string, name: string, connectionId?: string): Promise<IpcResult<boolean>>
     rename(directory: string, from: string, to: string, connectionId?: string): Promise<IpcResult<boolean>>
     remove(directory: string, name: string, isDirectory: boolean, connectionId?: string): Promise<IpcResult<boolean>>
-    /** The applications registered for a local file, system default marked. */
-    handlers(path: string): Promise<IpcResult<HandlerList>>
-    /** Opens a local file; a null handler means the system default. */
-    openWith(path: string, handlerId?: string | null): Promise<IpcResult<boolean>>
+    /** The applications registered for a selection, system default marked. */
+    handlers(paths: string[]): Promise<IpcResult<HandlerList>>
+    /** Opens local files at once; a null handler means each file's own default. */
+    openWith(paths: string[], handlerId?: string | null): Promise<IpcResult<boolean>>
+    /** Opens them one after another, reporting over `events.onOpenSeries`. */
+    openSeries(seriesId: string, paths: string[], handlerId?: string | null): Promise<IpcResult<boolean>>
+    /** Opens the next file in a series that is waiting to be advanced. */
+    advanceSeries(seriesId: string): Promise<IpcResult<boolean>>
+    stopSeries(seriesId: string): Promise<IpcResult<boolean>>
   }
   transfers: {
     preview(request: unknown): Promise<IpcResult<PreviewResult>>
@@ -315,6 +338,7 @@ type Api = {
     onTransfer(listener: (payload: { jobId: string; event: TransferEvent }) => void): () => void
     onFleet(listener: (payload: { runId: string; event: FleetEvent }) => void): () => void
     onPreview(listener: (payload: { previewId: string; progress: PreviewProgress }) => void): () => void
+    onOpenSeries(listener: (payload: { seriesId: string; event: SeriesEvent }) => void): () => void
   }
 }
 

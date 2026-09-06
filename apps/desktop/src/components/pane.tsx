@@ -236,14 +236,27 @@ export function Pane({
   // space, which is what distinguishes "new file here" from "rename this".
   const [target, setTarget] = useState<FileEntry | null>(null)
   const [dialog, setDialog] = useState<'mkdir' | 'create-file' | 'rename' | 'delete' | null>(null)
-  /** The file the Open with dialog is about, or null while it is closed. */
-  const [openWithTarget, setOpenWithTarget] = useState<{ path: string; name: string } | null>(null)
+  /** The files the Open with dialog is about, or null while it is closed. */
+  const [openWithTarget, setOpenWithTarget] = useState<{ paths: string[]; label: string } | null>(null)
   const [busy, setBusy] = useState(false)
   /*
-   * "Open with" needs a file this machine can actually open. A pane pointed at
-   * a server names a path on that server, and a directory is not a document.
+   * "Open with" needs files this machine can actually open. A pane pointed at
+   * a server names paths on that server, and a directory is not a document.
+   *
+   * It acts on the SELECTION when the right-clicked row is part of it, and on
+   * that row alone otherwise -- which is how right-click behaves everywhere
+   * else: clicking outside a selection is a new, single target.
    */
-  const canOpenWith = state.endpoint.kind === 'local' && target !== null && target.type !== 'directory'
+  const openWithFiles = useMemo(() => {
+    if (state.endpoint.kind !== 'local' || !target) return []
+    const chosen =
+      state.selected.has(target.name) && state.selected.size > 1
+        ? state.entries.filter((entry) => state.selected.has(entry.name))
+        : [target]
+    return chosen.filter((entry) => entry.type !== 'directory')
+  }, [state.endpoint.kind, state.selected, state.entries, target])
+
+  const canOpenWith = openWithFiles.length > 0
   const [opError, setOpError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -611,11 +624,19 @@ export function Pane({
             <ContextMenuItem
               disabled={!canOpenWith}
               onClick={() => {
-                if (target) setOpenWithTarget({ path: target.path, name: target.name })
+                if (openWithFiles.length === 0) return
+                setOpenWithTarget({
+                  paths: openWithFiles.map((entry) => entry.path),
+                  label:
+                    openWithFiles.length === 1
+                      ? (openWithFiles[0]?.name ?? '')
+                      : `${openWithFiles.length} files`,
+                })
               }}
             >
               <ExternalLink className="size-[14px] text-faint" />
-              Open with…
+              {/* Says how many, so a menu opened over a selection is not a guess. */}
+              {openWithFiles.length > 1 ? `Open ${openWithFiles.length} files with…` : 'Open with…'}
             </ContextMenuItem>
             <ContextMenuSeparator />
             <ContextMenuItem onClick={() => onNavigate(state.path)}>
@@ -679,8 +700,8 @@ export function Pane({
 
       <OpenWithDialog
         open={openWithTarget !== null}
-        path={openWithTarget?.path ?? null}
-        name={openWithTarget?.name ?? null}
+        paths={openWithTarget?.paths ?? []}
+        label={openWithTarget?.label ?? null}
         onClose={() => setOpenWithTarget(null)}
       />
 

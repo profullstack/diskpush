@@ -17,6 +17,7 @@ import {
   FleetRunIdSchema,
   IPC,
   JobIdSchema,
+  OpenSeriesRequestSchema,
   OpenWithRequestSchema,
   PreviewRequestSchema,
   PathSchema,
@@ -44,7 +45,7 @@ import {
 } from './services/fleet.js'
 import { browserFor, dropSession, sessionFor } from './services/sessions.js'
 import { store } from './services/store.js'
-import { handlersFor, openWith } from './services/open-with.js'
+import { advanceSeries, handlersFor, openSeries, openWith, stopSeries } from './services/open-with.js'
 import { cancelPreview, cancelTransfer, previewTransfer, saveProfile, startTransfer } from './services/transfers.js'
 
 /**
@@ -304,12 +305,25 @@ export function registerIpc(): void {
   // Local only. A pane pointed at a server has no path this machine can open,
   // and the renderer disables the item there rather than sending a remote one.
 
-  handle(IPC.fsHandlers, z.object({ path: PathSchema }), async ({ path }) => handlersFor(resolveLocalPath(path)))
+  handle(IPC.fsHandlers, z.object({ paths: z.array(PathSchema).min(1).max(500) }), async ({ paths }) =>
+    handlersFor(paths.map(resolveLocalPath)),
+  )
 
-  handle(IPC.fsOpenWith, OpenWithRequestSchema, async ({ path, handlerId }) => {
-    await openWith(resolveLocalPath(path), handlerId)
+  handle(IPC.fsOpenWith, OpenWithRequestSchema, async ({ paths, handlerId }) => {
+    await openWith(paths.map(resolveLocalPath), handlerId)
     return true
   })
+
+  handle(IPC.fsOpenSeries, OpenSeriesRequestSchema, async ({ seriesId, paths, handlerId }, event) => {
+    // Not awaited: the run outlives the call by design, and reports over
+    // eventOpenSeries as it goes.
+    void openSeries(seriesId, paths.map(resolveLocalPath), handlerId, event.sender)
+    return true
+  })
+
+  handle(IPC.fsOpenSeriesAdvance, z.object({ seriesId: JobIdSchema }), async ({ seriesId }) => advanceSeries(seriesId))
+
+  handle(IPC.fsOpenSeriesStop, z.object({ seriesId: JobIdSchema }), async ({ seriesId }) => stopSeries(seriesId))
 
   // --- transfers -----------------------------------------------------------
 
