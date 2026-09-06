@@ -30,6 +30,7 @@ export const IPC = {
   fsCreateFileLocal: 'fs:create-file-local',
 
   transfersPreview: 'transfers:preview',
+  transfersPreviewCancel: 'transfers:preview-cancel',
   transfersStart: 'transfers:start',
   transfersCancel: 'transfers:cancel',
   transfersList: 'transfers:list',
@@ -59,6 +60,14 @@ export const IPC = {
   eventTransfer: 'event:transfer',
   /** Main -> renderer, one channel carrying every fleet event. */
   eventFleet: 'event:fleet',
+  /**
+   * Main -> renderer, live progress for a dry run that has not finished yet.
+   *
+   * A preview is a full scan of both sides and there is no upper bound on how
+   * long that takes. Without this the dialog could only sit on a spinner, so
+   * an eight-minute scan and a wedged one looked exactly alike.
+   */
+  eventPreview: 'event:preview',
 } as const
 
 /** A path the renderer asked for. Length-capped, and never joined by the renderer. */
@@ -129,6 +138,18 @@ export const TransferRequestSchema = z.object({
 export type TransferRequest = z.infer<typeof TransferRequestSchema>
 
 export const JobIdSchema = z.string().uuid()
+
+/**
+ * A preview, carrying the id the renderer will cancel it by.
+ *
+ * The id is chosen by the renderer rather than returned by the call, because
+ * the call does not return until the scan is over -- which is exactly the
+ * window in which it has to be cancellable.
+ */
+export const PreviewRequestSchema = TransferRequestSchema.extend({
+  previewId: JobIdSchema,
+})
+export type PreviewRequest = z.infer<typeof PreviewRequestSchema>
 
 /**
  * Saving the current pane pair and options as a named profile.

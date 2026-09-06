@@ -17,6 +17,7 @@ import {
   FleetRunIdSchema,
   IPC,
   JobIdSchema,
+  PreviewRequestSchema,
   PathSchema,
   RemotePathRequestSchema,
   ProfileSaveSchema,
@@ -42,7 +43,7 @@ import {
 } from './services/fleet.js'
 import { browserFor, dropSession, sessionFor } from './services/sessions.js'
 import { store } from './services/store.js'
-import { cancelTransfer, previewTransfer, saveProfile, startTransfer } from './services/transfers.js'
+import { cancelPreview, cancelTransfer, previewTransfer, saveProfile, startTransfer } from './services/transfers.js'
 
 /**
  * Every handler validates its input with Zod before doing anything, and every
@@ -299,7 +300,11 @@ export function registerIpc(): void {
 
   // --- transfers -----------------------------------------------------------
 
-  handle(IPC.transfersPreview, TransferRequestSchema, async (request) => previewTransfer(request))
+  handle(IPC.transfersPreview, PreviewRequestSchema, async (request, event) => previewTransfer(request, event.sender))
+
+  handle(IPC.transfersPreviewCancel, z.object({ previewId: JobIdSchema }), async ({ previewId }) =>
+    cancelPreview(previewId),
+  )
 
   handle(IPC.transfersStart, TransferRequestSchema, async (request, event) => startTransfer(request, event.sender))
 

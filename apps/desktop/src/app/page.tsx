@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Image from 'next/image'
 import {
   ArrowLeftRight,
@@ -24,7 +24,15 @@ import { TransferRail } from '@/components/transfer-rail'
 import { MirrorPreviewDialog, TransferBand, type ActiveJob } from '@/components/transfer-panel'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { api, unwrap, type Connection, type PreviewResult, type SyncProfile, type TransferEvent } from '@/lib/api'
+import {
+  api,
+  unwrap,
+  type Connection,
+  type PreviewProgress,
+  type PreviewResult,
+  type SyncProfile,
+  type TransferEvent,
+} from '@/lib/api'
 import { withTrailingSlash } from '@/lib/format'
 
 /** A row in the header menu. Plain button, styled once. */
@@ -87,7 +95,18 @@ export default function Workspace() {
   const [mirror, setMirror] = useState(false)
   const [trust, setTrust] = useState(false)
   const [preview, setPreview] = useState<PreviewResult | null>(null)
+  const [previewProgress, setPreviewProgress] = useState<PreviewProgress | null>(null)
   const [previewOpen, setPreviewOpen] = useState(false)
+  /**
+   * The scan the dialog is currently showing.
+   *
+   * A preview cannot be identified by "the one that is running", because
+   * stopping one and starting another leaves both in flight: the first call
+   * still resolves, and without this it would paint its delete list over the
+   * second one's route. Confirming that would mirror a pair the user never
+   * saw. Every result and every progress event is matched against this id.
+   */
+  const previewIdRef = useRef<string | null>(null)
   const [job, setJob] = useState<ActiveJob | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [showConnection, setShowConnection] = useState(false)
@@ -183,6 +202,15 @@ export default function Workspace() {
     return bridge.events.onTransfer(({ jobId, event }) => setJob((current) => reduceJob(current, jobId, event)))
   }, [])
 
+  useEffect(() => {
+    const bridge = api()
+    if (!bridge) return
+    return bridge.events.onPreview(({ previewId, progress }) => {
+      if (previewId !== previewIdRef.current) return
+      setPreviewProgress(progress)
+    })
+  }, [])
+
   const source = direction === 'ltr' ? left : right
   const destination = direction === 'ltr' ? right : left
   const allConnections = useMemo(() => [...saved, ...sshConfig], [saved, sshConfig])
@@ -200,13 +228,43 @@ export default function Workspace() {
     [source, destination, mirror],
   )
 
+  /**
+   * Closes the dialog and stops the scan behind it.
+   *
+   * Closing used to only hide the dialog. The rsync dry run carried on to the
+   * end -- minutes of a remote tree walk nobody could see or interrupt -- and
+   * then resolved into a dialog that was no longer open.
+   */
+  const closePreview = useCallback(() => {
+    const previewId = previewIdRef.current
+    previewIdRef.current = null
+    setPreviewOpen(false)
+    setPreviewProgress(null)
+    if (previewId) void api()?.transfers.cancelPreview(previewId)
+  }, [])
+
   const runPreview = useCallback(async () => {
+    const previewId = crypto.randomUUID()
+    // Supersedes any scan already running, so pressing Preview twice does not
+    // leave two rsync processes walking the same trees.
+    const superseded = previewIdRef.current
+    if (superseded) void api()?.transfers.cancelPreview(superseded)
+
+    previewIdRef.current = previewId
     setError(null)
     setPreview(null)
+    setPreviewProgress(null)
     setPreviewOpen(true)
     try {
-      setPreview(await unwrap(api()?.transfers.preview(request)))
+      const result = await unwrap(api()?.transfers.preview({ ...request, previewId }))
+      if (previewIdRef.current !== previewId) return
+      // A scan the user stopped is not a result. Showing it would offer a
+      // confirm button for a delete list that was never finished.
+      if (result.cancelled) return
+      setPreview(result)
     } catch (caught) {
+      if (previewIdRef.current !== previewId) return
+      previewIdRef.current = null
       setPreviewOpen(false)
       setError(caught instanceof Error ? caught.message : String(caught))
     }
@@ -215,7 +273,9 @@ export default function Workspace() {
   const start = useCallback(
     async (deletesConfirmed: boolean) => {
       setError(null)
+      previewIdRef.current = null
       setPreviewOpen(false)
+      setPreviewProgress(null)
       try {
         const started = await unwrap(api()?.transfers.start({ ...request, deletesConfirmed }))
         setJob({
@@ -575,11 +635,13 @@ export default function Workspace() {
 
       <MirrorPreviewDialog
         preview={preview}
+        progress={previewProgress}
         open={previewOpen}
         route={route}
         trust={trust}
         onTrustChange={setTrust}
-        onCancel={() => setPreviewOpen(false)}
+        onCancel={closePreview}
+        onStopScan={closePreview}
         onConfirm={() => void start(true)}
       />
     </div>

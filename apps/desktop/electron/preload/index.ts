@@ -41,6 +41,7 @@ const api = {
   },
   transfers: {
     preview: (request: unknown) => call(IPC.transfersPreview, request),
+    cancelPreview: (previewId: string) => call<boolean>(IPC.transfersPreviewCancel, { previewId }),
     start: (request: unknown) => call(IPC.transfersStart, request),
     cancel: (jobId: string) => call(IPC.transfersCancel, { jobId }),
     list: (limit = 50) => call(IPC.transfersList, { limit }),
@@ -86,6 +87,11 @@ const api = {
       const wrapped = (_event: unknown, payload: { runId: string; event: unknown }) => listener(payload)
       ipcRenderer.on(IPC.eventFleet, wrapped)
       return () => ipcRenderer.off(IPC.eventFleet, wrapped)
+    },
+    onPreview(listener: (payload: { previewId: string; progress: unknown }) => void): () => void {
+      const wrapped = (_event: unknown, payload: { previewId: string; progress: unknown }) => listener(payload)
+      ipcRenderer.on(IPC.eventPreview, wrapped)
+      return () => ipcRenderer.off(IPC.eventPreview, wrapped)
     },
   },
 }

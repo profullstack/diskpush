@@ -1,8 +1,8 @@
 'use client'
 
-import { useRef } from 'react'
+import { useEffect, useRef } from 'react'
 import { ArrowRight, ChevronRight, CircleCheck, Trash2, TriangleAlert } from 'lucide-react'
-import type { PreviewResult } from '@/lib/api'
+import type { PreviewProgress, PreviewResult } from '@/lib/api'
 import { formatBytes, formatDuration, formatRate } from '@/lib/format'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -25,31 +25,136 @@ export type ActiveJob = {
 }
 
 /**
+ * What the scan panel shows before rsync has said anything.
+ *
+ * A zeroed progress rather than an absent one, so the panel has the same shape
+ * from the first frame and does not rearrange itself once the first event
+ * lands.
+ */
+const EMPTY_PROGRESS: PreviewProgress = {
+  checked: 0,
+  total: 0,
+  changes: 0,
+  deletes: 0,
+  currentPath: '',
+  elapsedSeconds: 0,
+}
+
+/**
+ * Live progress while both sides are being compared.
+ *
+ * This used to be a spinner and the words "Scanning both sides...", which is
+ * all a person saw for however long a full scan of two trees takes -- minutes
+ * over a WAN. A scan that is working and a scan that has wedged looked
+ * identical, so every slow preview read as a hang. It now shows rsync's own
+ * counters, so the panel moves whenever the scan does.
+ *
+ * `total` grows during the run, because rsync builds its file list
+ * incrementally. The bar is therefore explicitly an estimate, and the counts
+ * beside it are the honest numbers.
+ */
+function ScanProgress({ progress, onCancel }: { progress: PreviewProgress; onCancel: () => void }) {
+  const { checked, total, changes, deletes, currentPath, elapsedSeconds } = progress
+  const percent = total > 0 ? Math.min(100, Math.round((checked / total) * 100)) : 0
+
+  return (
+    <div className="px-[18px] py-6">
+      <div className="flex items-center gap-2.5">
+        <span className="size-3.5 shrink-0 animate-spin rounded-full border-2 border-line-strong border-t-primary" />
+        <span className="text-[12.5px] text-foreground">Comparing both sides</span>
+        <span className="numeric ml-auto shrink-0 text-[11.5px] text-muted-foreground">
+          {formatDuration(elapsedSeconds)}
+        </span>
+      </div>
+
+      <Progress
+        value={percent}
+        className="mt-3 w-full [&_[data-slot=progress-track]]:h-[6px] [&_[data-slot=progress-track]]:bg-accent"
+      />
+
+      <div className="mt-2.5 flex items-center gap-4 text-[11.5px] text-muted-foreground">
+        <span>
+          <span className="numeric text-foreground">{checked.toLocaleString()}</span>
+          {total > 0 ? <> of about <span className="numeric text-foreground">{total.toLocaleString()}</span></> : null}{' '}
+          compared
+        </span>
+        <span>
+          <span className="numeric text-foreground">{changes.toLocaleString()}</span> to change
+        </span>
+        {deletes > 0 ? (
+          <span className="text-danger-ink">
+            <span className="numeric font-medium text-destructive">{deletes.toLocaleString()}</span> to delete
+          </span>
+        ) : null}
+      </div>
+
+      {/*
+        The path currently being compared. Without it a stalled scan and a slow
+        one still look the same, because the counters can sit still for a long
+        time on one large directory.
+      */}
+      <p className="selectable numeric mt-2.5 h-[15px] truncate text-[11px] text-faint">{currentPath || 'building the file list…'}</p>
+
+      {/*
+        Stopping is a real stop. Closing the dialog used to hide it and leave
+        the dry run to finish into a window nobody was looking at, which is how
+        a mistyped path cost you a full scan you could not interrupt.
+      */}
+      <Button variant="outline" onClick={onCancel} className="mt-4 h-[30px] border-line-strong text-[12px]">
+        Stop scanning
+      </Button>
+    </div>
+  )
+}
+
+/**
  * The delete preview.
  *
  * Every proposed deletion is listed rather than summarised: "87 files" is not
- * something anyone can consent to. The confirm button says what it does.
+ * something anyone can consent to. Past PREVIEW_DELETE_LIMIT the enumeration
+ * stops and says so, because a first mirror into an empty destination proposes
+ * hundreds of thousands and a DOM node each is what froze the window. The
+ * count on the confirm button is always the true one.
  */
 export function MirrorPreviewDialog({
   preview,
+  progress,
   open,
   route,
   trust,
   onTrustChange,
   onCancel,
+  onStopScan,
   onConfirm,
 }: {
   preview: PreviewResult | null
+  progress: PreviewProgress | null
   open: boolean
   route: string
   trust: boolean
   onTrustChange: (value: boolean) => void
   onCancel: () => void
+  onStopScan: () => void
   onConfirm: () => void
 }) {
   const deletes = preview?.deletes ?? []
+  const deleteTotal = preview?.deleteTotal ?? 0
+  const hidden = Math.max(0, deleteTotal - deletes.length)
   const summary = preview?.summary
   const cancelRef = useRef<HTMLButtonElement>(null)
+
+  /*
+   * Focus lands on Cancel the moment the result does.
+   *
+   * `initialFocus` alone stopped being enough once the footer waits for the
+   * scan: at open time there is no Cancel button to focus, so when the delete
+   * list finally appeared the focus was still on the dialog and the next Enter
+   * could reach the confirm. This dialog's whole job is to make an
+   * irreversible delete deliberate.
+   */
+  useEffect(() => {
+    if (preview) cancelRef.current?.focus()
+  }, [preview])
 
   return (
     <Dialog open={open} onOpenChange={(next) => (next ? undefined : onCancel())}>
@@ -74,10 +179,7 @@ export function MirrorPreviewDialog({
             past the bottom of the window. */}
         <div className="min-h-0 overflow-y-auto">
           {!preview ? (
-            <div className="flex items-center gap-2.5 px-[18px] py-8 text-[12.5px] text-muted-foreground">
-              <span className="size-3.5 animate-spin rounded-full border-2 border-line-strong border-t-primary" />
-              Scanning both sides…
-            </div>
+            <ScanProgress progress={progress ?? EMPTY_PROGRESS} onCancel={onStopScan} />
           ) : !preview.ok ? (
             <p className="selectable px-[18px] py-8 text-[12.5px] text-destructive">{preview.message}</p>
           ) : (
@@ -88,7 +190,7 @@ export function MirrorPreviewDialog({
                     ['Add', summary?.add ?? 0, 'text-ok'],
                     ['Update', summary?.update ?? 0, 'text-primary'],
                     ['Unchanged', summary?.unchanged ?? 0, 'text-muted-foreground'],
-                    ['Delete', deletes.length, 'text-destructive'],
+                    ['Delete', deleteTotal, 'text-destructive'],
                   ] as const
                 ).map(([label, value, tone]) => (
                   <div key={label} className="bg-popover px-4 py-3">
@@ -99,12 +201,12 @@ export function MirrorPreviewDialog({
               </div>
 
               <div className="px-[18px] pt-3.5">
-                {deletes.length > 0 ? (
+                {deleteTotal > 0 ? (
                   <div className="flex items-center gap-2.5 rounded-lg border border-danger-line bg-danger-surface px-3 py-2.5 text-[12.5px] text-danger-ink">
                     <Trash2 className="size-4 shrink-0" />
                     <span>
                       <strong className="font-semibold text-destructive">
-                        {deletes.length.toLocaleString()} file{deletes.length === 1 ? '' : 's'}
+                        {deleteTotal.toLocaleString()} file{deleteTotal === 1 ? '' : 's'}
                       </strong>{' '}
                       at the destination will be deleted. This cannot be undone.
                     </span>
@@ -116,22 +218,36 @@ export function MirrorPreviewDialog({
                 )}
               </div>
 
-              {deletes.length > 0 ? (
+              {deleteTotal > 0 ? (
                 <div className="px-[18px] pt-3">
                   <div className="text-[10.5px] uppercase tracking-[0.08em] text-faint">Files to be deleted</div>
                   {/* max-, not a fixed height: two doomed files used to sit at
                       the top of a 210px well of empty space. */}
-                  <ScrollArea className="mt-2 max-h-[210px] rounded-lg border border-line bg-background py-1">
-                    {deletes.map((path) => (
-                      <div
-                        key={path}
-                        className="selectable numeric flex h-[27px] items-center gap-2.5 px-3 text-[11.5px] text-danger-ink"
-                      >
-                        <span className="shrink-0 text-destructive/70">−</span>
-                        <span className="truncate">{path}</span>
-                      </div>
-                    ))}
-                  </ScrollArea>
+                  {/*
+                    The scroll box needs a definite height, which `max-h` on the
+                    ScrollArea root alone never gave it: its viewport is
+                    `size-full`, so it grew to fit and the rows printed straight
+                    over the disclosure below. Every other ScrollArea in the app
+                    is `min-h-0 flex-1` inside a flex column, and so is this one.
+                  */}
+                  <div className="mt-2 flex max-h-[210px] flex-col overflow-hidden rounded-lg border border-line bg-background py-1">
+                    <ScrollArea className="min-h-0 flex-1">
+                      {deletes.map((path) => (
+                        <div
+                          key={path}
+                          className="selectable numeric flex h-[27px] items-center gap-2.5 px-3 text-[11.5px] text-danger-ink"
+                        >
+                          <span className="shrink-0 text-destructive/70">−</span>
+                          <span className="truncate">{path}</span>
+                        </div>
+                      ))}
+                      {hidden > 0 ? (
+                        <div className="flex h-[27px] items-center px-3 text-[11.5px] font-medium text-muted-foreground">
+                          …and {hidden.toLocaleString()} more, not listed
+                        </div>
+                      ) : null}
+                    </ScrollArea>
+                  </div>
                 </div>
               ) : null}
 
@@ -159,30 +275,38 @@ export function MirrorPreviewDialog({
           )}
         </div>
 
-        <DialogFooter className="items-center border-t border-line px-[18px] py-3.5 sm:justify-between">
-          <label className="flex cursor-pointer items-center gap-2 text-[12px] text-muted-foreground">
-            <Checkbox checked={trust} onCheckedChange={(next) => onTrustChange(next === true)} />
-            Trust this pair from now on
-          </label>
-          <div className="flex gap-2">
-            {/*
-              Focus opens on Cancel, not on the confirm and not on the trust
-              checkbox it used to land on. This dialog's whole job is to make
-              an irreversible delete deliberate, so a stray Enter or Space has
-              to hit the harmless control.
-            */}
-            <Button ref={cancelRef} variant="outline" onClick={onCancel} className="h-[33px] border-line-strong">
-              Cancel
-            </Button>
-            <Button
-              onClick={onConfirm}
-              disabled={!preview?.ok}
-              className={cn('h-[33px] font-semibold', deletes.length > 0 && 'bg-danger-solid text-white hover:bg-danger-solid-lift')}
-            >
-              {deletes.length > 0 ? `Delete ${deletes.length} and mirror` : 'Mirror'}
-            </Button>
-          </div>
-        </DialogFooter>
+        {/*
+          No confirm controls while there is nothing to confirm. The footer used
+          to render throughout the scan, so a full-strength Mirror button sat
+          under the spinner offering to run a mirror whose delete list did not
+          exist yet -- inert, which reads as a control that ignores you.
+        */}
+        {preview ? (
+          <DialogFooter className="items-center border-t border-line px-[18px] py-3.5 sm:justify-between">
+            <label className="flex cursor-pointer items-center gap-2 text-[12px] text-muted-foreground">
+              <Checkbox checked={trust} onCheckedChange={(next) => onTrustChange(next === true)} />
+              Trust this pair from now on
+            </label>
+            <div className="flex gap-2">
+              {/*
+                Focus opens on Cancel, not on the confirm and not on the trust
+                checkbox it used to land on. This dialog's whole job is to make
+                an irreversible delete deliberate, so a stray Enter or Space has
+                to hit the harmless control.
+              */}
+              <Button ref={cancelRef} variant="outline" onClick={onCancel} className="h-[33px] border-line-strong">
+                Cancel
+              </Button>
+              <Button
+                onClick={onConfirm}
+                disabled={!preview?.ok}
+                className={cn('h-[33px] font-semibold', deleteTotal > 0 && 'bg-danger-solid text-white hover:bg-danger-solid-lift')}
+              >
+                {deleteTotal > 0 ? `Delete ${deleteTotal.toLocaleString()} and mirror` : 'Mirror'}
+              </Button>
+            </div>
+          </DialogFooter>
+        ) : null}
       </DialogContent>
     </Dialog>
   )

@@ -55,14 +55,38 @@ export type Change = {
 }
 
 export type PreviewResult = {
-  changes: Change[]
   summary: Record<Change['action'], number>
+  /**
+   * Capped by the main process. `deleteTotal` is the true number and is what
+   * the confirm button counts, so a truncated list never understates what a
+   * mirror is about to remove.
+   */
   deletes: string[]
+  deleteTotal: number
+  changeTotal: number
   command: string
   control: string | null
   warnings: string[]
   ok: boolean
   message: string
+  /** The user stopped the scan. Not a failure, and not a result to act on. */
+  cancelled: boolean
+}
+
+/**
+ * Live progress for a dry run that is still going.
+ *
+ * `total` comes from rsync's own `to-chk` counter and grows while the file
+ * list is still being built, so it is shown as a moving count rather than as a
+ * deadline.
+ */
+export type PreviewProgress = {
+  checked: number
+  total: number
+  changes: number
+  deletes: number
+  currentPath: string
+  elapsedSeconds: number
 }
 
 /** A saved source/destination pair with its options. Runnable from the CLI too. */
@@ -234,6 +258,7 @@ type Api = {
   }
   transfers: {
     preview(request: unknown): Promise<IpcResult<PreviewResult>>
+    cancelPreview(previewId: string): Promise<IpcResult<boolean>>
     start(request: unknown): Promise<IpcResult<StartedJob>>
     cancel(jobId: string): Promise<IpcResult<boolean>>
     list(limit?: number): Promise<IpcResult<unknown[]>>
@@ -269,6 +294,7 @@ type Api = {
   events: {
     onTransfer(listener: (payload: { jobId: string; event: TransferEvent }) => void): () => void
     onFleet(listener: (payload: { runId: string; event: FleetEvent }) => void): () => void
+    onPreview(listener: (payload: { previewId: string; progress: PreviewProgress }) => void): () => void
   }
 }
 
