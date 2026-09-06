@@ -2,7 +2,9 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
+  ChevronDown,
   ChevronRight,
+  ChevronUp,
   CornerLeftUp,
   ExternalLink,
   FilePlus2,
@@ -19,7 +21,14 @@ import {
   Trash2,
 } from 'lucide-react'
 import { api, unwrap, type Connection, type FileEntry } from '@/lib/api'
-import { isNavigable } from '@/lib/entries'
+import {
+  DEFAULT_SORT,
+  isNavigable,
+  nextSort,
+  visibleEntries,
+  type Sort,
+  type SortKey,
+} from '@/lib/entries'
 import { formatBytes, formatDate, formatMode, joinPath, parentPath } from '@/lib/format'
 import { EndpointSelect, type PaneEndpoint } from '@/components/endpoint-select'
 import { DeleteDialog, NameDialog } from '@/components/entry-dialogs'
@@ -90,6 +99,57 @@ function IconAction({
       </TooltipTrigger>
       <TooltipContent>{label}</TooltipContent>
     </Tooltip>
+  )
+}
+
+/** What a screen reader is told about a column: only one of the three is ever sorted. */
+function ariaSort(sort: Sort, column: SortKey): 'ascending' | 'descending' | 'none' {
+  if (sort.key !== column) return 'none'
+  return sort.direction === 'asc' ? 'ascending' : 'descending'
+}
+
+/**
+ * One column header: a button, not a label.
+ *
+ * The arrow is only drawn for the column being sorted on, and faintly on hover
+ * for the others — a header that looks identical whether or not it does
+ * anything is a control nobody finds.
+ */
+function SortHeader({
+  label,
+  column,
+  sort,
+  onSort,
+  align = 'left',
+}: {
+  label: string
+  column: SortKey
+  sort: Sort
+  onSort: (key: SortKey) => void
+  align?: 'left' | 'right'
+}) {
+  const activeColumn = sort.key === column
+  const Arrow = activeColumn && sort.direction === 'desc' ? ChevronDown : ChevronUp
+  return (
+    <button
+      type="button"
+      onClick={() => onSort(column)}
+      aria-label={`Sort by ${label.toLowerCase()}`}
+      className={cn(
+        'focus-ring group -mx-1 flex w-[calc(100%+0.5rem)] min-w-0 items-center gap-1 rounded px-1 uppercase tracking-[0.08em] transition-colors hover:text-dim',
+        align === 'right' && 'justify-end',
+        activeColumn && 'text-dim',
+      )}
+    >
+      {align === 'right' ? null : <span className="truncate">{label}</span>}
+      <Arrow
+        className={cn(
+          'size-3 shrink-0 transition-opacity',
+          activeColumn ? 'opacity-100' : 'opacity-0 group-hover:opacity-40',
+        )}
+      />
+      {align === 'right' ? <span className="truncate">{label}</span> : null}
+    </button>
   )
 }
 
@@ -227,6 +287,11 @@ export function Pane({
 }) {
   const [filter, setFilter] = useState('')
   const [showHidden, setShowHidden] = useState(false)
+  // Per pane, and deliberately not reset when the path changes: a sort you
+  // picked is a way of looking at files, not a property of one folder. The two
+  // panes keep their own, because the point of them is comparing a listing
+  // against a differently-ordered one.
+  const [sort, setSort] = useState<Sort>(DEFAULT_SORT)
   // The row the keyboard is on. Distinct from selection: you can walk the list
   // without changing what is selected, the way every file manager behaves.
   const [cursor, setCursor] = useState(0)
@@ -266,17 +331,29 @@ export function Pane({
   }, [state.path])
 
   const visible = useMemo(
-    () =>
-      state.entries
-        .filter((entry) => showHidden || !entry.name.startsWith('.'))
-        .filter((entry) => filter === '' || entry.name.toLowerCase().includes(filter.toLowerCase()))
-        .sort((a, b) => {
-          // Directories first, then by name: the order every file manager uses.
-          // A link to a directory sorts as one, because that is what it opens as.
-          if (isNavigable(a) !== isNavigable(b)) return isNavigable(a) ? -1 : 1
-          return a.name.localeCompare(b.name)
-        }),
-    [state.entries, filter, showHidden],
+    () => visibleEntries(state.entries, { filter, showHidden, sort }),
+    [state.entries, filter, showHidden, sort],
+  )
+
+  /**
+   * Re-orders the rows and keeps the keyboard cursor on the row it was on.
+   *
+   * The cursor is an index into `visible`, so re-sorting without this leaves it
+   * pointing at whatever row slid into that position — arrow-down after a
+   * header click would jump somewhere unrelated. Selection needs no such care:
+   * it is held by name.
+   */
+  const resort = useCallback(
+    (key: SortKey) => {
+      const next = nextSort(sort, key)
+      const focused = visible[cursor]?.name
+      const reordered = visibleEntries(state.entries, { filter, showHidden, sort: next })
+      const index = focused === undefined ? -1 : reordered.findIndex((entry) => entry.name === focused)
+      setSort(next)
+      setCursor(index === -1 ? 0 : index)
+      anchor.current = null
+    },
+    [cursor, filter, showHidden, sort, state.entries, visible],
   )
 
   const selectedSize = visible
@@ -491,14 +568,21 @@ export function Pane({
       </div>
 
       <div
+        role="row"
         className={cn(
-          'grid shrink-0 gap-3 border-b border-line bg-sunken/60 px-3 py-1.5 text-[10px] font-medium uppercase tracking-[0.08em] text-faint',
+          'grid shrink-0 gap-3 border-b border-line bg-sunken/60 px-3 py-1.5 text-[10px] font-medium text-faint',
           COLUMNS,
         )}
       >
-        <span>Name</span>
-        <span className="text-right">Size</span>
-        <span className="text-right">Modified</span>
+        <span role="columnheader" aria-sort={ariaSort(sort, 'name')} className="min-w-0">
+          <SortHeader label="Name" column="name" sort={sort} onSort={resort} />
+        </span>
+        <span role="columnheader" aria-sort={ariaSort(sort, 'size')} className="min-w-0">
+          <SortHeader label="Size" column="size" sort={sort} onSort={resort} align="right" />
+        </span>
+        <span role="columnheader" aria-sort={ariaSort(sort, 'modified')} className="min-w-0">
+          <SortHeader label="Modified" column="modified" sort={sort} onSort={resort} align="right" />
+        </span>
       </div>
 
       <ScrollArea className="min-h-0 flex-1">
