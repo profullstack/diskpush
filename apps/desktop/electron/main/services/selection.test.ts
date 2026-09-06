@@ -15,7 +15,7 @@ function emptyRun() {
   }
 }
 
-const planned: Array<{ options: { filesFrom?: string | null; from0?: boolean } }> = []
+const planned: Array<{ options: { filesFrom?: string | null; from0?: boolean }; list: string | null }> = []
 
 vi.mock('./store.js', () => ({
   store: async () => ({ getSetting: async <T>(_key: string, fallback: T) => fallback }),
@@ -23,7 +23,10 @@ vi.mock('./store.js', () => ({
 
 vi.mock('@diskpush/rsync-core', () => ({
   planTransfer: (input: { options: { filesFrom?: string | null; from0?: boolean } }) => {
-    planned.push({ options: input.options })
+    // Read here rather than from the test body: this runs while the transfer
+    // still owns the file, so there is no window to race against its cleanup.
+    const path = input.options.filesFrom
+    planned.push({ options: input.options, list: path ? readFileSync(path, 'utf8') : null })
     return { binary: 'rsync', args: [], display: 'rsync', controlDisplay: null, warnings: [] }
   },
   runPlan: () => emptyRun(),
@@ -81,30 +84,9 @@ describe('a selection reaches rsync', () => {
 
   it('writes the names verbatim, separated by NUL', async () => {
     planned.length = 0
-    let listPath = ''
-    // Captured during the run, because the file is removed when it finishes.
-    const capture = new Promise<void>((resolve) => {
-      const timer = setInterval(() => {
-        const path = planned.at(-1)?.options.filesFrom
-        if (path && existsSync(path)) {
-          listPath = readFileSync(path, 'utf8')
-          clearInterval(timer)
-          resolve()
-        }
-      }, 1)
-      setTimeout(() => {
-        clearInterval(timer)
-        resolve()
-      }, 2000)
-    })
+    await previewTransfer({ ...BASE, selection: ['a b.mkv', 'weird\tname'], previewId: 's2' }, sender())
 
-    const run = previewTransfer(
-      { ...BASE, selection: ['a b.mkv', 'weird\tname'], previewId: 's2' },
-      sender(),
-    )
-    await Promise.all([run, capture])
-
-    expect(listPath).toBe('a b.mkv\0weird\tname\0')
+    expect(planned.at(-1)!.list).toBe('a b.mkv\0weird\tname\0')
   })
 
   it('leaves an unselected transfer alone, so the whole folder still syncs', async () => {
