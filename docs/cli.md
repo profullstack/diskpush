@@ -71,7 +71,14 @@ diskpush desktop                 # launch the desktop app
 In the TUI: `tab` switches pane, arrows or `j`/`k` move, Enter or `l` opens,
 `h` or left goes up, **`c` points the active pane somewhere else**, `s` syncs
 the active pane into the other, `p` previews that sync, `r` refreshes, `q`
-quits.
+quits. `/` filters the listing as you type, `o` cycles the sort between name,
+size and time (`O` reverses it), `.` shows dotfiles, `?` lists every binding,
+and `esc` cancels a transfer in flight. The mouse works too: click a pane to
+focus it, click a row to select it, and scroll with the wheel.
+
+A transfer opens a panel below the panes with a progress bar, the rate, the
+files as rsync reports them and a running count of adds, updates and unchanged
+files — so `s` is no longer a status line that changes once at the end.
 
 `c` opens a picker listing Local, your saved connections, and the hosts in
 `~/.ssh/config` — so either pane can be a server without naming one on the

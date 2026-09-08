@@ -1,115 +1,69 @@
-import { mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
-import { homedir, tmpdir } from 'node:os'
-import { join, posix } from 'node:path'
-import { knownHostsPath } from '@diskpush/database'
-import { SftpBrowser, SshSession } from '@diskpush/ssh-core'
-import { defaultRsyncOptions, summarizeChanges, type Connection } from '@diskpush/schemas'
-import { parseEndpoint, planTransfer, runToCompletion } from '@diskpush/rsync-core'
-import { isChar, type Key } from './keys.js'
-import { ansi, formatSize, pad, truncate, width as width_ } from './render.js'
-
 /**
- * A two-pane browser in the terminal.
+ * A two-pane browser in the terminal, drawn with HQTUI.
  *
  * The same shape as the desktop app and driven by the same engine: either pane
  * is local or a server, and transfers run through rsync. It deliberately does
  * not offer Mirror — deleting files from a keystroke, with no delete list on
  * screen, is the accident the rest of DiskPush is built to prevent.
- */
-
-const CTRL_C = String.fromCharCode(3)
-
-export type Entry = { name: string; isDirectory: boolean; size: number }
-
-type Side = 'left' | 'right'
-
-export type Pane = {
-  label: string
-  connection: Connection | null
-  path: string
-  entries: Entry[]
-  index: number
-  offset: number
-  error: string | null
-  /**
-   * Entries marked with space. Empty means the whole directory, which is what
-   * every transfer here used to be: the pane had a cursor and no way to say
-   * "these two", so `s` always sent everything you were looking at.
-   *
-   * Names, not paths, and cleared whenever the pane moves, because a mark
-   * refers to a row in the directory currently on screen.
-   */
-  marked: Set<string>
-}
-
-const HELP =
-  'tab switch   arrows/jk move   space mark   enter open   left up   c endpoint   s sync   p preview   r refresh   q quit'
-
-/** Somewhere a pane can point at: this machine, or a server. */
-export type EndpointChoice = {
-  label: string
-  detail: string
-  connection: Connection | null
-  path: string
-}
-
-/**
- * Everywhere a pane can be pointed: this machine, then saved connections, then
- * `~/.ssh/config` hosts.
  *
- * Deduplicated by name, in that order of precedence — a saved connection wins
- * over an ssh_config host of the same name (it carries a port, a key and a
- * default path), and ssh_config itself can list one alias more than once.
+ * This class owns state and effects only. The frame is `view.ts`, the state
+ * shape is `model.ts`, and neither of those touches a terminal — so the whole
+ * screen can be rendered and asserted on in a test with no pty.
  */
-export function buildEndpointChoices(
-  saved: readonly Connection[],
-  sshHosts: readonly Connection[],
-  localPath: string,
-): EndpointChoice[] {
-  const choices: EndpointChoice[] = [
-    { label: 'Local', detail: 'this machine', connection: null, path: localPath },
-    ...saved.map((connection) => ({
-      label: connection.name,
-      detail: `${connection.username}@${connection.host}`,
-      connection,
-      path: connection.defaultRemotePath ?? '.',
-    })),
-    ...sshHosts.map((connection) => ({
-      label: connection.name,
-      detail: `${connection.username}@${connection.host}  (ssh config)`,
-      connection,
-      path: '.',
-    })),
-  ]
+import { join, posix } from 'node:path'
+import type { App, Container, KeyEvent, Theme } from '@profullstack/hqtui'
+import { knownHostsPath } from '@diskpush/database'
+import { SftpBrowser, SshSession } from '@diskpush/ssh-core'
+import { defaultRsyncOptions, type Change, type Connection } from '@diskpush/schemas'
+import { parseEndpoint, planTransfer, runToCompletion } from '@diskpush/rsync-core'
+import {
+  type EndpointChoice,
+  type Entry,
+  type Overlay,
+  type Pane,
+  type Side,
+  type SortKey,
+  SORT_KEYS,
+  type Transfer,
+  blankPane,
+  clampIndex,
+  listLocal,
+  pushChange,
+  selectedEntry,
+  visibleEntries,
+} from './model.js'
+import { type Tone, type ViewState, draw, filterChoices } from './view.js'
 
-  const seen = new Set<string>()
-  return choices.filter((choice) => {
-    if (seen.has(choice.label)) return false
-    seen.add(choice.label)
-    return true
-  })
-}
+export {
+  blankPane,
+  buildEndpointChoices,
+  defaultLocalPath,
+  listLocal,
+  type Entry,
+  type EndpointChoice,
+  type Pane,
+} from './model.js'
 
-export function blankPane(label: string, path: string, connection: Connection | null = null): Pane {
-  return { label, connection, path, entries: [], index: 0, offset: 0, error: null, marked: new Set() }
-}
+/** How many rows the wheel moves per notch. */
+const WHEEL_ROWS = 3
 
 export class Tui {
   private readonly panes: Record<Side, Pane>
   private active: Side = 'left'
-  private status = ''
+  /** Whatever is on screen instead of the panes, and owns the keyboard while it is. */
+  private overlay: Overlay | null = null
+  private transfer: Transfer | null = null
+  private filtering: Side | null = null
+  private status: { text: string; tone: Tone } | null = null
   private busy = false
   private readonly sessions = new Map<string, SshSession>()
-  /** Open endpoint picker, or null. It owns the keyboard while it is up. */
-  private picker: { index: number } | null = null
+  private app: App | null = null
   /**
-   * A first connection to a host asks about its key, and the TUI owns the
-   * keyboard, so the question is a prompt on screen rather than readline. The
-   * resolver is held until a key answers it.
+   * The first row index each pane's table actually drew, recorded during
+   * render. A click reports the row it landed on, counted from the top of the
+   * visible window — and only the table knows where that window starts.
    */
-  private hostKey: { host: string; fingerprint: string; keyType: string; decide: (trust: boolean) => void } | null = null
-  /** The pending "transfer N files?" question, while it is on screen. */
-  private confirm: { headline: string; detail: string; decide: (approved: boolean) => void } | null = null
+  private readonly firstVisible: Record<Side, number> = { left: 0, right: 0 }
 
   constructor(
     left: Pane,
@@ -117,6 +71,69 @@ export class Tui {
     private readonly choices: readonly EndpointChoice[] = [],
   ) {
     this.panes = { left, right }
+  }
+
+  /** Binds the app so background work (a load, a transfer tick) can redraw. */
+  attach(app: App): void {
+    this.app = app
+  }
+
+  private invalidate(): void {
+    this.app?.invalidate()
+  }
+
+  // ------------------------------------------------------------------ view
+
+  snapshot(): ViewState {
+    return {
+      panes: this.panes,
+      active: this.active,
+      overlay: this.overlay,
+      transfer: this.transfer,
+      filtering: this.filtering,
+      status: this.status,
+      choices: this.choices,
+      now: new Date(),
+    }
+  }
+
+  /** The render callback handed to `app.render`. */
+  view(ui: Container, theme: Theme, width: number, height: number): void {
+    draw(ui, theme, width, height, this.snapshot(), {
+      onPaneFocus: (side) => {
+        this.active = side
+        this.invalidate()
+      },
+      onSelectRow: (side, visibleRow) => {
+        this.active = side
+        const pane = this.panes[side]
+        pane.index = this.firstVisible[side] + visibleRow
+        clampIndex(pane)
+        this.invalidate()
+      },
+      onScroll: (side, delta) => {
+        this.active = side
+        this.move(delta * WHEEL_ROWS)
+        this.invalidate()
+      },
+      onRowDrawn: (side, index, y) => {
+        this.firstVisible[side] = index - y
+      },
+    })
+  }
+
+  // ----------------------------------------------------------------- state
+
+  private get current(): Pane {
+    return this.panes[this.active]
+  }
+
+  private get other(): Pane {
+    return this.panes[this.active === 'left' ? 'right' : 'left']
+  }
+
+  private say(text: string, tone: Tone = 'info'): void {
+    this.status = { text, tone }
   }
 
   private async session(connection: Connection): Promise<SshSession> {
@@ -131,16 +148,17 @@ export class Tui {
         // and useless: the answer is a keystroke away.
         onUnknownHostKey: (details) =>
           new Promise<boolean>((resolve) => {
-            this.hostKey = {
+            this.overlay = {
+              kind: 'hostKey',
               host: details.host,
               fingerprint: details.fingerprint,
               keyType: details.keyType,
               decide: (trust) => {
-                this.hostKey = null
+                this.overlay = null
                 resolve(trust)
               },
             }
-            this.render()
+            this.invalidate()
           }),
       })
       this.sessions.set(connection.id, session)
@@ -154,9 +172,9 @@ export class Tui {
       // the connect rejects with "Timed out while waiting for handshake", and
       // the question outlives the asker. The pane shows an error and the app
       // looks frozen. Whoever asked is gone, so the question goes with them.
-      if (this.hostKey) {
-        this.hostKey = null
-        this.render()
+      if (this.overlay?.kind === 'hostKey') {
+        this.overlay = null
+        this.invalidate()
       }
     }
   }
@@ -164,16 +182,18 @@ export class Tui {
   async load(side: Side): Promise<void> {
     const pane = this.panes[side]
     pane.error = null
+    pane.loading = true
+    this.invalidate()
     try {
       pane.entries = pane.connection ? await this.listRemote(pane) : listLocal(pane.path)
       pane.index = 0
       pane.offset = 0
-      // A mark names a row in the directory that was on screen. Carrying it
-      // into a new listing would transfer whatever happened to share the name.
-      pane.marked.clear()
     } catch (error) {
       pane.entries = []
       pane.error = error instanceof Error ? error.message : String(error)
+    } finally {
+      pane.loading = false
+      this.invalidate()
     }
   }
 
@@ -186,311 +206,229 @@ export class Tui {
     const browser = await SftpBrowser.open(await this.session(pane.connection!))
     try {
       const entries = await browser.list(pane.path)
-      return entries
-        .map((entry) => ({ name: entry.name, isDirectory: entry.type === 'directory', size: entry.size }))
-        .sort(compareEntries)
+      return entries.map((entry) => ({
+        name: entry.name,
+        isDirectory: entry.type === 'directory',
+        size: entry.size,
+        modifiedAt: entry.modifiedAt ?? null,
+      }))
     } finally {
       browser.close()
     }
   }
 
-  render(): void {
-    // `||` not `??`: a terminal that reports 0 columns (some pty wrappers do)
-    // is unknown, not zero-width, and `?? 100` lets the 0 through — which made
-    // a box width negative and crashed on String.repeat.
-    const columns = Math.max(48, process.stdout.columns || 100)
-    const rows = Math.max(12, process.stdout.rows || 30)
-    const paneWidth = Math.max(20, Math.floor((columns - 3) / 2))
-    const listHeight = Math.max(3, rows - 6)
-
-    const out: string[] = [ansi.clear]
-    out.push(`${ansi.bold}DiskPush${ansi.reset}${ansi.dim}   two-pane browser${ansi.reset}`)
-
-    const headers = (['left', 'right'] as const).map((side) => {
-      const pane = this.panes[side]
-      this.clampScroll(side, listHeight)
-      const room = Math.max(8, paneWidth - width_(pane.label) - 3)
-      const header = `${pane.label} ${ansi.dim}${truncate(pane.path, room)}${ansi.reset}`
-      const marker = side === this.active ? `${ansi.blue}>${ansi.reset}` : ' '
-      return `${marker}${pad(header, paneWidth)}`
-    })
-    out.push(headers.join(' '))
-
-    // Drawn row by row so the two panes sit side by side.
-    for (let row = 0; row < listHeight; row += 1) {
-      const cells = (['left', 'right'] as const).map((side) => {
-        const pane = this.panes[side]
-        if (pane.error) return row === 0 ? `${ansi.red}${truncate(pane.error, paneWidth)}${ansi.reset}` : ''
-        const entry = pane.entries[pane.offset + row]
-        if (!entry) return ''
-        const selected = pane.offset + row === pane.index && side === this.active
-        const marked = pane.marked.has(entry.name)
-        const name = entry.isDirectory ? `${entry.name}/` : entry.name
-        // The mark sits in its own column so a name never shifts when it is
-        // toggled, and it survives the reverse-video cursor.
-        const size = entry.isDirectory ? '' : formatSize(entry.size)
-        const body = `${marked ? '*' : ' '}${pad(truncate(name, paneWidth - 9), paneWidth - 9)} ${size.padStart(6)}`
-        if (selected) return `${ansi.reverse}${body}${ansi.reset}`
-        return marked ? `${ansi.yellow}${body}${ansi.reset}` : body
-      })
-      out.push(` ${pad(cells[0] ?? '', paneWidth)} ${pad(cells[1] ?? '', paneWidth)}`)
-    }
-
-    out.push('')
-    out.push(this.status === '' ? `${ansi.dim}${truncate(HELP, columns - 1)}${ansi.reset}` : truncate(this.status, columns - 1))
-
-    let frame = out.join('\n')
-    if (this.picker) frame += this.renderPicker(columns, rows)
-    if (this.hostKey) frame += this.renderHostKey(columns, rows)
-    if (this.confirm) frame += this.renderConfirm(columns, rows)
-    process.stdout.write(frame)
-  }
-
-  private clampScroll(side: Side, height: number): void {
-    const pane = this.panes[side]
-    if (pane.index < pane.offset) pane.offset = pane.index
-    if (pane.index >= pane.offset + height) pane.offset = pane.index - height + 1
-    if (pane.offset < 0) pane.offset = 0
-  }
-
-  private get current(): Pane {
-    return this.panes[this.active]
-  }
-
-  private get other(): Pane {
-    return this.panes[this.active === 'left' ? 'right' : 'left']
-  }
+  // ------------------------------------------------------------------ keys
 
   /** Returns false when the app should exit. */
-  async onKey(key: Key): Promise<boolean> {
-    if (isChar(key, CTRL_C)) return false
+  async onKey(key: KeyEvent): Promise<boolean> {
+    if (key.key === 'ctrl+c') return false
 
-    if (this.hostKey) {
-      // Quit stays reachable from inside the prompt. Every other key is
-      // deliberately swallowed here -- a fingerprint is not something to
-      // dismiss by mashing -- but a dialog that can trap you in the app is
-      // worse than one you can leave, and `q` is the quit key everywhere else.
-      if (isChar(key, 'q')) return false
-      if (isChar(key, 'y') || isChar(key, 'Y')) this.hostKey.decide(true)
-      else if (key === 'escape' || isChar(key, 'n') || isChar(key, 'N') || key === 'enter') this.hostKey.decide(false)
+    if (this.overlay?.kind === 'hostKey') return this.onHostKeyKey(key, this.overlay)
+    if (this.overlay?.kind === 'help') {
+      if (key.name === 'q') return false
+      this.overlay = null
       return true
     }
+    if (this.overlay?.kind === 'picker') return this.onPickerKey(key, this.overlay)
+    if (this.filtering) return this.onFilterKey(key)
 
-    if (this.confirm) {
-      // Anything that is not an explicit yes cancels. A transfer is not the
-      // sort of thing to start because a key was mashed, and `q` here means
-      // "not this" rather than "quit", the same as it does in the picker.
-      const decide = this.confirm.decide
-      this.confirm = null
-      decide(isChar(key, 'y') || isChar(key, 'Y'))
-      return true
-    }
+    // A message is about the last thing that happened; the next key starts
+    // something new, so it stops being the answer to anything.
+    this.status = null
 
-    if (this.picker) {
-      // Escape closes the picker rather than the app: inside a dialog it means
-      // "not this", which is not the same as "quit".
-      if (key === 'escape' || isChar(key, 'q')) {
-        this.picker = null
-      } else if (key === 'up' || isChar(key, 'k')) {
-        this.picker.index = Math.max(0, this.picker.index - 1)
-      } else if (key === 'down' || isChar(key, 'j')) {
-        this.picker.index = Math.min(this.choices.length - 1, this.picker.index + 1)
-      } else if (key === 'enter' || key === 'right' || isChar(key, 'l')) {
-        await this.choose(this.picker.index)
+    if (key.name === 'escape') {
+      // Escape belongs to the transfer while there is one: cancelling a sync in
+      // flight, or clearing the panel a finished one left behind.
+      if (this.transfer) {
+        this.dismissTransfer()
+        return true
       }
-      return true
+      return false
     }
-
-    if (key === 'escape' || isChar(key, 'q')) return false
+    if (key.name === 'q') return false
     if (this.busy) return true
 
-    const page = Math.max(1, Math.max(12, process.stdout.rows || 30) - 8)
+    const pane = this.current
+    const page = Math.max(1, (this.app?.height ?? 30) - 10)
 
-    if (key === 'tab') {
-      this.active = this.active === 'left' ? 'right' : 'left'
-    } else if (key === 'up' || isChar(key, 'k')) {
-      this.move(-1)
-    } else if (key === 'down' || isChar(key, 'j')) {
-      this.move(1)
-    } else if (key === 'page-up') {
-      this.move(-page)
-    } else if (key === 'page-down') {
-      this.move(page)
-    } else if (key === 'home') {
-      this.current.index = 0
-    } else if (key === 'end') {
-      this.current.index = Math.max(0, this.current.entries.length - 1)
-    } else if (key === 'left' || isChar(key, 'h')) {
-      await this.goUp()
-    } else if (key === 'right' || key === 'enter' || isChar(key, 'l')) {
-      await this.enter()
-    } else if (isChar(key, ' ')) {
-      this.toggleMark()
-    } else if (isChar(key, 'c')) {
-      this.openPicker()
-    } else if (isChar(key, 'r')) {
-      await this.load(this.active)
-    } else if (isChar(key, 'p')) {
-      await this.transfer(true)
-    } else if (isChar(key, 's')) {
-      await this.transfer(false)
+    switch (true) {
+      case key.name === 'tab':
+        this.active = this.active === 'left' ? 'right' : 'left'
+        break
+      case key.name === 'up' || key.name === 'k':
+        this.move(-1)
+        break
+      case key.name === 'down' || key.name === 'j':
+        this.move(1)
+        break
+      case key.name === 'pageup':
+        this.move(-page)
+        break
+      case key.name === 'pagedown':
+        this.move(page)
+        break
+      case key.name === 'home':
+        pane.index = 0
+        break
+      case key.name === 'end':
+        pane.index = Math.max(0, visibleEntries(pane).length - 1)
+        break
+      case key.name === 'left' || key.name === 'h':
+        await this.goUp()
+        break
+      case key.name === 'right' || key.name === 'enter' || key.name === 'l':
+        await this.enter()
+        break
+      case key.name === 'c':
+        this.openPicker()
+        break
+      case key.name === 'r':
+        await this.load(this.active)
+        break
+      case key.name === '/':
+        this.filtering = this.active
+        break
+      // A shifted letter arrives as its own character with `shift` unset, so
+      // the two sort keys are told apart by case rather than by the modifier.
+      case key.char === 'o':
+        this.cycleSort()
+        break
+      case key.char === 'O':
+        pane.descending = !pane.descending
+        clampIndex(pane)
+        this.say(`Sorted by ${pane.sort}, ${pane.descending ? 'descending' : 'ascending'}`)
+        break
+      case key.char === '.':
+        pane.showHidden = !pane.showHidden
+        clampIndex(pane)
+        this.say(pane.showHidden ? 'Showing hidden files' : 'Hiding hidden files')
+        break
+      case key.name === 'p':
+        await this.transferTo(true)
+        break
+      case key.name === 's':
+        await this.transferTo(false)
+        break
+      case key.name === '?':
+        this.overlay = { kind: 'help' }
+        break
+      default:
+        break
     }
     return true
   }
 
-  /**
-   * Marks or unmarks the row under the cursor, then steps down.
-   *
-   * Stepping down is what every file manager does and what makes marking a
-   * run of files one key repeated rather than an alternation of two.
-   */
-  private toggleMark(): void {
-    const pane = this.current
-    const entry = pane.entries[pane.index]
-    if (!entry) return
-    if (pane.marked.has(entry.name)) pane.marked.delete(entry.name)
-    else pane.marked.add(entry.name)
-    this.move(1)
+  private onHostKeyKey(key: KeyEvent, overlay: Extract<Overlay, { kind: 'hostKey' }>): boolean {
+    // Quit stays reachable from inside the prompt. Every other key is
+    // deliberately swallowed here -- a fingerprint is not something to dismiss
+    // by mashing -- but a dialog that can trap you in the app is worse than one
+    // you can leave, and `q` is the quit key everywhere else.
+    if (key.name === 'q') return false
+    if (key.name === 'y') overlay.decide(true)
+    else if (key.name === 'escape' || key.name === 'n' || key.name === 'enter') overlay.decide(false)
+    return true
+  }
+
+  private async onPickerKey(key: KeyEvent, picker: Extract<Overlay, { kind: 'picker' }>): Promise<boolean> {
+    const matches = filterChoices(this.choices, picker.query)
+
+    // Escape closes the picker rather than the app: inside a dialog it means
+    // "not this", which is not the same as "quit".
+    if (key.name === 'escape') {
+      this.overlay = null
+    } else if (key.name === 'up') {
+      picker.index = Math.max(0, picker.index - 1)
+    } else if (key.name === 'down') {
+      picker.index = Math.min(Math.max(0, matches.length - 1), picker.index + 1)
+    } else if (key.name === 'backspace') {
+      picker.query = picker.query.slice(0, -1)
+      picker.index = 0
+    } else if (key.name === 'enter') {
+      const choice = matches[picker.index]
+      this.overlay = null
+      if (choice) await this.choose(choice)
+    } else if (key.char && !key.ctrl && !key.alt) {
+      // Every printable key types into the query, which is why the picker binds
+      // no letter shortcuts of its own — j and k are host names here.
+      picker.query += key.char
+      picker.index = 0
+    }
+    return true
+  }
+
+  private onFilterKey(key: KeyEvent): boolean {
+    const pane = this.panes[this.filtering!]
+    if (key.name === 'escape') {
+      pane.filter = ''
+      this.filtering = null
+    } else if (key.name === 'enter') {
+      this.filtering = null
+    } else if (key.name === 'backspace') {
+      pane.filter = pane.filter.slice(0, -1)
+    } else if (key.char && !key.ctrl && !key.alt) {
+      pane.filter += key.char
+    }
+    clampIndex(pane)
+    return true
   }
 
   private move(delta: number): void {
     const pane = this.current
-    const last = Math.max(0, pane.entries.length - 1)
+    const last = Math.max(0, visibleEntries(pane).length - 1)
     pane.index = Math.min(last, Math.max(0, pane.index + delta))
   }
 
+  private cycleSort(): void {
+    const pane = this.current
+    const next = SORT_KEYS[(SORT_KEYS.indexOf(pane.sort) + 1) % SORT_KEYS.length] as SortKey
+    pane.sort = next
+    clampIndex(pane)
+    this.say(`Sorted by ${next}`)
+  }
+
+  // -------------------------------------------------------------- endpoints
+
   private openPicker(): void {
     if (this.choices.length === 0) {
-      this.status = `${ansi.yellow}No servers configured. Add one with: diskpush connections add NAME user@host${ansi.reset}`
+      this.say('No servers configured. Add one with: diskpush connections add NAME user@host', 'warn')
       return
     }
     const current = this.current.connection
     const at = this.choices.findIndex((choice) =>
       current ? choice.connection?.name === current.name : choice.connection === null,
     )
-    this.picker = { index: at >= 0 ? at : 0 }
+    this.overlay = { kind: 'picker', query: '', index: at >= 0 ? at : 0 }
   }
 
   /** Points the active pane at the chosen endpoint and lists it. */
-  private async choose(index: number): Promise<void> {
-    const choice = this.choices[index]
-    this.picker = null
-    if (!choice) return
-
-    const pane = this.panes[this.active]
+  private async choose(choice: EndpointChoice): Promise<void> {
+    const pane = this.current
     pane.label = choice.label
     pane.connection = choice.connection
     pane.path = choice.path
     pane.entries = []
     pane.index = 0
     pane.offset = 0
+    pane.filter = ''
     pane.error = null
 
     this.busy = true
-    this.status = `${ansi.dim}Connecting to ${choice.label}...${ansi.reset}`
-    this.render()
+    this.say(`Connecting to ${choice.label}…`)
     try {
       await this.load(this.active)
-      this.status = pane.error ? `${ansi.red}${truncate(pane.error, 200)}${ansi.reset}` : ''
+      this.status = pane.error ? { text: pane.error, tone: 'error' } : null
     } finally {
       this.busy = false
+      this.invalidate()
     }
-  }
-
-  /** Draws the picker over the panes. Returns the lines it occupies. */
-  private renderPicker(columns: number, rows: number): string {
-    const width = Math.max(28, Math.min(64, columns - 8))
-    const left = Math.max(1, Math.floor((columns - width) / 2))
-    const index = this.picker?.index ?? 0
-
-    // A machine with forty hosts in ~/.ssh/config would otherwise draw a box
-    // taller than the terminal, so the list scrolls with the selection.
-    const visible = Math.max(3, Math.min(this.choices.length, rows - 8))
-    const half = Math.floor(visible / 2)
-    const start = Math.max(0, Math.min(this.choices.length - visible, index - half))
-    const shown = this.choices.slice(start, start + visible)
-
-    const top = Math.max(1, Math.floor((rows - visible - 4) / 2))
-    const out: string[] = []
-    const line = (row: number, body: string) => out.push(`${ansi.moveTo(row, left)}${body}`)
-    const inner = width - 2
-
-    const title =
-      this.choices.length > visible
-        ? `Point this pane at   ${start + 1}-${start + shown.length} of ${this.choices.length}`
-        : 'Point this pane at'
-
-    line(top, `${ansi.blue}+${'-'.repeat(inner)}+${ansi.reset}`)
-    line(top + 1, `${ansi.blue}|${ansi.reset}${ansi.bold}${pad(` ${title}`, inner)}${ansi.reset}${ansi.blue}|${ansi.reset}`)
-
-    shown.forEach((choice, i) => {
-      const at = start + i
-      const label = pad(truncate(choice.label, 20), 20)
-      const detail = truncate(choice.detail, Math.max(4, inner - 24))
-      const body = ` ${label} ${detail}`
-      const text =
-        at === index
-          ? `${ansi.reverse}${pad(body, inner)}${ansi.reset}`
-          : `${pad(` ${label} `, 22)}${ansi.dim}${detail}${ansi.reset}${' '.repeat(Math.max(0, inner - 22 - width_(detail)))}`
-      line(top + 2 + i, `${ansi.blue}|${ansi.reset}${text}${ansi.blue}|${ansi.reset}`)
-    })
-
-    line(top + 2 + shown.length, `${ansi.blue}|${ansi.reset}${ansi.dim}${pad(' enter select   esc cancel', inner)}${ansi.reset}${ansi.blue}|${ansi.reset}`)
-    line(top + 3 + shown.length, `${ansi.blue}+${'-'.repeat(inner)}+${ansi.reset}`)
-    return out.join('')
-  }
-
-  /** The host-key question, drawn over everything. */
-  private renderConfirm(columns: number, rows: number): string {
-    const ask = this.confirm!
-    const width = Math.max(40, Math.min(72, columns - 6))
-    const left = Math.max(1, Math.floor((columns - width) / 2))
-    const top = Math.max(1, Math.floor(rows / 2) - 2)
-    const inner = width - 2
-    const out: string[] = []
-    const line = (row: number, body: string) => out.push(`${ansi.moveTo(row, left)}${body}`)
-
-    line(top, `${ansi.blue}+${'-'.repeat(inner)}+${ansi.reset}`)
-    line(
-      top + 1,
-      `${ansi.blue}|${ansi.reset}${ansi.bold}${pad(` ${truncate(ask.headline, inner - 2)}`, inner)}${ansi.reset}${ansi.blue}|${ansi.reset}`,
-    )
-    line(
-      top + 2,
-      `${ansi.blue}|${ansi.reset}${ansi.dim}${pad(` ${truncate(ask.detail, inner - 2)}`, inner)}${ansi.reset}${ansi.blue}|${ansi.reset}`,
-    )
-    line(top + 3, `${ansi.blue}|${ansi.reset}${pad('', inner)}${ansi.blue}|${ansi.reset}`)
-    line(top + 4, `${ansi.blue}|${ansi.reset}${pad(' y  transfer                  n  cancel', inner)}${ansi.blue}|${ansi.reset}`)
-    line(top + 5, `${ansi.blue}+${'-'.repeat(inner)}+${ansi.reset}`)
-    return out.join('')
-  }
-
-  private renderHostKey(columns: number, rows: number): string {
-    const key = this.hostKey!
-    const width = Math.max(40, Math.min(72, columns - 6))
-    const left = Math.max(1, Math.floor((columns - width) / 2))
-    const top = Math.max(1, Math.floor(rows / 2) - 4)
-    const inner = width - 2
-    const out: string[] = []
-    const line = (row: number, body: string) => out.push(`${ansi.moveTo(row, left)}${body}`)
-
-    line(top, `${ansi.yellow}+${'-'.repeat(inner)}+${ansi.reset}`)
-    line(top + 1, `${ansi.yellow}|${ansi.reset}${ansi.bold}${pad(` Unknown host: ${key.host}`, inner)}${ansi.reset}${ansi.yellow}|${ansi.reset}`)
-    line(top + 2, `${ansi.yellow}|${ansi.reset}${pad('', inner)}${ansi.yellow}|${ansi.reset}`)
-    line(top + 3, `${ansi.yellow}|${ansi.reset}${pad(` ${key.keyType} key fingerprint:`, inner)}${ansi.yellow}|${ansi.reset}`)
-    line(top + 4, `${ansi.yellow}|${ansi.reset}${ansi.dim}${pad(` ${truncate(key.fingerprint, inner - 2)}`, inner)}${ansi.reset}${ansi.yellow}|${ansi.reset}`)
-    line(top + 5, `${ansi.yellow}|${ansi.reset}${pad('', inner)}${ansi.yellow}|${ansi.reset}`)
-    line(top + 6, `${ansi.yellow}|${ansi.reset}${ansi.dim}${pad(' Compare it with the server before trusting it.', inner)}${ansi.reset}${ansi.yellow}|${ansi.reset}`)
-    line(top + 7, `${ansi.yellow}|${ansi.reset}${pad(' y  trust and continue        n  cancel', inner)}${ansi.yellow}|${ansi.reset}`)
-    line(top + 8, `${ansi.yellow}+${'-'.repeat(inner)}+${ansi.reset}`)
-    return out.join('')
   }
 
   private async enter(): Promise<void> {
     const pane = this.current
-    const entry = pane.entries[pane.index]
+    const entry = selectedEntry(pane)
     if (!entry?.isDirectory) return
     pane.path = pane.connection ? posix.join(pane.path, entry.name) : join(pane.path, entry.name)
+    pane.filter = ''
     await this.load(this.active)
   }
 
@@ -499,116 +437,88 @@ export class Tui {
     const parent = pane.connection ? posix.dirname(pane.path) : join(pane.path, '..')
     if (parent === pane.path) return
     pane.path = parent
+    pane.filter = ''
     await this.load(this.active)
   }
 
-  /**
-   * The marked entries as a file rsync can read, or null for the whole folder.
-   *
-   * NUL-separated, because a newline is legal in a filename and a
-   * line-separated list would split one such name into two paths that do not
-   * exist.
-   */
-  private markList(pane: Pane): { path: string; cleanup: () => void } | null {
-    if (pane.marked.size === 0) return null
-    const directory = mkdtempSync(join(tmpdir(), 'diskpush-marks-'))
-    const path = join(directory, 'files-from')
-    writeFileSync(path, `${[...pane.marked].join('\0')}\0`)
-    return { path, cleanup: () => rmSync(directory, { recursive: true, force: true }) }
+  // -------------------------------------------------------------- transfers
+
+  private dismissTransfer(): void {
+    if (!this.transfer) return
+    if (this.transfer.running) {
+      this.transfer.cancel()
+      this.say('Cancelling…', 'warn')
+      return
+    }
+    this.transfer = null
   }
 
-  /**
-   * Previews, then transfers what was previewed.
-   *
-   * `s` used to start an immediate transfer of the entire directory. There was
-   * no way to say "these two" and no moment at which anything could be
-   * refused: by the time a number was on screen the files were already moving.
-   * Now the dry run always runs first, and a real transfer waits on a yes.
-   */
-  private async transfer(previewOnly: boolean): Promise<void> {
+  private async transferTo(previewOnly: boolean): Promise<void> {
     const source = this.current
     const destination = this.other
-    const scope = source.marked.size > 0 ? `${source.marked.size} marked` : 'whole folder'
-    this.busy = true
-    this.status = `${ansi.yellow}Scanning ${source.path} -> ${destination.path} (${scope})${ansi.reset}`
-    this.render()
+    const controller = new AbortController()
 
-    const list = this.markList(source)
+    const transfer: Transfer = {
+      mode: previewOnly ? 'preview' : 'sync',
+      from: endpointString(source),
+      to: endpointString(destination),
+      running: true,
+      progress: null,
+      recent: [],
+      summary: { add: 0, update: 0, metadata: 0, delete: 0, unchanged: 0, error: 0 },
+      outcome: null,
+      cancel: () => controller.abort(),
+    }
+    this.transfer = transfer
+    this.busy = true
+    this.invalidate()
+
     try {
       const remote = source.connection ?? destination.connection
-      const optionsFor = (dryRun: boolean) =>
-        defaultRsyncOptions({
-          dryRun,
-          stats: true,
-          ...(list ? { filesFrom: list.path, from0: true } : {}),
-        })
-      const shell = remote ? { remoteShell: { keyPath: remote.keyPath, port: remote.port } } : {}
-      const endpoints = {
-        source: parseEndpoint(endpointString(source)),
-        destination: parseEndpoint(endpointString(destination)),
-      }
+      const plan = planTransfer({
+        source: parseEndpoint(transfer.from),
+        destination: parseEndpoint(transfer.to),
+        options: defaultRsyncOptions({ dryRun: previewOnly, stats: true }),
+        ...(remote ? { remoteShell: { keyPath: remote.keyPath, port: remote.port } } : {}),
+      })
 
-      const dry = await runToCompletion(planTransfer({ ...endpoints, options: optionsFor(true), ...shell }))
-      const preview = summarizeChanges(dry.changes)
-      const moving = preview.add + preview.update
+      const result = await runToCompletion(plan, { signal: controller.signal }, (event) => {
+        if (event.type === 'change') pushChange(transfer, event.change as Change)
+        else if (event.type === 'progress') transfer.progress = event.progress
+        this.invalidate()
+      })
 
-      if (!dry.ok) {
-        this.status = `${ansi.red}${truncate(dry.message, 200)}${ansi.reset}`
-        return
-      }
-      if (previewOnly) {
-        this.status = `${ansi.green}Preview (${scope}): ${preview.add} to add, ${preview.update} to update, ${preview.unchanged} unchanged${ansi.reset}`
-        return
-      }
-      if (moving === 0) {
-        this.status = `${ansi.green}Nothing to transfer (${scope}). The destination already matches.${ansi.reset}`
-        return
-      }
-
-      const approved = await this.ask(
-        `Transfer ${moving} file${moving === 1 ? '' : 's'} (${scope})?`,
-        `into ${destination.path}`,
-      )
-      if (!approved) {
-        this.status = `${ansi.yellow}Cancelled. Nothing was transferred.${ansi.reset}`
-        return
-      }
-
-      this.status = `${ansi.yellow}Syncing ${source.path} -> ${destination.path}${ansi.reset}`
-      this.render()
-      const result = await runToCompletion(planTransfer({ ...endpoints, options: optionsFor(false), ...shell }))
-      const summary = summarizeChanges(result.changes)
+      transfer.running = false
+      const moved = transfer.summary.add + transfer.summary.update
 
       if (!result.ok) {
-        this.status = `${ansi.red}${truncate(result.message, 200)}${ansi.reset}`
+        transfer.outcome = { ok: false, message: result.message }
+        this.say(result.message, 'error')
+      } else if (previewOnly) {
+        transfer.outcome = { ok: true, message: 'Preview complete' }
+        this.say(
+          `Preview: ${transfer.summary.add} to add, ${transfer.summary.update} to update, ${transfer.summary.unchanged} unchanged`,
+          'ok',
+        )
       } else {
-        this.status = `${ansi.green}Synced ${summary.add + summary.update} files${ansi.reset}`
+        transfer.outcome = { ok: true, message: 'Sync complete' }
+        this.say(`Synced ${moved} file${moved === 1 ? '' : 's'}`, 'ok')
         await this.load(this.active === 'left' ? 'right' : 'left')
       }
     } catch (error) {
-      this.status = `${ansi.red}${truncate(error instanceof Error ? error.message : String(error), 200)}${ansi.reset}`
+      transfer.running = false
+      const message = error instanceof Error ? error.message : String(error)
+      transfer.outcome = { ok: false, message }
+      this.say(message, 'error')
     } finally {
-      list?.cleanup()
+      transfer.running = false
       this.busy = false
+      this.invalidate()
     }
   }
 
-  /**
-   * A yes/no question over the panes. Resolves false on anything but y.
-   *
-   * Two lines, because `truncate` keeps the END of a string (the right choice
-   * for a path, the wrong one for a sentence). One combined line lost its own
-   * verb: "Transfer 4 files to /very/long/path?" rendered as "…r 4 files to
-   * /very/long/path?", which is a question about nothing.
-   */
-  private ask(headline: string, detail: string): Promise<boolean> {
-    return new Promise((resolve) => {
-      this.confirm = { headline, detail, decide: resolve }
-      this.render()
-    })
-  }
-
   close(): void {
+    this.transfer?.cancel()
     for (const session of this.sessions.values()) session.close()
   }
 }
@@ -617,22 +527,4 @@ function endpointString(pane: Pane): string {
   const path = pane.path.endsWith('/') ? pane.path : `${pane.path}/`
   if (!pane.connection) return path
   return `${pane.connection.username}@${pane.connection.host}:${path}`
-}
-
-function compareEntries(a: Entry, b: Entry): number {
-  if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1
-  return a.name.localeCompare(b.name)
-}
-
-export function listLocal(path: string): Entry[] {
-  return readdirSync(path)
-    .map((name) => {
-      const stats = statSync(join(path, name), { throwIfNoEntry: false })
-      return { name, isDirectory: stats?.isDirectory() ?? false, size: stats?.size ?? 0 }
-    })
-    .sort(compareEntries)
-}
-
-export function defaultLocalPath(): string {
-  return process.cwd() || homedir()
 }
