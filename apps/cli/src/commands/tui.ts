@@ -1,11 +1,10 @@
+import { createApp } from '@profullstack/hqtui'
 import type { DiskPushStore } from '@diskpush/database'
 import { EXIT } from '../exit-codes.js'
 import { failure, type Output } from '../output.js'
-import { flagValue, type ParsedArgv } from '../parse-argv.js'
+import { type ParsedArgv } from '../parse-argv.js'
 import { resolveEndpoint, sshConfigHosts } from '../resolve.js'
 import { blankPane, buildEndpointChoices, defaultLocalPath, Tui } from '../tui/app.js'
-import { parseKeys } from '../tui/keys.js'
-import { ansi } from '../tui/render.js'
 
 /**
  * `diskpush tui` — the two-pane browser, in a terminal.
@@ -42,46 +41,28 @@ export async function runTui(parsed: ParsedArgv, store: DiskPushStore, output: O
   const choices = buildEndpointChoices(await store.listConnections(), sshConfigHosts(), defaultLocalPath())
   const tui = new Tui(panes[0]!, panes[1]!, choices)
 
-  const restore = () => {
-    process.stdout.write(ansi.showCursor + ansi.mainScreen)
-    if (process.stdin.isTTY) process.stdin.setRawMode(false)
-    process.stdin.pause()
-  }
+  // `q` is not a quit key to the app: inside the host-key prompt it has to
+  // reach the Tui first, which is the only thing that knows a dialog is up.
+  // Ctrl+C stays with the app so the terminal is restored however it dies.
+  const app = await createApp({ quitKeys: ['ctrl+c'], collapseBorders: true, title: 'DiskPush' })
+  tui.attach(app)
 
-  process.stdout.write(ansi.altScreen + ansi.hideCursor)
-  process.stdin.setRawMode(true)
-  process.stdin.resume()
-  process.stdin.setEncoding('utf8')
+  app.on('key', (event) => {
+    void (async () => {
+      if (!(await tui.onKey(event))) app.quit()
+      else app.invalidate()
+    })()
+  })
 
-  const onResize = () => tui.render()
-  process.stdout.on('resize', onResize)
+  app.render(({ ui, theme, width, height }) => {
+    tui.view(ui, theme, width, height)
+  })
 
   try {
-    await tui.loadBoth()
-    tui.render()
-
-    await new Promise<void>((resolve) => {
-      const onData = (chunk: string) => {
-        // Several keys can arrive in one chunk, and an arrow key is three
-        // bytes; parseKeys turns the raw bytes into logical keys first.
-        void (async () => {
-          for (const key of parseKeys(chunk)) {
-            const keepGoing = await tui.onKey(key)
-            if (!keepGoing) {
-              process.stdin.off('data', onData)
-              resolve()
-              return
-            }
-          }
-          tui.render()
-        })()
-      }
-      process.stdin.on('data', onData)
-    })
+    void tui.loadBoth()
+    await app.start()
   } finally {
-    process.stdout.off('resize', onResize)
     tui.close()
-    restore()
   }
 
   return EXIT.ok
