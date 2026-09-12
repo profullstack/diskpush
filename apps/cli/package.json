@@ -21,7 +21,7 @@
     "@diskpush/rsync-core": "workspace:*",
     "@diskpush/schemas": "workspace:*",
     "@diskpush/ssh-core": "workspace:*",
-    "@profullstack/hqtui": "^0.2.0",
+    "@profullstack/hqtui": "^0.5.0",
     "zod": "^3.24.1"
   }
 }
