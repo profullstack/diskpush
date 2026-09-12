@@ -4,8 +4,11 @@
  * Only the network is stubbed; the panes hold entries the way a listing leaves
  * them, so these are the same code paths a keystroke takes in a terminal.
  */
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
-import type { App } from '@profullstack/hqtui'
+import type { App, MouseEvent } from '@profullstack/hqtui'
 import { renderToScreen } from '@profullstack/hqtui/testing'
 import { key } from './keys.fixture.js'
 import type { Entry, Pane, Side } from './model.js'
@@ -16,7 +19,7 @@ vi.mock('@diskpush/ssh-core', () => ({
 }))
 vi.mock('@diskpush/database', () => ({ knownHostsPath: () => '/tmp/known_hosts.test' }))
 
-const { Tui, blankPane } = await import('./app.js')
+const { Tui, blankPane, listLocal } = await import('./app.js')
 type Tui = InstanceType<typeof Tui>
 
 const entry = (name: string, over: Partial<Entry> = {}): Entry => ({
@@ -54,6 +57,32 @@ const frame = (app: Tui) =>
     collapseBorders: true,
   })
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0))
+const move = (x: number, y: number): MouseEvent => ({
+  type: 'mouse',
+  action: 'move',
+  button: 'none',
+  x,
+  y,
+  scroll: 0,
+  clicks: 1,
+  ctrl: false,
+  alt: false,
+  shift: false,
+})
+
+/** A real directory on disk, because unfolding lists it for real. */
+function realTree() {
+  const root = mkdtempSync(join(tmpdir(), 'diskpush-tui-'))
+  mkdirSync(join(root, 'src', 'lib'), { recursive: true })
+  writeFileSync(join(root, 'src', 'index.ts'), 'export {}\n')
+  writeFileSync(join(root, 'src', 'lib', 'deep.ts'), 'export {}\n')
+  writeFileSync(join(root, 'a.ts'), '')
+  const left = blankPane('Local', root)
+  left.entries = listLocal(root)
+  const right = blankPane('Local', '/tmp/b')
+  const app = new Tui(left, right, [])
+  return { app, root }
+}
 
 describe('navigation', () => {
   it('moves the cursor and stops at both ends', async () => {
@@ -203,30 +232,78 @@ describe('the mouse', () => {
     expect(state(app).active).toBe('right')
   })
 
-  it('opens a directory on a double-click, and .. takes it back up', async () => {
-    const app = tui([entry('src', { isDirectory: true }), entry('a.ts')])
+  it('unfolds a directory on one click, shows its listing beneath it, and folds it on the next', async () => {
+    const { app } = realTree()
     let screen = frame(app)
     const src = screen.find('src')!
-    screen.click(src.x, src.y, { clicks: 2 })
+    screen.click(src.x, src.y)
     await settle()
-    expect(pane(app, 'left').path).toBe('/tmp/a/src')
+    expect(pane(app, 'left').unfolded.has('src')).toBe(true)
+    expect(pane(app, 'left').index).toBe(0)
 
-    // The listing failed (there is no such directory) and `..` is still there.
     screen = frame(app)
-    const up = screen.find('..')!
-    screen.click(up.x, up.y, { clicks: 2 })
+    expect(screen.contains('index.ts')).toBe(true)
+    expect(screen.contains('▾ src')).toBe(true)
+    // Nested directories unfold the same way, one level at a time.
+    const lib = screen.find('lib')!
+    screen.click(lib.x, lib.y)
     await settle()
-    expect(pane(app, 'left').path).toBe('/tmp/a')
+    screen = frame(app)
+    expect(screen.contains('deep.ts')).toBe(true)
+    expect(pane(app, 'left').unfolded.has('src/lib')).toBe(true)
+
+    // Folding the parent hides everything under it, and remembers it.
+    screen.click(src.x, src.y)
+    await settle()
+    screen = frame(app)
+    expect(screen.contains('index.ts')).toBe(false)
+    expect(pane(app, 'left').children.has('src')).toBe(true)
   })
 
-  it('a file does not open on a double-click', async () => {
+  it('one click on .. goes up', async () => {
+    const { app, root } = realTree()
+    const screen = frame(app)
+    const up = screen.find('..')!
+    screen.click(up.x, up.y)
+    await settle()
+    expect(pane(app, 'left').path).toBe(dirname(root))
+  })
+
+  it('a click on a file only selects it', async () => {
     const app = tui()
     const screen = frame(app)
     const beta = screen.find('beta.ts')!
-    screen.click(beta.x, beta.y, { clicks: 2 })
+    screen.click(beta.x, beta.y)
     await settle()
     expect(pane(app, 'left').path).toBe('/tmp/a')
     expect(pane(app, 'left').index).toBe(1)
+  })
+
+  it('lights the row under the pointer, and puts it out when the pointer leaves the rows', () => {
+    const app = tui()
+    const screen = frame(app)
+    const beta = screen.find('beta.ts')!
+    expect(screen.hover(beta.x, beta.y)).toBe(true)
+    app.onMouse(move(beta.x, beta.y))
+    expect(pane(app, 'left').hover).toBe(1)
+    // A move the frame's rows did not claim: the header, say.
+    expect(screen.hover(2, 0)).toBe(false)
+    app.onMouse(move(2, 0))
+    expect(pane(app, 'left').hover).toBeNull()
+  })
+
+  it('walks the tree from the keyboard: → unfolds and steps in, ← folds and climbs, then leaves', async () => {
+    const { app, root } = realTree()
+    await press(app, 'right')
+    expect(pane(app, 'left').unfolded.has('src')).toBe(true)
+    await press(app, 'right')
+    expect(pane(app, 'left').index).toBe(1)
+    await press(app, 'left')
+    expect(pane(app, 'left').index).toBe(0)
+    await press(app, 'left')
+    expect(pane(app, 'left').unfolded.has('src')).toBe(false)
+    await press(app, 'left')
+    expect(pane(app, 'left').path).toBe(dirname(root))
   })
 
   it('drives the key bar: endpoint opens the picker, a server points the pane, outside closes it', async () => {

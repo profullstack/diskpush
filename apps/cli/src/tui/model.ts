@@ -40,6 +40,18 @@ export type Pane = {
   descending: boolean
   showHidden: boolean
   loading: boolean
+  /**
+   * The listing of every directory that has been unfolded below the root, by
+   * path relative to `path` (`src/lib`). Kept across a fold so unfolding again
+   * is instant; dropped when the root changes.
+   */
+  children: Map<string, Entry[]>
+  /** Relative paths of the directories currently unfolded. */
+  unfolded: Set<string>
+  /** Relative paths whose listing is on its way. */
+  listing: Set<string>
+  /** The row under the mouse, as an index into `visibleRows`; -1 is `..`. */
+  hover: number | null
 }
 
 export function blankPane(label: string, path: string, connection: Connection | null = null): Pane {
@@ -56,7 +68,19 @@ export function blankPane(label: string, path: string, connection: Connection | 
     descending: false,
     showHidden: false,
     loading: false,
+    children: new Map(),
+    unfolded: new Set(),
+    listing: new Set(),
+    hover: null,
   }
+}
+
+/** Forgets everything below the root: the root is about to change. */
+export function resetTree(pane: Pane): void {
+  pane.children.clear()
+  pane.unfolded.clear()
+  pane.listing.clear()
+  pane.hover = null
 }
 
 /** Somewhere a pane can point at: this machine, or a server. */
@@ -125,16 +149,72 @@ export function compareEntries(a: Entry, b: Entry, sort: SortKey, descending: bo
   return descending ? -ordering : ordering
 }
 
-/** What the pane actually shows: hidden files, the filter and the sort applied. */
-export function visibleEntries(pane: Pane): Entry[] {
-  return pane.entries
+/** A listing with the pane's hidden-file rule, filter and sort applied. */
+export function orderEntries(entries: readonly Entry[], pane: Pane): Entry[] {
+  return entries
     .filter((entry) => (pane.showHidden || !entry.name.startsWith('.')) && matchesFilter(entry.name, pane.filter))
     .sort((a, b) => compareEntries(a, b, pane.sort, pane.descending))
 }
 
-export function selectedEntry(pane: Pane): Entry | null {
-  return visibleEntries(pane)[pane.index] ?? null
+/** The root listing as the pane shows it. */
+export function visibleEntries(pane: Pane): Entry[] {
+  return orderEntries(pane.entries, pane)
 }
+
+/** One line of a pane: an entry at some depth of the unfolded tree. */
+export type Row = {
+  entry: Entry
+  /** Path relative to the pane root, e.g. `src/lib`. */
+  rel: string
+  depth: number
+  unfolded: boolean
+  /** The listing that would fill this directory is still on its way. */
+  listing: boolean
+  children: Row[]
+}
+
+/** The pane as a tree: the root listing, with each unfolded directory's listing nested under it. */
+export function rowTree(pane: Pane): Row[] {
+  const build = (entries: readonly Entry[], prefix: string, depth: number): Row[] =>
+    orderEntries(entries, pane).map((entry) => {
+      const rel = prefix ? `${prefix}/${entry.name}` : entry.name
+      const unfolded = entry.isDirectory && pane.unfolded.has(rel)
+      return {
+        entry,
+        rel,
+        depth,
+        unfolded,
+        listing: pane.listing.has(rel),
+        children: unfolded ? build(pane.children.get(rel) ?? [], rel, depth + 1) : [],
+      }
+    })
+  return build(pane.entries, '', 0)
+}
+
+/**
+ * The tree flattened in the order it is drawn, which is what the cursor
+ * indexes and what a click lands on.
+ */
+export function visibleRows(pane: Pane): Row[] {
+  const out: Row[] = []
+  const walk = (rows: Row[]): void => {
+    for (const row of rows) {
+      out.push(row)
+      walk(row.children)
+    }
+  }
+  walk(rowTree(pane))
+  return out
+}
+
+export function selectedRow(pane: Pane): Row | null {
+  return visibleRows(pane)[pane.index] ?? null
+}
+
+export function selectedEntry(pane: Pane): Entry | null {
+  return selectedRow(pane)?.entry ?? null
+}
+
 
 /** The directory above this pane's, or null when there is nowhere up to go. */
 export function parentPath(pane: Pane): string | null {
@@ -142,18 +222,9 @@ export function parentPath(pane: Pane): string | null {
   return parent === pane.path ? null : parent
 }
 
-/**
- * The `..` row at the top of a listing. The keyboard leaves a directory with
- * ←; a mouse needs something to click on, and every file manager since the
- * first one has spelled it this way. It is one shared object so the view can
- * tell it from a real entry by identity, and it never enters a pane's
- * `entries`, so sorting, filtering and the cursor index never see it.
- */
-export const PARENT_ENTRY: Entry = Object.freeze({ name: '..', isDirectory: true, size: 0, modifiedAt: null })
-
-/** Keeps the cursor on a row that exists, which filtering and reloading can break. */
+/** Keeps the cursor on a row that exists, which filtering, folding and reloading can break. */
 export function clampIndex(pane: Pane): void {
-  const last = Math.max(0, visibleEntries(pane).length - 1)
+  const last = Math.max(0, visibleRows(pane).length - 1)
   pane.index = Math.min(last, Math.max(0, pane.index))
 }
 

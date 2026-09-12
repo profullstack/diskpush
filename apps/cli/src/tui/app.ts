@@ -11,7 +11,7 @@
  * screen can be rendered and asserted on in a test with no pty.
  */
 import { join, posix } from 'node:path'
-import type { App, Container, KeyEvent, Theme } from '@profullstack/hqtui'
+import type { App, Container, KeyEvent, MouseEvent, Theme } from '@profullstack/hqtui'
 import { knownHostsPath } from '@diskpush/database'
 import { SftpBrowser, SshSession } from '@diskpush/ssh-core'
 import { defaultRsyncOptions, type Change, type Connection } from '@diskpush/schemas'
@@ -21,6 +21,7 @@ import {
   type Entry,
   type Overlay,
   type Pane,
+  type Row,
   type Side,
   type SortKey,
   SORT_KEYS,
@@ -30,8 +31,9 @@ import {
   listLocal,
   parentPath,
   pushChange,
-  selectedEntry,
-  visibleEntries,
+  resetTree,
+  selectedRow,
+  visibleRows,
 } from './model.js'
 import { type Action, type Tone, type ViewState, draw, filterChoices } from './view.js'
 
@@ -59,6 +61,12 @@ export class Tui {
   private busy = false
   private readonly sessions = new Map<string, SshSession>()
   private app: App | null = null
+  /**
+   * Whether a row claimed the pointer during the mouse event being handled.
+   * A tree only hears the pointer while it is inside, so a move that no row
+   * claimed is the pointer leaving, and the hover goes with it.
+   */
+  private hoverSeen = false
 
   constructor(
     left: Pane,
@@ -105,20 +113,24 @@ export class Tui {
         const pane = this.panes[side]
         pane.index = index
         clampIndex(pane)
+        const row = selectedRow(pane)
+        if (row?.entry.isDirectory && !this.busy) void this.toggle(side, row)
         this.invalidate()
       },
-      onOpenRow: (side, index) => {
+      onGoUp: (side) => {
         if (this.busy) return
         this.status = null
         this.active = side
+        void this.goUp()
+      },
+      onHoverRow: (side, index) => {
+        this.hoverSeen = true
         const pane = this.panes[side]
-        if (index < 0) {
-          void this.goUp()
-          return
-        }
-        pane.index = index
-        clampIndex(pane)
-        void this.enter()
+        const other = this.panes[side === 'left' ? 'right' : 'left']
+        if (pane.hover === index && other.hover === null) return
+        pane.hover = index
+        other.hover = null
+        this.invalidate()
       },
       onScroll: (side, delta) => {
         this.active = side
@@ -141,6 +153,22 @@ export class Tui {
         if (this.overlay?.kind === 'hostKey') this.overlay.decide(trust)
       },
     })
+  }
+
+  /**
+   * Every mouse event, after the frame's regions have had it. The only thing
+   * left to learn here is a move that no row claimed: the pointer has left the
+   * rows, so nothing should stay lit.
+   */
+  onMouse(event: MouseEvent): void {
+    if (event.action === 'move' && !this.hoverSeen) {
+      if (this.panes.left.hover !== null || this.panes.right.hover !== null) {
+        this.panes.left.hover = null
+        this.panes.right.hover = null
+        this.invalidate()
+      }
+    }
+    this.hoverSeen = false
   }
 
   /**
@@ -174,7 +202,7 @@ export class Tui {
         this.overlay = { kind: 'help' }
         break
       case 'open':
-        if (!this.busy) await this.enter()
+        if (!this.busy) await this.toggleSelected()
         break
       case 'endpoint':
         if (!this.busy) this.openPicker()
@@ -259,8 +287,9 @@ export class Tui {
     pane.error = null
     pane.loading = true
     this.invalidate()
+    resetTree(pane)
     try {
-      pane.entries = pane.connection ? await this.listRemote(pane) : listLocal(pane.path)
+      pane.entries = pane.connection ? await this.listRemote(pane, pane.path) : listLocal(pane.path)
       pane.index = 0
       pane.offset = 0
     } catch (error) {
@@ -277,10 +306,10 @@ export class Tui {
     await this.load('right')
   }
 
-  private async listRemote(pane: Pane): Promise<Entry[]> {
+  private async listRemote(pane: Pane, path: string): Promise<Entry[]> {
     const browser = await SftpBrowser.open(await this.session(pane.connection!))
     try {
-      const entries = await browser.list(pane.path)
+      const entries = await browser.list(path)
       return entries.map((entry) => ({
         name: entry.name,
         isDirectory: entry.type === 'directory',
@@ -346,13 +375,16 @@ export class Tui {
         pane.index = 0
         break
       case key.name === 'end':
-        pane.index = Math.max(0, visibleEntries(pane).length - 1)
+        pane.index = Math.max(0, visibleRows(pane).length - 1)
         break
       case key.name === 'left' || key.name === 'h':
-        await this.goUp()
+        await this.foldOrGoUp()
         break
-      case key.name === 'right' || key.name === 'enter' || key.name === 'l':
-        await this.enter()
+      case key.name === 'enter':
+        await this.toggleSelected()
+        break
+      case key.name === 'right' || key.name === 'l':
+        await this.unfoldOrStepIn()
         break
       case key.name === 'c':
         this.openPicker()
@@ -449,8 +481,80 @@ export class Tui {
 
   private move(delta: number): void {
     const pane = this.current
-    const last = Math.max(0, visibleEntries(pane).length - 1)
+    const last = Math.max(0, visibleRows(pane).length - 1)
     pane.index = Math.min(last, Math.max(0, pane.index + delta))
+  }
+
+  // ------------------------------------------------------------------ tree
+
+  /** Folds or unfolds a directory row, listing it first if it never has been. */
+  private async toggle(side: Side, row: Row): Promise<void> {
+    const pane = this.panes[side]
+    if (!row.entry.isDirectory) return
+    if (row.unfolded) {
+      pane.unfolded.delete(row.rel)
+      clampIndex(pane)
+      this.invalidate()
+      return
+    }
+    if (!pane.children.has(row.rel)) {
+      if (pane.listing.has(row.rel)) return
+      pane.listing.add(row.rel)
+      this.invalidate()
+      try {
+        pane.children.set(row.rel, await this.listBelow(pane, row.rel))
+      } catch (error) {
+        this.say(`${row.rel}: ${error instanceof Error ? error.message : String(error)}`, 'error')
+        return
+      } finally {
+        pane.listing.delete(row.rel)
+        this.invalidate()
+      }
+    }
+    pane.unfolded.add(row.rel)
+    this.invalidate()
+  }
+
+  private listBelow(pane: Pane, rel: string): Promise<Entry[]> {
+    if (pane.connection) return this.listRemote(pane, posix.join(pane.path, rel))
+    return Promise.resolve(listLocal(join(pane.path, rel)))
+  }
+
+  private async toggleSelected(): Promise<void> {
+    const row = selectedRow(this.current)
+    if (row) await this.toggle(this.active, row)
+  }
+
+  /** → on a folded directory unfolds it; on an unfolded one it steps onto the first child. */
+  private async unfoldOrStepIn(): Promise<void> {
+    const pane = this.current
+    const row = selectedRow(pane)
+    if (!row?.entry.isDirectory) return
+    if (!row.unfolded) {
+      await this.toggle(this.active, row)
+      return
+    }
+    if (row.children.length > 0) pane.index += 1
+  }
+
+  /** ← folds the directory under the cursor, else climbs to its parent row, else leaves the root. */
+  private async foldOrGoUp(): Promise<void> {
+    const pane = this.current
+    const row = selectedRow(pane)
+    if (row?.entry.isDirectory && row.unfolded) {
+      await this.toggle(this.active, row)
+      return
+    }
+    if (row && row.depth > 0) {
+      const rows = visibleRows(pane)
+      for (let i = pane.index - 1; i >= 0; i -= 1) {
+        if (rows[i]!.depth < row.depth) {
+          pane.index = i
+          return
+        }
+      }
+    }
+    await this.goUp()
   }
 
   private cycleSort(): void {
@@ -496,15 +600,6 @@ export class Tui {
       this.busy = false
       this.invalidate()
     }
-  }
-
-  private async enter(): Promise<void> {
-    const pane = this.current
-    const entry = selectedEntry(pane)
-    if (!entry?.isDirectory) return
-    pane.path = pane.connection ? posix.join(pane.path, entry.name) : join(pane.path, entry.name)
-    pane.filter = ''
-    await this.load(this.active)
   }
 
   private async goUp(): Promise<void> {
