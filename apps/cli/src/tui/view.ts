@@ -10,14 +10,17 @@ import { stringWidth, truncate } from '@profullstack/hqtui'
 import type { Change } from '@diskpush/schemas'
 import {
   type EndpointChoice,
+  type Entry,
   type Overlay,
   type Pane,
   type Side,
   type Transfer,
+  PARENT_ENTRY,
   estimateRemaining,
   formatDuration,
   formatSize,
   formatWhen,
+  parentPath,
   visibleEntries,
 } from './model.js'
 
@@ -35,17 +38,47 @@ export type ViewState = {
   now: Date
 }
 
-/** Mouse wiring. Optional so a test can render a frame without any. */
+/**
+ * Something a key in the footer, or in the header, stands for. A click on the
+ * key cap does what pressing the key does, through the same code, so the two
+ * can never disagree.
+ */
+export type Action =
+  | 'pane'
+  | 'open'
+  | 'endpoint'
+  | 'preview'
+  | 'sync'
+  | 'filter'
+  | 'sort'
+  | 'help'
+  | 'quit'
+  | 'cancelTransfer'
+  | 'dismissTransfer'
+  | 'closeOverlay'
+
+/**
+ * Mouse wiring. Optional so a test can render a frame without any.
+ *
+ * Rows are reported as an index into the pane's *visible* entries, never as a
+ * screen row: the table scrolls, and only the frame that drew it knows where
+ * its window started, so the frame does the arithmetic. `-1` is the `..` row.
+ */
 export type ViewHandlers = {
   onPaneFocus?: (side: Side) => void
-  onSelectRow?: (side: Side, visibleRow: number) => void
+  /** A click on a row: select it. */
+  onSelectRow?: (side: Side, index: number) => void
+  /** A double-click on a row: open the directory, or go up for `..`. */
+  onOpenRow?: (side: Side, index: number) => void
   onScroll?: (side: Side, delta: number) => void
-  /**
-   * Every body row the table drew, with its screen row. A click reports the row
-   * it landed on counted from the top of the visible window, and only the table
-   * knows where that window starts — this is how the app finds out.
-   */
-  onRowDrawn?: (side: Side, index: number, y: number) => void
+  /** A click on a key cap in the footer or the header. */
+  onAction?: (action: Action) => void
+  /** A click on a row of the endpoint picker: point the pane there. */
+  onPickChoice?: (choice: EndpointChoice) => void
+  /** A click on a dialog's backdrop, or its close button. */
+  onDismissOverlay?: () => void
+  /** A click on one of the host-key question's answers. */
+  onHostKeyDecide?: (trust: boolean) => void
 }
 
 /** Rows the transfer panel takes when one is on screen. */
@@ -107,7 +140,7 @@ export function draw(
   state: ViewState,
   handlers: ViewHandlers = {},
 ): void {
-  drawHeader(ui, theme, state)
+  drawHeader(ui, theme, state, handlers)
 
   ui.row({ gap: 0, height: 'fill' }, (row) => {
     drawPane(row, theme, state, 'left', Math.floor(width / 2), handlers)
@@ -116,16 +149,16 @@ export function draw(
 
   // A short terminal gives its rows to the panes; the transfer is still
   // readable from the status line, and half a panel is worse than none.
-  if (state.transfer && height >= TRANSFER_HEIGHT + 8) drawTransfer(ui, theme, state.transfer)
+  if (state.transfer && height >= TRANSFER_HEIGHT + 8) drawTransfer(ui, theme, state.transfer, handlers)
 
-  drawFooter(ui, theme, state, width)
+  drawFooter(ui, theme, state, width, handlers)
 
-  if (state.overlay?.kind === 'picker') drawPicker(ui, theme, state, state.overlay, height)
-  if (state.overlay?.kind === 'help') drawHelp(ui, theme)
-  if (state.overlay?.kind === 'hostKey') drawHostKey(ui, theme, state.overlay, width)
+  if (state.overlay?.kind === 'picker') drawPicker(ui, theme, state, state.overlay, height, handlers)
+  if (state.overlay?.kind === 'help') drawHelp(ui, theme, handlers)
+  if (state.overlay?.kind === 'hostKey') drawHostKey(ui, theme, state.overlay, width, handlers)
 }
 
-function drawHeader(ui: Container, theme: Theme, state: ViewState): void {
+function drawHeader(ui: Container, theme: Theme, state: ViewState, handlers: ViewHandlers): void {
   const source = state.panes[state.active]
   const destination = state.panes[state.active === 'left' ? 'right' : 'left']
   const arrow = state.active === 'left' ? '→' : '←'
@@ -141,8 +174,10 @@ function drawHeader(ui: Container, theme: Theme, state: ViewState): void {
       { label: 'two-pane rsync browser', color: theme.muted },
     ],
     right: [
-      { label: direction, color: theme.accent },
-      { key: '?', label: 'help', color: theme.muted },
+      // The direction is the active pane spelled out, so clicking it does what
+      // tab does: it is the one place the sync direction is visible.
+      { label: direction, color: theme.accent, onPress: () => handlers.onAction?.('pane') },
+      { key: '?', label: 'help', color: theme.muted, onPress: () => handlers.onAction?.('help') },
     ],
   })
 }
@@ -160,6 +195,14 @@ function drawPane(
   const entries = visibleEntries(pane)
   const files = entries.filter((entry) => !entry.isDirectory)
   const bytes = files.reduce((total, entry) => total + entry.size, 0)
+  // `..` sits above the listing whenever there is somewhere to go. It is not
+  // one of the entries, so the cursor index counts from the first real row.
+  // A listing that failed keeps it too: the way out of a directory that
+  // cannot be read must not be keyboard-only.
+  const parent = parentPath(pane) !== null
+  const listed = pane.error ? [] : entries
+  const rows: Entry[] = parent ? [PARENT_ENTRY, ...listed] : listed
+  const shift = parent ? 1 : 0
 
   const kind = pane.connection ? '◈' : '▪'
   const title = ` ${kind} ${pane.label} `
@@ -187,6 +230,9 @@ function drawPane(
       subtitle: truncatePath(pane.path, pathRoom),
       subtitleColor: theme.muted,
       footer: ` ${footerParts.join('  ·  ')} `,
+      // The border, the title, the space under a short listing: a click on any
+      // of it lands in this pane, so this pane becomes the one the keys act on.
+      onClick: () => handlers.onPaneFocus?.(side),
     },
     (panel) => {
       if (pane.loading) {
@@ -194,58 +240,73 @@ function drawPane(
         panel.text('Connecting…', { align: 'center', fg: theme.muted })
         return
       }
+      // Where the table's window started, as of this frame. A click reports
+      // the row it landed on counted from the top of that window.
+      let first = 0
+      const indexOf = (visibleRow: number) => first + visibleRow - shift
+
+      if (rows.length > 0) {
+        panel.table({
+          rows,
+          selected: pane.index + shift,
+          offset: pane.offset,
+          followSelection: true,
+          scrollbar: true,
+          header: false,
+          // An empty or unreadable directory still shows its `..`, on one
+          // row, with the explanation underneath rather than a screen of nothing.
+          ...(listed.length === 0 ? { size: rows.length } : {}),
+          onFocus: () => handlers.onPaneFocus?.(side),
+          onSelectRow: (visibleRow) => {
+            const index = indexOf(visibleRow)
+            // `..` is not a place the cursor can rest; a click on it only
+            // brings the pane to the front, and a double-click leaves.
+            if (index >= 0) handlers.onSelectRow?.(side, index)
+          },
+          onActivateRow: (visibleRow) => handlers.onOpenRow?.(side, indexOf(visibleRow)),
+          onScroll: (delta) => handlers.onScroll?.(side, delta),
+          onRow: (_entry, index, y) => {
+            first = index - y
+          },
+          columns: [
+            {
+              // Fills: the size and date belong against the right edge, not
+              // floating in the middle of a wide pane behind a column of air.
+              key: 'name',
+              width: '1fr',
+              render: (entry) => `${entry.isDirectory ? '▸' : ' '} ${entry.name}`,
+              color: (entry) => (entry === PARENT_ENTRY ? theme.muted : entry.isDirectory ? theme.primary : theme.foreground),
+            },
+            {
+              key: 'size',
+              width: 7,
+              align: 'right',
+              render: (entry) => (entry === PARENT_ENTRY ? '' : entry.isDirectory ? '—' : formatSize(entry.size)),
+              color: theme.muted,
+            },
+            {
+              key: 'modifiedAt',
+              width: 8,
+              align: 'right',
+              render: (entry) => formatWhen(entry.modifiedAt, state.now),
+              color: theme.muted,
+            },
+          ],
+        })
+      }
+
       if (pane.error) {
         panel.spacer(1)
         panel.text(pane.error, { fg: theme.danger, wrap: true, align: 'center' })
-        return
-      }
-      if (entries.length === 0) {
+      } else if (entries.length === 0) {
         panel.spacer(1)
         panel.text(pane.filter ? `Nothing matches “${pane.filter}”` : 'Empty', { align: 'center', fg: theme.muted })
-        return
       }
-
-      panel.table({
-        rows: entries,
-        selected: pane.index,
-        offset: pane.offset,
-        followSelection: true,
-        scrollbar: true,
-        header: false,
-        onFocus: () => handlers.onPaneFocus?.(side),
-        onSelectRow: (visibleRow) => handlers.onSelectRow?.(side, visibleRow),
-        onScroll: (delta) => handlers.onScroll?.(side, delta),
-        onRow: (_entry, index, y) => handlers.onRowDrawn?.(side, index, y),
-        columns: [
-          {
-            // Fills: the size and date belong against the right edge, not
-            // floating in the middle of a wide pane behind a column of air.
-            key: 'name',
-            width: '1fr',
-            render: (entry) => `${entry.isDirectory ? '▸' : ' '} ${entry.name}`,
-            color: (entry) => (entry.isDirectory ? theme.primary : theme.foreground),
-          },
-          {
-            key: 'size',
-            width: 7,
-            align: 'right',
-            render: (entry) => (entry.isDirectory ? '—' : formatSize(entry.size)),
-            color: theme.muted,
-          },
-          {
-            key: 'modifiedAt',
-            width: 8,
-            align: 'right',
-            render: (entry) => formatWhen(entry.modifiedAt, state.now),
-            color: theme.muted,
-          },
-        ],
-      })
     },
   )
 }
 
-function drawTransfer(ui: Container, theme: Theme, transfer: Transfer): void {
+function drawTransfer(ui: Container, theme: Theme, transfer: Transfer, handlers: ViewHandlers): void {
   const progress = transfer.progress
   // rsync's last progress line is whatever it happened to print before it
   // exited — 80% on a preview that finished. A completed transfer is 100%.
@@ -269,6 +330,11 @@ function drawTransfer(ui: Container, theme: Theme, transfer: Transfer): void {
       subtitleColor: theme.muted,
       borderColor: titleColor,
       footer: transfer.running ? ' esc  cancel ' : ' esc  dismiss ',
+      // A finished transfer is dismissed by clicking it. A running one is not
+      // cancelled that way: cancelling a sync from a stray click is exactly
+      // the kind of accident this program exists to avoid, so that stays on
+      // the key bar, where it is spelled out.
+      ...(transfer.running ? {} : { onClick: () => handlers.onAction?.('dismissTransfer') }),
     },
     (panel) => {
       panel.meter({
@@ -333,7 +399,7 @@ function drawTransfer(ui: Container, theme: Theme, transfer: Transfer): void {
   )
 }
 
-function drawFooter(ui: Container, theme: Theme, state: ViewState, width: number): void {
+function drawFooter(ui: Container, theme: Theme, state: ViewState, width: number, handlers: ViewHandlers): void {
   // The filter prompt replaces the key bar while it is being typed: the keys it
   // would list are all characters going into the filter.
   if (state.filtering) {
@@ -357,6 +423,10 @@ function drawFooter(ui: Container, theme: Theme, state: ViewState, width: number
     return
   }
 
+  // Each key cap is also a button for the same action. While a dialog is up
+  // its backdrop takes every click, so the bar under it only needs to read
+  // right; the dialog's own buttons are the ones that answer.
+  const act = (action: Action) => () => handlers.onAction?.(action)
   const overlay = state.overlay?.kind
   const items =
     overlay === 'picker'
@@ -374,16 +444,23 @@ function drawFooter(ui: Container, theme: Theme, state: ViewState, width: number
           ]
         : overlay === 'help'
           ? [{ key: 'esc', label: 'close' }]
-          : [
-              { key: 'tab', label: 'pane' },
-              { key: '⏎', label: 'open' },
-              { key: 'c', label: 'endpoint' },
-              { key: 'p', label: 'preview' },
-              { key: 's', label: 'sync' },
-              { key: '/', label: 'filter' },
-              { key: 'o', label: 'sort' },
-              { key: 'q', label: 'quit' },
-            ]
+          : state.transfer?.running
+            ? [
+                // Every other key is ignored while a transfer runs, so the bar
+                // says so instead of listing keys that would do nothing.
+                { key: 'esc', label: 'cancel', onPress: act('cancelTransfer') },
+                { key: 'q', label: 'quit', onPress: act('quit') },
+              ]
+            : [
+                { key: 'tab', label: 'pane', onPress: act('pane') },
+                { key: '⏎', label: 'open', onPress: act('open') },
+                { key: 'c', label: 'endpoint', onPress: act('endpoint') },
+                { key: 'p', label: 'preview', onPress: act('preview') },
+                { key: 's', label: 'sync', onPress: act('sync') },
+                { key: '/', label: 'filter', onPress: act('filter') },
+                { key: 'o', label: 'sort', onPress: act('sort') },
+                { key: 'q', label: 'quit', onPress: act('quit') },
+              ]
 
   ui.statusBar({ height: 1, keyStyle: 'caps', items })
 }
@@ -394,13 +471,17 @@ function drawPicker(
   state: ViewState,
   overlay: Extract<Overlay, { kind: 'picker' }>,
   height: number,
+  handlers: ViewHandlers,
 ): void {
   const matches = filterChoices(state.choices, overlay.query)
   // Built from a modal rather than `commandPalette`, whose title is fixed at
   // "Command Palette" — this is a list of your servers, and saying so is the
   // whole point of the dialog.
   const rows = Math.max(3, Math.min(matches.length, height - 12))
-  ui.modal({ title: ' Point this pane at ', width: 62, height: rows + 6 }, (modal) => {
+  let first = 0
+  ui.modal(
+    { title: ' Point this pane at ', width: 62, height: rows + 6, onDismiss: () => handlers.onDismissOverlay?.() },
+    (modal) => {
     modal.textInput({
       height: 1,
       value: overlay.query,
@@ -412,48 +493,70 @@ function drawPicker(
       modal.text('No server matches that.', { fg: theme.muted, align: 'center' })
       return
     }
-    modal.table({
-      rows: matches,
-      selected: overlay.index,
-      followSelection: true,
-      scrollbar: true,
-      header: false,
-      height: 'fill',
-      columns: [
-        { key: 'label', width: '1fr', color: theme.foreground },
-        { key: 'detail', align: 'right', color: theme.muted },
-      ],
-    })
-  })
+      modal.table({
+        rows: matches,
+        selected: overlay.index,
+        followSelection: true,
+        scrollbar: true,
+        header: false,
+        height: 'fill',
+        // This is a menu: one click chooses. Selecting and then confirming is
+        // what the keyboard does because it has to type a filter first.
+        onSelectRow: (visibleRow) => {
+          const choice = matches[first + visibleRow]
+          if (choice) handlers.onPickChoice?.(choice)
+        },
+        onRow: (_choice, index, y) => {
+          first = index - y
+        },
+        columns: [
+          { key: 'label', width: '1fr', color: theme.foreground },
+          { key: 'detail', align: 'right', color: theme.muted },
+        ],
+      })
+    },
+  )
 }
 
-function drawHelp(ui: Container, theme: Theme): void {
-  ui.modal({ title: ' Keys ', width: 58, height: 22 }, (modal) => {
-    modal.keyValues(
-      [
-        { label: 'tab', value: 'switch pane' },
-        { label: '↑ ↓ / j k', value: 'move' },
-        { label: '⏎ / → / l', value: 'open directory' },
-        { label: '← / h', value: 'go up' },
-        { label: 'pgup pgdn home end', value: 'jump' },
-        { label: 'c', value: 'point this pane somewhere else' },
-        { label: '/', value: 'filter this listing' },
-        { label: 'o / O', value: 'cycle sort / reverse it' },
-        { label: '.', value: 'show hidden files' },
-        { label: 'r', value: 'reload' },
-        { label: 'p', value: 'preview a sync to the other pane' },
-        { label: 's', value: 'sync to the other pane' },
-        { label: 'esc', value: 'cancel a transfer, or close this' },
-        { label: 'q', value: 'quit' },
-      ],
-      { labelColor: theme.accent },
-    )
-    modal.spacer('fill')
-    modal.text('No Mirror: deleting files from a keystroke, with no delete list on screen, is the accident DiskPush exists to prevent.', {
-      fg: theme.muted,
-      wrap: true,
-    })
-  })
+function drawHelp(ui: Container, theme: Theme, handlers: ViewHandlers): void {
+  const close = () => handlers.onDismissOverlay?.()
+  ui.modal(
+    {
+      title: ' Keys ',
+      width: 58,
+      height: 24,
+      buttons: [{ label: 'esc  close', variant: 'ghost', onPress: close }],
+      onDismiss: close,
+    },
+    (modal) => {
+      modal.keyValues(
+        [
+          { label: 'tab', value: 'switch pane' },
+          { label: '↑ ↓ / j k', value: 'move' },
+          { label: '⏎ / → / l', value: 'open directory' },
+          { label: '← / h', value: 'go up' },
+          { label: 'pgup pgdn home end', value: 'jump' },
+          { label: 'click', value: 'select a row, or a key in the bar' },
+          { label: 'double-click', value: 'open a directory, or .. to go up' },
+          { label: 'c', value: 'point this pane somewhere else' },
+          { label: '/', value: 'filter this listing' },
+          { label: 'o / O', value: 'cycle sort / reverse it' },
+          { label: '.', value: 'show hidden files' },
+          { label: 'r', value: 'reload' },
+          { label: 'p', value: 'preview a sync to the other pane' },
+          { label: 's', value: 'sync to the other pane' },
+          { label: 'esc', value: 'cancel a transfer, or close this' },
+          { label: 'q', value: 'quit' },
+        ],
+        { labelColor: theme.accent },
+      )
+      modal.text('No Mirror: deleting files from a keystroke, with no delete list on screen, is the accident DiskPush exists to prevent.', {
+        fg: theme.muted,
+        wrap: true,
+      })
+      modal.spacer('fill')
+    },
+  )
 }
 
 function drawHostKey(
@@ -461,6 +564,7 @@ function drawHostKey(
   theme: Theme,
   overlay: Extract<Overlay, { kind: 'hostKey' }>,
   width: number,
+  handlers: ViewHandlers,
 ): void {
   ui.modal(
     {
@@ -468,9 +572,10 @@ function drawHostKey(
       width: Math.min(72, Math.max(44, width - 8)),
       height: 11,
       color: theme.warning,
+      // No onDismiss: a fingerprint is not something a stray click answers.
       buttons: [
-        { label: 'y  trust', variant: 'warning', focused: true },
-        { label: 'n  cancel', variant: 'ghost' },
+        { label: 'y  trust', variant: 'warning', focused: true, onPress: () => handlers.onHostKeyDecide?.(true) },
+        { label: 'n  cancel', variant: 'ghost', onPress: () => handlers.onHostKeyDecide?.(false) },
       ],
     },
     (modal) => {

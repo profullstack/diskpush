@@ -5,6 +5,8 @@
  * them, so these are the same code paths a keystroke takes in a terminal.
  */
 import { describe, expect, it, vi } from 'vitest'
+import type { App } from '@profullstack/hqtui'
+import { renderToScreen } from '@profullstack/hqtui/testing'
 import { key } from './keys.fixture.js'
 import type { Entry, Pane, Side } from './model.js'
 
@@ -44,6 +46,14 @@ const pane = (app: Tui, side: Side): Pane => state(app).panes[side]
 const press = async (app: Tui, ...names: string[]) => {
   for (const name of names) await app.onKey(key(name))
 }
+/** Draws the real frame, so a click lands where the user would see it. */
+const frame = (app: Tui) =>
+  renderToScreen(({ ui, theme, width, height }) => app.view(ui, theme, width, height), {
+    width: 100,
+    height: 30,
+    collapseBorders: true,
+  })
+const settle = () => new Promise((resolve) => setTimeout(resolve, 0))
 
 describe('navigation', () => {
   it('moves the cursor and stops at both ends', async () => {
@@ -177,6 +187,116 @@ describe('the help overlay', () => {
 
     await press(app, '?')
     await expect(app.onKey(key('q'))).resolves.toBe(false)
+  })
+})
+
+describe('the mouse', () => {
+  it('selects a row with a click, and focuses whichever pane the click is in', () => {
+    const app = tui()
+    const screen = frame(app)
+    const gamma = screen.find('gamma.ts')!
+    expect(screen.click(gamma.x, gamma.y)).toBe(true)
+    expect(pane(app, 'left').index).toBe(2)
+    expect(state(app).active).toBe('left')
+    // Anywhere in the right pane, including its empty space.
+    expect(screen.click(75, 10)).toBe(true)
+    expect(state(app).active).toBe('right')
+  })
+
+  it('opens a directory on a double-click, and .. takes it back up', async () => {
+    const app = tui([entry('src', { isDirectory: true }), entry('a.ts')])
+    let screen = frame(app)
+    const src = screen.find('src')!
+    screen.click(src.x, src.y, { clicks: 2 })
+    await settle()
+    expect(pane(app, 'left').path).toBe('/tmp/a/src')
+
+    // The listing failed (there is no such directory) and `..` is still there.
+    screen = frame(app)
+    const up = screen.find('..')!
+    screen.click(up.x, up.y, { clicks: 2 })
+    await settle()
+    expect(pane(app, 'left').path).toBe('/tmp/a')
+  })
+
+  it('a file does not open on a double-click', async () => {
+    const app = tui()
+    const screen = frame(app)
+    const beta = screen.find('beta.ts')!
+    screen.click(beta.x, beta.y, { clicks: 2 })
+    await settle()
+    expect(pane(app, 'left').path).toBe('/tmp/a')
+    expect(pane(app, 'left').index).toBe(1)
+  })
+
+  it('drives the key bar: endpoint opens the picker, a server points the pane, outside closes it', async () => {
+    const app = tui()
+    let screen = frame(app)
+    const endpoint = screen.find('c endpoint')!
+    screen.click(endpoint.x, endpoint.y)
+    await settle()
+    expect(state(app).overlay?.kind).toBe('picker')
+
+    screen = frame(app)
+    screen.click(0, 0)
+    expect(state(app).overlay).toBeNull()
+
+    screen = frame(app)
+    screen.click(endpoint.x, endpoint.y)
+    await settle()
+    screen = frame(app)
+    const blue = screen.find('deploy@10.0.0.7')!
+    screen.click(blue.x, blue.y)
+    await settle()
+    expect(state(app).overlay).toBeNull()
+    expect(pane(app, 'left').label).toBe('blue')
+  })
+
+  it('opens the help from the header and closes it from its button', async () => {
+    const app = tui()
+    let screen = frame(app)
+    const help = screen.find('? help')!
+    screen.click(help.x, help.y)
+    await settle()
+    expect(state(app).overlay?.kind).toBe('help')
+    screen = frame(app)
+    const close = screen.find('esc  close')!
+    screen.click(close.x, close.y)
+    expect(state(app).overlay).toBeNull()
+  })
+
+  it('quits from the key bar through the app it is attached to', async () => {
+    const app = tui()
+    const quit = vi.fn()
+    app.attach({ quit, invalidate: () => {} } as unknown as App)
+    const screen = frame(app)
+    const q = screen.find('q quit')!
+    screen.click(q.x, q.y)
+    await settle()
+    expect(quit).toHaveBeenCalledTimes(1)
+  })
+
+  it('gives a dialog the whole screen: the key bar under it is not clickable', async () => {
+    const app = tui()
+    const quit = vi.fn()
+    app.attach({ quit, invalidate: () => {} } as unknown as App)
+    await press(app, '?')
+    const screen = frame(app)
+    // Bottom row, where the key bar is: the click is taken by the backdrop,
+    // which closes the help, and nothing underneath acts on it.
+    expect(screen.click(2, 29)).toBe(true)
+    expect(state(app).overlay).toBeNull()
+    expect(quit).not.toHaveBeenCalled()
+  })
+
+  it('clears the last message, like a key does', async () => {
+    const app = tui()
+    await press(app, '.')
+    expect(state(app).status).not.toBeNull()
+    const screen = frame(app)
+    const alpha = screen.find('alpha.ts')!
+    screen.click(alpha.x, alpha.y)
+    expect(state(app).status).toBeNull()
   })
 })
 

@@ -10,7 +10,7 @@
 import { describe, expect, it } from 'vitest'
 import { renderToScreen, renderToText } from '@profullstack/hqtui/testing'
 import { blankPane, type Entry, type Pane, type Transfer } from './model.js'
-import { type ViewState, draw, filterChoices, truncatePath } from './view.js'
+import { type Action, type ViewHandlers, type ViewState, draw, filterChoices, truncatePath } from './view.js'
 
 const entry = (name: string, over: Partial<Entry> = {}): Entry => ({
   name,
@@ -128,16 +128,161 @@ describe('truncatePath', () => {
 })
 
 describe('the mouse', () => {
-  it('registers a clickable, scrollable region for each pane', () => {
-    // Wheel and click handlers are otherwise only observable by running a real
-    // terminal and moving the mouse.
-    const s = state()
-    const rendered = renderToScreen(({ ui, theme }) => draw(ui, theme, 100, 30, s, {}), {
+  // Clicks are driven through the same hit-test the app runs, so these prove
+  // that the cell showing a thing is the cell that does it — which is
+  // otherwise only observable by running a real terminal and moving the mouse.
+  const frame = (s: ViewState, handlers: ViewHandlers = {}) =>
+    renderToScreen(({ ui, theme }) => draw(ui, theme, 100, 30, s, handlers), {
       width: 100,
       height: 30,
       collapseBorders: true,
     })
-    expect(rendered.regions.length).toBeGreaterThanOrEqual(2)
+
+  const runningTransfer = (running: boolean): Transfer => ({
+    mode: 'sync',
+    from: '/home/me/project/',
+    to: 'deploy@prod:/srv/app/',
+    running,
+    progress: null,
+    recent: [],
+    summary: { add: 0, update: 0, metadata: 0, delete: 0, unchanged: 0, error: 0 },
+    outcome: running ? null : { ok: true, message: 'Sync complete' },
+    cancel: () => {},
+  })
+
+  it('registers a clickable, scrollable region for each pane', () => {
+    expect(frame(state()).regions.length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('selects a row on a click and opens it on a double-click', () => {
+    const log: unknown[] = []
+    const rendered = frame(state(), {
+      onSelectRow: (side, index) => log.push(['select', side, index]),
+      onOpenRow: (side, index) => log.push(['open', side, index]),
+    })
+    const readme = rendered.find('README.md')!
+    expect(rendered.click(readme.x, readme.y)).toBe(true)
+    const src = rendered.find('src')!
+    rendered.click(src.x, src.y, { clicks: 2 })
+    // The second press of a double-click selects and then opens.
+    expect(log).toEqual([
+      ['select', 'left', 1],
+      ['select', 'left', 0],
+      ['open', 'left', 0],
+    ])
+  })
+
+  it('puts .. above a listing that has a parent; a double-click on it goes up', () => {
+    const log: unknown[] = []
+    const rendered = frame(state(), {
+      onSelectRow: (side, index) => log.push(['select', side, index]),
+      onOpenRow: (side, index) => log.push(['open', side, index]),
+    })
+    const up = rendered.find('..')!
+    // A click does not select it: the cursor has nowhere to rest on `..`.
+    expect(rendered.click(up.x, up.y)).toBe(true)
+    expect(log).toEqual([])
+    rendered.click(up.x, up.y, { clicks: 2 })
+    expect(log).toEqual([['open', 'left', -1]])
+  })
+
+  it('has no .. at the root, and keeps it on a listing that failed', () => {
+    const root = state()
+    root.panes.left.path = '/'
+    root.panes.right.path = '/'
+    expect(screen(root)).not.toContain('..')
+
+    const broken = state()
+    broken.panes.left.error = 'Permission denied'
+    const text = screen(broken)
+    expect(text).toContain('Permission denied')
+    expect(text).toContain('..')
+  })
+
+  it('makes every key in the bar a button for its action', () => {
+    const actions: Action[] = []
+    const rendered = frame(state(), { onAction: (action) => actions.push(action) })
+    for (const cap of ['tab pane', '⏎ open', 'c endpoint', 'p preview', 's sync', '/ filter', 'o sort', 'q quit']) {
+      const at = rendered.find(cap)!
+      expect(at, cap).not.toBeNull()
+      expect(rendered.click(at.x, at.y), cap).toBe(true)
+    }
+    expect(actions).toEqual(['pane', 'open', 'endpoint', 'preview', 'sync', 'filter', 'sort', 'quit'])
+  })
+
+  it('switches panes from the direction in the header, and opens help from ?', () => {
+    const actions: Action[] = []
+    const rendered = frame(state(), { onAction: (action) => actions.push(action) })
+    const direction = rendered.find('Local → prod')!
+    rendered.click(direction.x, direction.y)
+    const help = rendered.find('? help')!
+    rendered.click(help.x, help.y)
+    expect(actions).toEqual(['pane', 'help'])
+  })
+
+  it('focuses a pane from a click on its chrome', () => {
+    const focused: string[] = []
+    const rendered = frame(state(), { onPaneFocus: (side) => focused.push(side) })
+    const right = rendered.find('▪ prod')!
+    rendered.click(right.x, right.y)
+    const left = rendered.find('▪ Local')!
+    rendered.click(left.x, left.y)
+    expect(focused).toEqual(['right', 'left'])
+  })
+
+  it('chooses a server from the picker with one click, and closes it from outside', () => {
+    const log: unknown[] = []
+    const rendered = frame(state({ overlay: { kind: 'picker', query: '', index: 0 } }), {
+      onPickChoice: (choice) => log.push(['pick', choice.label]),
+      onDismissOverlay: () => log.push('dismiss'),
+    })
+    const prod = rendered.find('deploy@prod.example')!
+    rendered.click(prod.x, prod.y)
+    rendered.click(0, 0)
+    expect(log).toEqual([['pick', 'prod'], 'dismiss'])
+  })
+
+  it('answers the host-key question only from its buttons', () => {
+    const log: unknown[] = []
+    const rendered = frame(
+      state({
+        overlay: { kind: 'hostKey', host: 'prod', fingerprint: 'SHA256:abc', keyType: 'ed25519', decide: () => {} },
+      }),
+      { onHostKeyDecide: (trust) => log.push(trust), onDismissOverlay: () => log.push('dismiss') },
+    )
+    const trust = rendered.find('y  trust')!
+    rendered.click(trust.x, trust.y)
+    const cancel = rendered.find('n  cancel')!
+    rendered.click(cancel.x, cancel.y)
+    // A stray click outside the dialog is taken, and answers nothing.
+    expect(rendered.click(0, 0)).toBe(true)
+    expect(log).toEqual([true, false])
+  })
+
+  it('closes the help from its button or from outside', () => {
+    let closed = 0
+    const rendered = frame(state({ overlay: { kind: 'help' } }), { onDismissOverlay: () => closed++ })
+    const close = rendered.find('esc  close')!
+    rendered.click(close.x, close.y)
+    rendered.click(0, 0)
+    expect(closed).toBe(2)
+  })
+
+  it('dismisses a finished transfer with a click, and never cancels a running one that way', () => {
+    const actions: Action[] = []
+    const done = frame(state({ transfer: runningTransfer(false) }), { onAction: (action) => actions.push(action) })
+    const complete = done.find('Sync complete')!
+    done.click(complete.x, complete.y)
+    expect(actions).toEqual(['dismissTransfer'])
+
+    const running = frame(state({ transfer: runningTransfer(true) }), { onAction: (action) => actions.push(action) })
+    const syncing = running.find('Syncing')!
+    running.click(syncing.x, syncing.y)
+    expect(actions).toEqual(['dismissTransfer'])
+    // Cancel lives on the key bar, spelled out.
+    const cancel = running.find('esc cancel')!
+    running.click(cancel.x, cancel.y)
+    expect(actions).toEqual(['dismissTransfer', 'cancelTransfer'])
   })
 })
 
@@ -258,9 +403,10 @@ describe('the transfer panel', () => {
 })
 
 describe('the help overlay', () => {
-  it('documents every binding, and why Mirror is not one', () => {
+  it('documents every binding, the mouse, and why Mirror is not one', () => {
     const text = screen(state({ overlay: { kind: 'help' } }))
     expect(text).toContain('switch pane')
+    expect(text).toContain('double-click')
     expect(text).toContain('Mirror')
   })
 })

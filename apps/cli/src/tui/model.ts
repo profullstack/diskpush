@@ -7,7 +7,7 @@
  */
 import { readdirSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { join, posix } from 'node:path'
 import type { Change, ChangeSummary, Connection, RsyncProgress } from '@diskpush/schemas'
 
 export type Entry = {
@@ -135,6 +135,21 @@ export function visibleEntries(pane: Pane): Entry[] {
 export function selectedEntry(pane: Pane): Entry | null {
   return visibleEntries(pane)[pane.index] ?? null
 }
+
+/** The directory above this pane's, or null when there is nowhere up to go. */
+export function parentPath(pane: Pane): string | null {
+  const parent = pane.connection ? posix.dirname(pane.path) : join(pane.path, '..')
+  return parent === pane.path ? null : parent
+}
+
+/**
+ * The `..` row at the top of a listing. The keyboard leaves a directory with
+ * ←; a mouse needs something to click on, and every file manager since the
+ * first one has spelled it this way. It is one shared object so the view can
+ * tell it from a real entry by identity, and it never enters a pane's
+ * `entries`, so sorting, filtering and the cursor index never see it.
+ */
+export const PARENT_ENTRY: Entry = Object.freeze({ name: '..', isDirectory: true, size: 0, modifiedAt: null })
 
 /** Keeps the cursor on a row that exists, which filtering and reloading can break. */
 export function clampIndex(pane: Pane): void {
