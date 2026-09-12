@@ -53,6 +53,9 @@ export async function runTui(parsed: ParsedArgv, store: DiskPushStore, output: O
       else app.invalidate()
     })()
   })
+  // The frame's own regions have already had the event by the time this
+  // runs; what is left is noticing the pointer leave the rows.
+  app.on('mouse', (event) => tui.onMouse(event))
 
   app.render(({ ui, theme, width, height }) => {
     tui.view(ui, theme, width, height)

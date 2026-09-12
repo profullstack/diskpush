@@ -10,19 +10,28 @@ import { stringWidth, truncate } from '@profullstack/hqtui'
 import type { Change } from '@diskpush/schemas'
 import {
   type EndpointChoice,
-  type Entry,
   type Overlay,
   type Pane,
+  type Row,
   type Side,
   type Transfer,
-  PARENT_ENTRY,
   estimateRemaining,
   formatDuration,
   formatSize,
   formatWhen,
   parentPath,
+  rowTree,
   visibleEntries,
 } from './model.js'
+
+/** What hqtui's tree draws: the model's `Row`, spelled the widget's way. */
+type TreeNode = {
+  label: string
+  color?: Color
+  values?: { text: string; width: number; color?: Color; align?: 'left' | 'right' | 'center' }[]
+  children?: TreeNode[]
+  expanded?: boolean
+}
 
 export type Tone = 'info' | 'ok' | 'warn' | 'error'
 
@@ -60,16 +69,18 @@ export type Action =
 /**
  * Mouse wiring. Optional so a test can render a frame without any.
  *
- * Rows are reported as an index into the pane's *visible* entries, never as a
- * screen row: the table scrolls, and only the frame that drew it knows where
- * its window started, so the frame does the arithmetic. `-1` is the `..` row.
+ * Rows are reported as an index into the pane's *visible rows*, never as a
+ * screen row: the tree scrolls, and only the frame that drew it knows where
+ * its window started, so the frame does the arithmetic.
  */
 export type ViewHandlers = {
   onPaneFocus?: (side: Side) => void
-  /** A click on a row: select it. */
+  /** A click on a row: select it, and fold or unfold it if it is a directory. */
   onSelectRow?: (side: Side, index: number) => void
-  /** A double-click on a row: open the directory, or go up for `..`. */
-  onOpenRow?: (side: Side, index: number) => void
+  /** A click on the `..` row. */
+  onGoUp?: (side: Side) => void
+  /** The pointer is over a row (-1 is `..`), or left the rows (null). */
+  onHoverRow?: (side: Side, index: number | null) => void
   onScroll?: (side: Side, delta: number) => void
   /** A click on a key cap in the footer or the header. */
   onAction?: (action: Action) => void
@@ -195,14 +206,30 @@ function drawPane(
   const entries = visibleEntries(pane)
   const files = entries.filter((entry) => !entry.isDirectory)
   const bytes = files.reduce((total, entry) => total + entry.size, 0)
-  // `..` sits above the listing whenever there is somewhere to go. It is not
-  // one of the entries, so the cursor index counts from the first real row.
-  // A listing that failed keeps it too: the way out of a directory that
-  // cannot be read must not be keyboard-only.
+  // `..` sits above the tree whenever there is somewhere to go. It is not one
+  // of the rows, so the cursor index counts from the first real row. A
+  // listing that failed keeps it too: the way out of a directory that cannot
+  // be read must not be keyboard-only.
   const parent = parentPath(pane) !== null
-  const listed = pane.error ? [] : entries
-  const rows: Entry[] = parent ? [PARENT_ENTRY, ...listed] : listed
+  const tree = pane.error ? [] : rowTree(pane)
   const shift = parent ? 1 : 0
+  const column = (text: string, width: number) => ({ text, width, color: theme.muted })
+  const toNode = (row: Row): TreeNode => ({
+    // The marker is the fold state, and it changes under the click: ▸ folded,
+    // ▾ unfolded, … while the listing is on its way.
+    label: `${row.entry.isDirectory ? (row.listing ? '…' : row.unfolded ? '▾' : '▸') : ' '} ${row.entry.name}`,
+    color: row.entry.isDirectory ? theme.primary : theme.foreground,
+    expanded: row.unfolded,
+    ...(row.unfolded ? { children: row.children.map(toNode) } : {}),
+    values: [
+      column(row.entry.isDirectory ? '—' : formatSize(row.entry.size), 7),
+      column(formatWhen(row.entry.modifiedAt, state.now), 8),
+    ],
+  })
+  const nodes: TreeNode[] = [
+    ...(parent ? [{ label: '↑ ..', color: theme.muted, values: [column('', 7), column('', 8)] }] : []),
+    ...tree.map(toNode),
+  ]
 
   const kind = pane.connection ? '◈' : '▪'
   const title = ` ${kind} ${pane.label} `
@@ -240,65 +267,44 @@ function drawPane(
         panel.text('Connecting…', { align: 'center', fg: theme.muted })
         return
       }
-      // Where the table's window started, as of this frame. A click reports
+      // Where the tree's window started, as of this frame. A click reports
       // the row it landed on counted from the top of that window.
       let first = 0
       const indexOf = (visibleRow: number) => first + visibleRow - shift
 
-      if (rows.length > 0) {
-        panel.table({
-          rows,
+      if (nodes.length > 0) {
+        panel.tree({
+          nodes,
           selected: pane.index + shift,
-          offset: pane.offset,
+          hovered: pane.hover === null ? undefined : pane.hover + shift,
           followSelection: true,
           scrollbar: true,
-          header: false,
+          // Indent alone shows the nesting; the ▸ ▾ markers carry the fold
+          // state, and connector lines would make `..` look like a sibling.
+          guides: false,
           // An empty or unreadable directory still shows its `..`, on one
           // row, with the explanation underneath rather than a screen of nothing.
-          ...(listed.length === 0 ? { size: rows.length } : {}),
+          ...(tree.length === 0 ? { size: nodes.length } : {}),
           onFocus: () => handlers.onPaneFocus?.(side),
+          // One click does the thing: a directory folds or unfolds, a file is
+          // selected, `..` goes up.
           onSelectRow: (visibleRow) => {
             const index = indexOf(visibleRow)
-            // `..` is not a place the cursor can rest; a click on it only
-            // brings the pane to the front, and a double-click leaves.
-            if (index >= 0) handlers.onSelectRow?.(side, index)
+            if (index < 0) handlers.onGoUp?.(side)
+            else handlers.onSelectRow?.(side, index)
           },
-          onActivateRow: (visibleRow) => handlers.onOpenRow?.(side, indexOf(visibleRow)),
+          onHoverRow: (visibleRow) => handlers.onHoverRow?.(side, visibleRow === null ? null : indexOf(visibleRow)),
           onScroll: (delta) => handlers.onScroll?.(side, delta),
-          onRow: (_entry, index, y) => {
+          onRow: (_node, index, y) => {
             first = index - y
           },
-          columns: [
-            {
-              // Fills: the size and date belong against the right edge, not
-              // floating in the middle of a wide pane behind a column of air.
-              key: 'name',
-              width: '1fr',
-              render: (entry) => `${entry.isDirectory ? '▸' : ' '} ${entry.name}`,
-              color: (entry) => (entry === PARENT_ENTRY ? theme.muted : entry.isDirectory ? theme.primary : theme.foreground),
-            },
-            {
-              key: 'size',
-              width: 7,
-              align: 'right',
-              render: (entry) => (entry === PARENT_ENTRY ? '' : entry.isDirectory ? '—' : formatSize(entry.size)),
-              color: theme.muted,
-            },
-            {
-              key: 'modifiedAt',
-              width: 8,
-              align: 'right',
-              render: (entry) => formatWhen(entry.modifiedAt, state.now),
-              color: theme.muted,
-            },
-          ],
         })
       }
 
       if (pane.error) {
         panel.spacer(1)
         panel.text(pane.error, { fg: theme.danger, wrap: true, align: 'center' })
-      } else if (entries.length === 0) {
+      } else if (tree.length === 0) {
         panel.spacer(1)
         panel.text(pane.filter ? `Nothing matches “${pane.filter}”` : 'Empty', { align: 'center', fg: theme.muted })
       }
@@ -533,11 +539,11 @@ function drawHelp(ui: Container, theme: Theme, handlers: ViewHandlers): void {
         [
           { label: 'tab', value: 'switch pane' },
           { label: '↑ ↓ / j k', value: 'move' },
-          { label: '⏎ / → / l', value: 'open directory' },
-          { label: '← / h', value: 'go up' },
+          { label: '⏎ / → / l', value: 'unfold a directory' },
+          { label: '← / h', value: 'fold it, or go up' },
           { label: 'pgup pgdn home end', value: 'jump' },
-          { label: 'click', value: 'select a row, or a key in the bar' },
-          { label: 'double-click', value: 'open a directory, or .. to go up' },
+          { label: 'click', value: 'select; fold or unfold a directory' },
+          { label: 'click ..', value: 'go up' },
           { label: 'c', value: 'point this pane somewhere else' },
           { label: '/', value: 'filter this listing' },
           { label: 'o / O', value: 'cycle sort / reverse it' },

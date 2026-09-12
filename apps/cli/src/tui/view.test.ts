@@ -154,36 +154,57 @@ describe('the mouse', () => {
     expect(frame(state()).regions.length).toBeGreaterThanOrEqual(2)
   })
 
-  it('selects a row on a click and opens it on a double-click', () => {
+  it('selects a row on one click, and reports the row under the pointer', () => {
     const log: unknown[] = []
     const rendered = frame(state(), {
       onSelectRow: (side, index) => log.push(['select', side, index]),
-      onOpenRow: (side, index) => log.push(['open', side, index]),
+      onHoverRow: (side, index) => log.push(['hover', side, index]),
     })
     const readme = rendered.find('README.md')!
     expect(rendered.click(readme.x, readme.y)).toBe(true)
     const src = rendered.find('src')!
-    rendered.click(src.x, src.y, { clicks: 2 })
-    // The second press of a double-click selects and then opens.
+    rendered.click(src.x, src.y)
+    rendered.hover(readme.x, readme.y)
     expect(log).toEqual([
       ['select', 'left', 1],
       ['select', 'left', 0],
-      ['open', 'left', 0],
+      ['hover', 'left', 1],
     ])
   })
 
-  it('puts .. above a listing that has a parent; a double-click on it goes up', () => {
+  it('puts .. above a listing that has a parent, and one click on it goes up', () => {
     const log: unknown[] = []
     const rendered = frame(state(), {
       onSelectRow: (side, index) => log.push(['select', side, index]),
-      onOpenRow: (side, index) => log.push(['open', side, index]),
+      onGoUp: (side) => log.push(['up', side]),
     })
     const up = rendered.find('..')!
-    // A click does not select it: the cursor has nowhere to rest on `..`.
     expect(rendered.click(up.x, up.y)).toBe(true)
-    expect(log).toEqual([])
-    rendered.click(up.x, up.y, { clicks: 2 })
-    expect(log).toEqual([['open', 'left', -1]])
+    expect(log).toEqual([['up', 'left']])
+  })
+
+  it('draws an unfolded directory as a tree under its parent, with the fold state on the marker', () => {
+    const s = state()
+    s.panes.left.children.set('src', [entry('index.ts', { size: 120 }), entry('lib', { isDirectory: true })])
+    s.panes.left.unfolded.add('src')
+    const text = screen(s)
+    expect(text).toContain('▾ src')
+    expect(text).toContain('index.ts')
+    expect(text).toContain('▸ lib')
+    // A folded sibling stays folded, and a listing on its way says so.
+    s.panes.left.unfolded.delete('src')
+    s.panes.left.listing.add('src')
+    expect(screen(s)).toContain('… src')
+    expect(screen(s)).not.toContain('index.ts')
+  })
+
+  it('lights the row under the pointer', () => {
+    const lit = state()
+    lit.panes.left.hover = 1
+    const plain = frame(state())
+    const hovered = frame(lit)
+    const readme = plain.find('README.md')!
+    expect(hovered.cell(readme.x, readme.y).bg).not.toBe(plain.cell(readme.x, readme.y).bg)
   })
 
   it('has no .. at the root, and keeps it on a listing that failed', () => {
@@ -406,7 +427,7 @@ describe('the help overlay', () => {
   it('documents every binding, the mouse, and why Mirror is not one', () => {
     const text = screen(state({ overlay: { kind: 'help' } }))
     expect(text).toContain('switch pane')
-    expect(text).toContain('double-click')
+    expect(text).toContain('fold or unfold')
     expect(text).toContain('Mirror')
   })
 })
