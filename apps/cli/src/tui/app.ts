@@ -28,11 +28,12 @@ import {
   blankPane,
   clampIndex,
   listLocal,
+  parentPath,
   pushChange,
   selectedEntry,
   visibleEntries,
 } from './model.js'
-import { type Tone, type ViewState, draw, filterChoices } from './view.js'
+import { type Action, type Tone, type ViewState, draw, filterChoices } from './view.js'
 
 export {
   blankPane,
@@ -58,12 +59,6 @@ export class Tui {
   private busy = false
   private readonly sessions = new Map<string, SshSession>()
   private app: App | null = null
-  /**
-   * The first row index each pane's table actually drew, recorded during
-   * render. A click reports the row it landed on, counted from the top of the
-   * visible window — and only the table knows where that window starts.
-   */
-  private readonly firstVisible: Record<Side, number> = { left: 0, right: 0 }
 
   constructor(
     left: Pane,
@@ -104,22 +99,102 @@ export class Tui {
         this.active = side
         this.invalidate()
       },
-      onSelectRow: (side, visibleRow) => {
+      onSelectRow: (side, index) => {
+        this.status = null
         this.active = side
         const pane = this.panes[side]
-        pane.index = this.firstVisible[side] + visibleRow
+        pane.index = index
         clampIndex(pane)
         this.invalidate()
+      },
+      onOpenRow: (side, index) => {
+        if (this.busy) return
+        this.status = null
+        this.active = side
+        const pane = this.panes[side]
+        if (index < 0) {
+          void this.goUp()
+          return
+        }
+        pane.index = index
+        clampIndex(pane)
+        void this.enter()
       },
       onScroll: (side, delta) => {
         this.active = side
         this.move(delta * WHEEL_ROWS)
         this.invalidate()
       },
-      onRowDrawn: (side, index, y) => {
-        this.firstVisible[side] = index - y
+      onAction: (action) => void this.run(action),
+      onPickChoice: (choice) => {
+        if (this.overlay?.kind !== 'picker') return
+        this.overlay = null
+        void this.choose(choice)
+      },
+      onDismissOverlay: () => {
+        // The host-key question is not on this list on purpose: it is only
+        // ever answered, never waved away.
+        if (this.overlay?.kind === 'picker' || this.overlay?.kind === 'help') this.overlay = null
+        this.invalidate()
+      },
+      onHostKeyDecide: (trust) => {
+        if (this.overlay?.kind === 'hostKey') this.overlay.decide(trust)
       },
     })
+  }
+
+  /**
+   * A key cap clicked in the footer or the header. Each one does what the key
+   * does, under the same rules: a dialog owns the input while it is up, and a
+   * transfer in flight takes nothing but cancel and quit.
+   */
+  private async run(action: Action): Promise<void> {
+    if (action === 'quit') {
+      this.app?.quit()
+      return
+    }
+    if (action === 'closeOverlay') {
+      if (this.overlay?.kind === 'picker' || this.overlay?.kind === 'help') this.overlay = null
+      this.invalidate()
+      return
+    }
+    if (action === 'cancelTransfer' || action === 'dismissTransfer') {
+      this.dismissTransfer()
+      this.invalidate()
+      return
+    }
+    if (this.overlay || this.filtering) return
+
+    this.status = null
+    switch (action) {
+      case 'pane':
+        this.active = this.active === 'left' ? 'right' : 'left'
+        break
+      case 'help':
+        this.overlay = { kind: 'help' }
+        break
+      case 'open':
+        if (!this.busy) await this.enter()
+        break
+      case 'endpoint':
+        if (!this.busy) this.openPicker()
+        break
+      case 'preview':
+        if (!this.busy) await this.transferTo(true)
+        break
+      case 'sync':
+        if (!this.busy) await this.transferTo(false)
+        break
+      case 'filter':
+        if (!this.busy) this.filtering = this.active
+        break
+      case 'sort':
+        if (!this.busy) this.cycleSort()
+        break
+      default:
+        break
+    }
+    this.invalidate()
   }
 
   // ----------------------------------------------------------------- state
@@ -434,8 +509,8 @@ export class Tui {
 
   private async goUp(): Promise<void> {
     const pane = this.current
-    const parent = pane.connection ? posix.dirname(pane.path) : join(pane.path, '..')
-    if (parent === pane.path) return
+    const parent = parentPath(pane)
+    if (parent === null) return
     pane.path = parent
     pane.filter = ''
     await this.load(this.active)
