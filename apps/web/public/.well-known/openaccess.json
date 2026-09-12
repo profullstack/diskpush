@@ -1,0 +1,29 @@
+{
+  "openaccess": "0.1",
+  "name": "DiskPush",
+  "url": "https://diskpush.com",
+  "operator": "https://logicsrc.com/.well-known/openprofile.md",
+  "redirect_uris": [
+    "https://diskpush.com/api/v1/openaccess/callback"
+  ],
+  "jwks": {
+    "keys": [
+      {
+        "kty": "OKP",
+        "crv": "Ed25519",
+        "kid": "rRqaGaxjcvzo",
+        "x": "JGLFXXHksqT-m6ZfreoexAw-TNd6TzlVCDgmMb6CHik",
+        "alg": "EdDSA",
+        "use": "sig"
+      }
+    ]
+  },
+  "scopes": {},
+  "honours": [
+    "profullstack.com/all-access"
+  ],
+  "webhooks": "https://diskpush.com/api/v1/openaccess/events",
+  "hubs": [
+    "https://openaccess.logicsrc.com"
+  ]
+}
