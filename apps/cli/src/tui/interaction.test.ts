@@ -12,6 +12,7 @@ import type { App, MouseEvent } from '@profullstack/hqtui'
 import { renderToScreen } from '@profullstack/hqtui/testing'
 import { key } from './keys.fixture.js'
 import { visibleRows, type Entry, type Pane, type Side } from './model.js'
+import type { Launch, Launcher } from './launch.js'
 
 vi.mock('@diskpush/ssh-core', () => ({
   SshSession: { connect: async () => ({ close: () => {} }) },
@@ -643,5 +644,146 @@ describe('viewing a file', () => {
     await press(app, 'p')
     expect(document(app)).toBeNull()
     expect(state(app).transfer).not.toBeNull()
+  })
+})
+
+describe('editing and opening with the system', () => {
+  /** A launcher that records what would have run. */
+  function fakeLauncher(over: Partial<Launcher> = {}) {
+    const launched: { how: 'tmux' | 'detach'; launch: Launch }[] = []
+    const launcher: Launcher = {
+      env: { EDITOR: 'vim', PATH: '/usr/bin' },
+      available: (bin) => ['vim', 'mpv'].includes(bin),
+      inTmux: true,
+      tmux: async (launch) => {
+        launched.push({ how: 'tmux', launch })
+      },
+      detach: (launch) => {
+        launched.push({ how: 'detach', launch })
+      },
+      ...over,
+    }
+    return { launcher, launched }
+  }
+  function browser(over: Partial<Launcher> = {}) {
+    const root = mkdtempSync(join(tmpdir(), 'diskpush-edit-'))
+    mkdirSync(join(root, 'src'))
+    writeFileSync(join(root, 'notes.md'), '# notes\n')
+    writeFileSync(join(root, 'talk.mp4'), Buffer.from([0, 0, 0, 0x18, 0x66, 0x74, 0x79, 0x70]))
+    const left = blankPane('Local', root)
+    left.entries = listLocal(root)
+    const { launcher, launched } = fakeLauncher(over)
+    const app = new Tui(left, blankPane('Local', '/tmp/b'), [], launcher)
+    return { app, root, launched }
+  }
+  const goto = (app: Tui, name: string) => {
+    const p = pane(app, 'left')
+    p.index = visibleRows(p).findIndex((row) => row.entry.name === name)
+    expect(p.index).toBeGreaterThanOrEqual(0)
+  }
+
+  it('e opens the file under the cursor in $EDITOR, in a tmux window, and says so', async () => {
+    const { app, root, launched } = browser()
+    goto(app, 'notes.md')
+    await press(app, 'e')
+    expect(launched).toEqual([
+      { how: 'tmux', launch: { argv: ['vim', join(root, 'notes.md')], cwd: root, title: 'notes.md' } },
+    ])
+    expect(state(app).status?.text).toBe('Editing notes.md in a new tmux window')
+    expect(app.takeHandoff()).toBeNull()
+  })
+
+  it('e on a directory edits nothing', async () => {
+    const { app, launched } = browser()
+    goto(app, 'src')
+    await press(app, 'e')
+    expect(launched).toEqual([])
+    expect(state(app).status?.text).toContain('e edits a file')
+  })
+
+  it('without tmux, e hands the terminal over: the app quits and the runner gets the program', async () => {
+    const { app, root, launched } = browser({ inTmux: false })
+    const quit = vi.fn()
+    app.attach({ quit, invalidate: () => {}, height: 30 } as unknown as App)
+    goto(app, 'notes.md')
+    await press(app, 'e')
+    expect(launched).toEqual([])
+    expect(quit).toHaveBeenCalledTimes(1)
+    const handoff = app.takeHandoff()
+    expect(handoff).toEqual({ argv: ['vim', join(root, 'notes.md')], cwd: root, title: 'notes.md' })
+    // Taken once: the next run of the app is not a hand-off.
+    expect(app.takeHandoff()).toBeNull()
+  })
+
+  it('coming back from a hand-off re-reads the panes and the open file', async () => {
+    const { app, root } = browser({ inTmux: false })
+    app.attach({ quit: () => {}, invalidate: () => {}, height: 30 } as unknown as App)
+    goto(app, 'notes.md')
+    await press(app, 'v')
+    expect(state(app).document?.text).toBe('# notes\n')
+    await press(app, 'e')
+    app.takeHandoff()
+    writeFileSync(join(root, 'notes.md'), '# notes, edited\n')
+    writeFileSync(join(root, 'new.txt'), 'x')
+    await app.afterHandoff()
+    expect(state(app).document?.text).toBe('# notes, edited\n')
+    expect(pane(app, 'left').entries.some((entry) => entry.name === 'new.txt')).toBe(true)
+  })
+
+  it('x sends a video to a player in a tmux window, and a file to the desktop when there is one', async () => {
+    const { app, root, launched } = browser()
+    goto(app, 'talk.mp4')
+    await press(app, 'x')
+    expect(launched).toEqual([
+      { how: 'tmux', launch: { argv: ['mpv', join(root, 'talk.mp4')], cwd: root, title: 'talk.mp4' } },
+    ])
+    expect(state(app).status?.text).toBe('Opened talk.mp4 in a new tmux window')
+
+    const desktop = browser({ env: { DISPLAY: ':0' }, available: (bin) => bin === 'xdg-open' })
+    goto(desktop.app, 'notes.md')
+    await press(desktop.app, 'x')
+    expect(desktop.launched).toEqual([
+      { how: 'detach', launch: { argv: ['xdg-open', join(desktop.root, 'notes.md')], title: 'notes.md', detached: true } },
+    ])
+  })
+
+  it('x on a text file named like a video does not start a player', async () => {
+    const { app, root, launched } = browser({ available: (bin) => bin === 'ffplay' })
+    writeFileSync(join(root, 'code.ts'), 'const a = 1\n')
+    pane(app, 'left').entries = listLocal(root)
+    goto(app, 'code.ts')
+    await press(app, 'x')
+    expect(launched).toEqual([])
+    expect(state(app).status?.text).toBe('code.ts is a text file: v views it, e edits it.')
+  })
+
+  it('x says what is missing when nothing opens the file', async () => {
+    const { app, launched } = browser({ available: () => false })
+    goto(app, 'talk.mp4')
+    await press(app, 'x')
+    expect(launched).toEqual([])
+    expect(state(app).status?.text).toBe('No video player found: install mpv or ffplay.')
+  })
+
+  it('a tmux that refuses is reported, not swallowed', async () => {
+    const { app } = browser({
+      tmux: async () => {
+        throw new Error('no server running')
+      },
+    })
+    goto(app, 'notes.md')
+    await press(app, 'e')
+    expect(state(app).status).toEqual({ text: 'tmux: no server running', tone: 'error' })
+  })
+
+  it('the footer caps do the same', async () => {
+    const { app, launched } = browser()
+    goto(app, 'notes.md')
+    const screen = frame(app)
+    const cap = screen.find('e edit')!
+    screen.click(cap.x, cap.y)
+    await settle()
+    expect(launched).toHaveLength(1)
+    expect(launched[0]?.launch.argv[0]).toBe('vim')
   })
 })

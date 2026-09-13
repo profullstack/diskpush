@@ -5,6 +5,7 @@ import { failure, type Output } from '../output.js'
 import { type ParsedArgv } from '../parse-argv.js'
 import { resolveEndpoint, sshConfigHosts } from '../resolve.js'
 import { blankPane, buildEndpointChoices, defaultLocalPath, Tui } from '../tui/app.js'
+import { runInherited } from '../tui/launch.js'
 
 /**
  * `diskpush tui` — the two-pane browser, in a terminal.
@@ -41,6 +42,31 @@ export async function runTui(parsed: ParsedArgv, store: DiskPushStore, output: O
   const choices = buildEndpointChoices(await store.listConnections(), sshConfigHosts(), defaultLocalPath())
   const tui = new Tui(panes[0]!, panes[1]!, choices)
 
+  try {
+    void tui.loadBoth()
+    // The browser runs until it quits, or until it wants the terminal handed
+    // to a program — `e` outside tmux. Then the program runs with the screen
+    // to itself and the browser starts again, every pane where it was.
+    for (;;) {
+      await runApp(tui)
+      const handoff = tui.takeHandoff()
+      if (!handoff) break
+      try {
+        await runInherited(handoff)
+      } catch (error) {
+        console.error(`could not start ${handoff.argv[0]}: ${error instanceof Error ? error.message : String(error)}`)
+      }
+      await tui.afterHandoff()
+    }
+  } finally {
+    tui.close()
+  }
+
+  return EXIT.ok
+}
+
+/** One run of the screen: from the terminal taken to the terminal restored. */
+async function runApp(tui: Tui): Promise<void> {
   // `q` is not a quit key to the app: inside the host-key prompt it has to
   // reach the Tui first, which is the only thing that knows a dialog is up.
   // Ctrl+C stays with the app so the terminal is restored however it dies.
@@ -61,12 +87,5 @@ export async function runTui(parsed: ParsedArgv, store: DiskPushStore, output: O
     tui.view(ui, theme, width, height)
   })
 
-  try {
-    void tui.loadBoth()
-    await app.start()
-  } finally {
-    tui.close()
-  }
-
-  return EXIT.ok
+  await app.start()
 }

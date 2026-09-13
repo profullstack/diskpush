@@ -34,6 +34,7 @@ import {
   endpointString,
   fillDocument,
   listLocal,
+  looksBinary,
   nothingToDo,
   parentPath,
   pushChange,
@@ -46,6 +47,7 @@ import {
 } from './model.js'
 import { type Action, type Tone, type ViewState, draw, filterChoices } from './view.js'
 import { maxScroll, readsAsMarkdown } from './document.js'
+import { type Launch, type Launcher, type Target, editLaunch, openLaunch, systemLauncher } from './launch.js'
 
 export {
   blankPane,
@@ -70,6 +72,8 @@ export class Tui {
   private document: Document | null = null
   /** What the last frame drew of it: its line count and the rows it had, so a scroll can be clamped. */
   private documentLayout = { total: 0, rows: 1 }
+  /** A program waiting for the terminal, once the app has given it up. See `start`. */
+  private handoff: Launch | null = null
   private filtering: Side | null = null
   private status: { text: string; tone: Tone } | null = null
   private busy = false
@@ -86,6 +90,7 @@ export class Tui {
     left: Pane,
     right: Pane,
     private readonly choices: readonly EndpointChoice[] = [],
+    private readonly launcher: Launcher = systemLauncher(),
   ) {
     this.panes = { left, right }
   }
@@ -236,6 +241,12 @@ export class Tui {
         break
       case 'closeDocument':
         this.document = null
+        break
+      case 'edit':
+        if (!this.busy) await this.editSelected()
+        break
+      case 'openWith':
+        if (!this.busy) await this.openSelected()
         break
       case 'preview':
         if (!this.busy) await this.transferTo(true)
@@ -458,6 +469,12 @@ export class Tui {
       case key.char === 'v':
         await this.toggleDocument()
         break
+      case key.char === 'e':
+        await this.editSelected()
+        break
+      case key.char === 'x':
+        await this.openSelected()
+        break
       case key.name === 'r':
         await this.refresh(this.active)
         break
@@ -633,6 +650,106 @@ export class Tui {
     } finally {
       this.invalidate()
     }
+  }
+
+  // --------------------------------------------------------------- launching
+
+  /** The row under the cursor, as something to hand to a program. */
+  private target(): (Target & { isDirectory: boolean }) | null {
+    const pane = this.current
+    const row = selectedRow(pane)
+    if (!row) return null
+    const path = pane.connection ? posix.join(pane.path, row.rel) : join(pane.path, row.rel)
+    return { path, name: row.entry.name, connection: pane.connection, isDirectory: row.entry.isDirectory }
+  }
+
+  /** `e`: the file under the cursor, in the system editor. */
+  private async editSelected(): Promise<void> {
+    const target = this.target()
+    if (!target) return
+    if (target.isDirectory) {
+      this.say('e edits a file; ⏎ unfolds a directory', 'warn')
+      return
+    }
+    const launch = editLaunch(target, this.launcher.env, this.launcher.available)
+    if ('error' in launch) {
+      this.say(launch.error, 'warn')
+      return
+    }
+    await this.start(launch, `Editing ${target.name}`)
+  }
+
+  /** `x`: the file under the cursor, with whatever the system opens it with. */
+  private async openSelected(): Promise<void> {
+    const target = this.target()
+    if (!target) return
+    // The bytes decide text against media before the name gets a say.
+    let text = false
+    if (!target.connection && !target.isDirectory) {
+      try {
+        text = !looksBinary(readLocalHead(target.path, 8192).bytes)
+      } catch {
+        // Unreadable: let the opener report it.
+      }
+    }
+    const launch = openLaunch(target, this.launcher.env, this.launcher.available, process.platform, { text })
+    if ('error' in launch) {
+      this.say(launch.error, 'warn')
+      return
+    }
+    await this.start(launch, `Opened ${target.name}`)
+  }
+
+  /**
+   * Gets a program on screen.
+   *
+   * A desktop opener returns at once and wants no terminal. Under tmux the
+   * program gets a window of its own and the browser stays up beside it.
+   * Otherwise the browser hands the terminal over: it stops, the runner in
+   * commands/tui.ts runs the program, and starts the browser again with every
+   * pane where it was — vim's `:sh`, from the other side.
+   */
+  private async start(launch: Launch, done: string): Promise<void> {
+    if (launch.detached) {
+      this.launcher.detach(launch)
+      this.say(done)
+      return
+    }
+    if (this.launcher.inTmux) {
+      try {
+        await this.launcher.tmux(launch)
+        this.say(`${done} in a new tmux window`)
+      } catch (error) {
+        this.say(`tmux: ${error instanceof Error ? error.message : String(error)}`, 'error')
+      }
+      return
+    }
+    this.handoff = launch
+    this.app?.quit()
+  }
+
+  /** The program the app quit for, if it quit for one. Taken once. */
+  takeHandoff(): Launch | null {
+    const launch = this.handoff
+    this.handoff = null
+    return launch
+  }
+
+  /**
+   * Back from a hand-off. The program may have changed anything, so both
+   * listings are re-read in place, and the open document is read again —
+   * an edit is the most likely thing to have just happened to it.
+   */
+  async afterHandoff(): Promise<void> {
+    await this.refresh('left')
+    await this.refresh('right')
+    const doc = this.document
+    if (!doc) return
+    const pane = this.panes[doc.side]
+    const row = visibleRows(pane).find((candidate) => endpointString(pane, candidate.rel, false) === doc.location)
+    this.document = null
+    if (row) await this.viewRow(doc.side, row)
+    this.invalidate()
   }
 
   private async readRemoteHead(pane: Pane, path: string): Promise<{ bytes: Uint8Array; size: number }> {

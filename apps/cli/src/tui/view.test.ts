@@ -519,8 +519,17 @@ describe('a file open under the panes', () => {
     return { ...doc, ...over }
   }
 
-  it('offers v in the footer', () => {
-    expect(screen(state())).toContain('v view')
+  it('offers v, e and x in the footer', () => {
+    const text = screen(state())
+    expect(text).toContain('v view')
+    expect(text).toContain('e edit')
+    expect(text).toContain('x open…')
+  })
+
+  it('tells you, over a hex dump, what would open the file', () => {
+    const text = screen(state({ document: document('a.bin', 'AB\0C') }))
+    expect(text).toContain('Not a text file. e edits it; x opens it')
+    expect(text).toContain('00000000  41 42 00 43')
   })
 
   it('draws the document under both panes, rendered, with its name and where it lives', () => {
@@ -629,5 +638,7 @@ describe('a file open under the panes', () => {
     const text = screen(state({ overlay: { kind: 'help' } }))
     expect(text).toContain('view it under the panes')
     expect(text).toContain('page the open file')
+    expect(text).toContain('edit it in $EDITOR')
+    expect(text).toContain('open it with a player')
   })
 })
