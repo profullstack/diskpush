@@ -142,8 +142,12 @@ describe('the mouse', () => {
     mode: 'sync',
     from: '/home/me/project/',
     to: 'deploy@prod:/srv/app/',
+    what: 'everything',
     running,
+    startedAt: 0,
+    endedAt: null,
     progress: null,
+    scanned: null,
     recent: [],
     summary: { add: 0, update: 0, metadata: 0, delete: 0, unchanged: 0, error: 0 },
     outcome: running ? null : { ok: true, message: 'Sync complete' },
@@ -369,7 +373,11 @@ describe('the transfer panel', () => {
     mode: 'sync',
     from: '/home/me/project/',
     to: 'deploy@prod:/srv/app/',
+    what: 'everything',
     running: true,
+    startedAt: 0,
+    endedAt: null,
+    scanned: null,
     progress: {
       bytesTransferred: 12_000_000,
       percent: 42,
@@ -393,6 +401,70 @@ describe('the transfer panel', () => {
     expect(text).toContain('3.0M/s')
     expect(text).toContain('dist/app.js')
     expect(text).toContain('+7')
+  })
+
+  it('counts files checked during a preview, since a dry run moves no bytes', () => {
+    const scanning = transfer({
+      mode: 'preview',
+      what: 'src',
+      progress: null,
+      scanned: { checked: 120, total: 500 },
+      recent: [],
+      summary: { add: 0, update: 0, metadata: 0, delete: 0, unchanged: 0, error: 0 },
+    })
+    const text = screen(state({ transfer: scanning }))
+    expect(text).toContain('Scanning src')
+    expect(text).toContain('120/500 files')
+    expect(text).toContain('0 changes found so far')
+    expect(text).not.toContain('0%')
+
+    const blank = transfer({ mode: 'preview', progress: null, scanned: null, recent: [] })
+    expect(screen(state({ transfer: blank }))).toContain('scanning…')
+  })
+
+  it('keeps its clock running off the wall while rsync says nothing', () => {
+    const quiet = transfer({ mode: 'preview', progress: null, scanned: null, startedAt: Date.parse('2026-09-08T11:58:35.000Z') })
+    // state().now is 12:00:00, so 85 seconds have gone by.
+    expect(screen(state({ transfer: quiet }))).toContain('1:25')
+    // Once it has stopped, the clock stops with it rather than following `now`.
+    const done = transfer({
+      mode: 'preview',
+      running: false,
+      progress: null,
+      scanned: null,
+      startedAt: Date.parse('2026-09-08T11:58:35.000Z'),
+      endedAt: Date.parse('2026-09-08T11:58:47.000Z'),
+      outcome: { ok: true, message: 'Preview complete' },
+    })
+    expect(screen(state({ transfer: done }))).toContain('0:12')
+  })
+
+  it('says a preview found nothing to do instead of drawing a full bar over an empty list', () => {
+    const idle = transfer({
+      mode: 'preview',
+      running: false,
+      progress: null,
+      scanned: { checked: 5300, total: 5300 },
+      recent: [],
+      summary: { add: 0, update: 0, metadata: 0, delete: 0, unchanged: 5300, error: 0 },
+      outcome: { ok: true, message: 'Preview complete' },
+    })
+    const text = screen(state({ transfer: idle }))
+    expect(text).toContain('Already in sync')
+    expect(text).toContain('5300 files checked')
+  })
+
+  it('reports a cancel as a cancel, not as a failure', () => {
+    const stopped = transfer({
+      mode: 'preview',
+      running: false,
+      outcome: { ok: false, cancelled: true, message: 'Preview cancelled.' },
+    })
+    const text = screen(state({ transfer: stopped }))
+    expect(text).toContain('Cancelled')
+    expect(text).toContain('stopped by esc')
+    expect(text).not.toContain('Failed')
+    expect(text).not.toContain('signal')
   })
 
   it('offers cancel while it runs and dismiss once it is done', () => {

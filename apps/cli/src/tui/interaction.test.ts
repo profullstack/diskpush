@@ -377,6 +377,93 @@ describe('the mouse', () => {
   })
 })
 
+describe('preview', () => {
+  /** Two real directories, so `p` runs the real rsync as a dry run. */
+  function twoTrees() {
+    const { app, root } = realTree()
+    const other = mkdtempSync(join(tmpdir(), 'diskpush-tui-dst-'))
+    const right = pane(app, 'right')
+    right.path = other
+    right.entries = []
+    return { app, root, other }
+  }
+  const finished = async (app: Tui) => {
+    for (let i = 0; i < 200 && state(app).transfer?.running !== false; i += 1) await new Promise((r) => setTimeout(r, 25))
+    return state(app).transfer!
+  }
+
+  it('covers the selected directory, mirrored to the same place in the other pane', async () => {
+    const { app, root, other } = twoTrees()
+    await press(app, 'p')
+    const transfer = await finished(app)
+    expect(transfer.mode).toBe('preview')
+    expect(transfer.from).toBe(`${root}/src/`)
+    expect(transfer.to).toBe(`${other}/src/`)
+    expect(transfer.what).toBe('src')
+    expect(transfer.outcome?.ok).toBe(true)
+    // Two files and a directory would be created over there.
+    expect(transfer.summary.add).toBeGreaterThanOrEqual(3)
+    expect(transfer.scanned?.total).toBeGreaterThanOrEqual(3)
+    expect(state(app).status?.text).toMatch(/^Preview: \d+ to add/)
+  })
+
+  it('says so when there is nothing to do, with the count of files it checked', async () => {
+    const { app, root, other } = twoTrees()
+    mkdirSync(join(other, 'src', 'lib'), { recursive: true })
+    for (const rel of ['src/index.ts', 'src/lib/deep.ts']) writeFileSync(join(other, rel), 'export {}\n')
+    await press(app, 'p')
+    const transfer = await finished(app)
+    expect(transfer.outcome?.ok).toBe(true)
+    expect(transfer.summary.add + transfer.summary.update).toBe(0)
+    expect(state(app).status?.text).toMatch(/^Already in sync: \d+ files checked/)
+    const screen = frame(app)
+    expect(screen.contains('Already in sync')).toBe(true)
+    expect(screen.contains('Nothing to do')).toBe(true)
+    void root
+  })
+
+  it('syncs the selected file into the directory that holds it over there, and refreshes that pane in place', async () => {
+    const { app, root, other } = twoTrees()
+    // Unfold src and select src/index.ts (rows: src, lib, index.ts).
+    await press(app, 'right', 'down', 'down')
+    expect(pane(app, 'left').index).toBe(2)
+    await press(app, 's')
+    const transfer = await finished(app)
+    expect(transfer.mode).toBe('sync')
+    expect(transfer.from).toBe(`${root}/src/index.ts`)
+    expect(transfer.to).toBe(`${other}/src/`)
+    expect(transfer.outcome?.ok).toBe(true)
+    expect(listLocal(join(other, 'src')).map((e) => e.name)).toEqual(['index.ts'])
+    // The destination pane was re-read, not reset.
+    expect(pane(app, 'right').entries.map((e) => e.name)).toEqual(['src'])
+  })
+
+  it('reports esc as a cancel, not a failure', async () => {
+    const { app } = twoTrees()
+    // Enough files that the dry run is still walking when esc lands.
+    const wide = join(pane(app, 'left').path, 'wide')
+    mkdirSync(wide)
+    for (let i = 0; i < 4000; i += 1) writeFileSync(join(wide, `f${i}.txt`), String(i))
+    pane(app, 'left').entries = listLocal(pane(app, 'left').path)
+    await press(app, 'end')
+    // Not awaited: `p` resolves only when rsync has finished, and the point
+    // is to press esc while it is still walking.
+    const running = app.onKey(key('p'))
+    await settle()
+    await press(app, 'escape')
+    await running
+    const transfer = await finished(app)
+    if (transfer.outcome?.cancelled) {
+      expect(transfer.outcome.message).toBe('Preview cancelled.')
+      expect(state(app).status).toEqual({ text: 'Preview cancelled', tone: 'warn' })
+      expect(frame(app).contains('signal')).toBe(false)
+    } else {
+      // rsync beat the escape on this machine; the only other honest outcome is a finished preview.
+      expect(transfer.outcome?.ok).toBe(true)
+    }
+  })
+})
+
 describe('the last message', () => {
   it('is cleared by the next keystroke, so it never answers the wrong question', async () => {
     const app = tui()
