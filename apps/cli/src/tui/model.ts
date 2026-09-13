@@ -5,7 +5,7 @@
  * snapshot of it and the app mutates it, which is what makes both testable
  * without a pty.
  */
-import { readdirSync, statSync } from 'node:fs'
+import { closeSync, fstatSync, openSync, readSync, readdirSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join, posix } from 'node:path'
 import type { Change, ChangeSummary, Connection, RsyncProgress } from '@diskpush/schemas'
@@ -371,4 +371,169 @@ export function formatDuration(seconds: number): string {
   const minutes = Math.floor(total / 60)
   if (minutes >= 60) return `${Math.floor(minutes / 60)}h${String(minutes % 60).padStart(2, '0')}m`
   return `${minutes}:${String(total % 60).padStart(2, '0')}`
+}
+
+// ---------------------------------------------------------------- documents
+
+/**
+ * How much of a file the viewer reads: the first megabyte.
+ *
+ * Every document anyone reads in a terminal fits; the cap is for what else is
+ * under a cursor in a file manager — an archive, a database, a video — where
+ * reading the whole thing would take minutes and show nothing anyway.
+ */
+export const DOCUMENT_LIMIT = 1024 * 1024
+
+/** How a document is drawn: rendered markdown, plain lines, or a hex dump. */
+export type DocumentKind = 'markdown' | 'text' | 'binary'
+
+/** A file open under the panes. */
+export type Document = {
+  /** The pane it was opened from. */
+  side: Side
+  name: string
+  /** Where it is, spelled the way a transfer would: `user@host:/srv/app/README.md` or `/home/me/README.md`. */
+  location: string
+  /** The head is still on its way. */
+  loading: boolean
+  error: string | null
+  kind: DocumentKind
+  /** Decoded text for markdown and text; empty for a binary. */
+  text: string
+  /** The raw head, kept for the hex view. */
+  bytes: Uint8Array
+  /** The whole file's size, which can be far more than was read. */
+  size: number
+  /** First rendered line on screen. */
+  scroll: number
+}
+
+export function blankDocument(side: Side, name: string, location: string): Document {
+  return {
+    side,
+    name,
+    location,
+    loading: true,
+    error: null,
+    kind: 'text',
+    text: '',
+    bytes: new Uint8Array(),
+    size: 0,
+    scroll: 0,
+  }
+}
+
+/** True when more of the file exists than the viewer read. */
+export function isTruncated(doc: Document): boolean {
+  return doc.size > doc.bytes.length
+}
+
+/** What readm3 opens: the markdown extensions, matched the way it matches them. */
+const MARKDOWN_NAME = /\.(?:md|markdown|mdown|mkd|mkdn|mdwn|mdx)$/i
+
+export function isMarkdownName(name: string): boolean {
+  return MARKDOWN_NAME.test(name)
+}
+
+/** How many leading bytes decide text against binary. */
+const SNIFF = 8192
+
+const utf8 = new TextDecoder('utf-8', { fatal: false })
+
+/**
+ * A NUL in the head is the test `grep` and `git` use, and it is right far more
+ * often than any cleverer one: text encodings do not emit NUL, and nearly every
+ * binary format does within its first few kilobytes.
+ *
+ * Not every one, though. Three hundred random bytes have a one-in-three chance
+ * of holding no NUL at all, and a small compressed or encrypted file shown as
+ * "text" is a panel of garbage. So beyond NUL, a head is binary when a tenth
+ * of it is either a control byte that is not whitespace or a byte that is not
+ * UTF-8 — the decoder's replacement characters count those. A Latin-1 file
+ * with an accent every few words stays text; noise does not.
+ */
+export function looksBinary(bytes: Uint8Array): boolean {
+  const head = bytes.subarray(0, SNIFF)
+  if (head.length === 0) return false
+  let suspect = 0
+  for (const byte of head) {
+    if (byte === 0) return true
+    // Tab, newline, carriage return, form feed and escape are text.
+    if (byte < 0x20 && byte !== 0x09 && byte !== 0x0a && byte !== 0x0d && byte !== 0x0c && byte !== 0x1b) suspect += 1
+  }
+  for (const char of utf8.decode(head)) if (char === '\ufffd') suspect += 1
+  return suspect / head.length > 0.1
+}
+
+/** Bytes as text: UTF-8, a BOM dropped, Windows line ends folded. */
+export function decodeText(bytes: Uint8Array): string {
+  const text = utf8.decode(bytes)
+  return (text.charCodeAt(0) === 0xfeff ? text.slice(1) : text).replace(/\r\n?/g, '\n')
+}
+
+/** Bytes per row of the hex view. */
+export const HEX_ROW = 16
+
+/**
+ * A hex dump of the head, one row per sixteen bytes: offset, the bytes, and
+ * the printable ones as characters. `xxd` without the `xxd`.
+ */
+export function hexDump(bytes: Uint8Array, limit = 4096): string[] {
+  const rows: string[] = []
+  const end = Math.min(bytes.length, limit)
+  for (let at = 0; at < end; at += HEX_ROW) {
+    const chunk = bytes.subarray(at, Math.min(at + HEX_ROW, end))
+    const hex = [...chunk].map((byte) => byte.toString(16).padStart(2, '0'))
+    // A gap after the eighth byte, as every hex dump since `od` has drawn it.
+    const left = hex.slice(0, 8).join(' ')
+    const right = hex.slice(8).join(' ')
+    const ascii = [...chunk].map((byte) => (byte >= 0x20 && byte < 0x7f ? String.fromCharCode(byte) : '.')).join('')
+    rows.push(`${at.toString(16).padStart(8, '0')}  ${(left + '  ' + right).padEnd(HEX_ROW * 3 + 1)} |${ascii}|`)
+  }
+  return rows
+}
+
+/**
+ * Fills a document in from the head that was read for it.
+ *
+ * `markdownByContent` is a second opinion for a file whose name says nothing
+ * — `README`, `NOTES`, a file with no extension — so the kind is decided by
+ * the name first and by the text only when the name is silent.
+ */
+export function fillDocument(
+  doc: Document,
+  head: { bytes: Uint8Array; size: number },
+  markdownByContent: (text: string) => boolean = () => false,
+): void {
+  doc.bytes = head.bytes
+  doc.size = head.size
+  doc.loading = false
+  doc.error = null
+  doc.scroll = 0
+  if (looksBinary(head.bytes)) {
+    doc.kind = 'binary'
+    doc.text = ''
+    return
+  }
+  doc.text = decodeText(head.bytes)
+  doc.kind =
+    isMarkdownName(doc.name) || (!doc.name.includes('.') && markdownByContent(doc.text)) ? 'markdown' : 'text'
+}
+
+/** The first `limit` bytes of a local file, and how big the whole file is. */
+export function readLocalHead(path: string, limit: number): { bytes: Uint8Array; size: number } {
+  const fd = openSync(path, 'r')
+  try {
+    const size = fstatSync(fd).size
+    const bytes = Buffer.alloc(Math.max(0, Math.min(size, limit)))
+    let read = 0
+    while (read < bytes.length) {
+      const count = readSync(fd, bytes, read, bytes.length - read, read)
+      if (count === 0) break
+      read += count
+    }
+    return { bytes: bytes.subarray(0, read), size }
+  } finally {
+    closeSync(fd)
+  }
 }

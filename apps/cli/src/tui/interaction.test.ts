@@ -11,11 +11,20 @@ import { describe, expect, it, vi } from 'vitest'
 import type { App, MouseEvent } from '@profullstack/hqtui'
 import { renderToScreen } from '@profullstack/hqtui/testing'
 import { key } from './keys.fixture.js'
-import type { Entry, Pane, Side } from './model.js'
+import { visibleRows, type Entry, type Pane, type Side } from './model.js'
 
 vi.mock('@diskpush/ssh-core', () => ({
   SshSession: { connect: async () => ({ close: () => {} }) },
-  SftpBrowser: { open: async () => ({ list: async () => [], close: () => {} }) },
+  SftpBrowser: {
+    open: async () => ({
+      list: async () => [],
+      readHead: async (path: string) => {
+        if (path.endsWith('gone.md')) throw new Error('No such file')
+        return { bytes: Buffer.from('# Remote\n\nover sftp\n'), size: 4096 }
+      },
+      close: () => {},
+    }),
+  },
 }))
 vi.mock('@diskpush/database', () => ({ knownHostsPath: () => '/tmp/known_hosts.test' }))
 
@@ -471,5 +480,168 @@ describe('the last message', () => {
     expect(state(app).status).not.toBeNull()
     await press(app, 'down')
     expect(state(app).status).toBeNull()
+  })
+})
+
+describe('viewing a file', () => {
+  /** A directory with one of everything the viewer tells apart. */
+  function docs() {
+    const root = mkdtempSync(join(tmpdir(), 'diskpush-view-'))
+    mkdirSync(join(root, 'src'))
+    writeFileSync(join(root, 'README.md'), '# Title\n\nHello **world**\n')
+    writeFileSync(join(root, 'NOTES'), '# Notes\n\n- one\n- two\n\nSee [the docs](https://example.com).\n')
+    writeFileSync(join(root, 'code.ts'), 'const a = 1\nconst b = 2\n')
+    writeFileSync(join(root, 'blob.bin'), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0, 1, 2]))
+    writeFileSync(join(root, 'long.txt'), Array.from({ length: 200 }, (_, i) => `line ${i + 1}`).join('\n') + '\n')
+    const left = blankPane('Local', root)
+    left.entries = listLocal(root)
+    const right = blankPane('Local', '/tmp/b')
+    const app = new Tui(left, right, [])
+    return { app, root }
+  }
+  /** Puts the cursor on a row by name. */
+  const goto = (app: Tui, name: string, side: Side = 'left') => {
+    const p = pane(app, side)
+    p.index = visibleRows(p).findIndex((row) => row.entry.name === name)
+    expect(p.index).toBeGreaterThanOrEqual(0)
+  }
+  const document = (app: Tui) => state(app).document
+
+  it('v opens the file under the cursor, rendered under the panes, and v closes it', async () => {
+    const { app, root } = docs()
+    goto(app, 'README.md')
+    await press(app, 'v')
+    expect(document(app)?.kind).toBe('markdown')
+    expect(document(app)?.location).toBe(join(root, 'README.md'))
+    expect(document(app)?.loading).toBe(false)
+    const screen = frame(app)
+    expect(screen.contains('Hello world')).toBe(true)
+    expect(screen.contains('# Title')).toBe(false)
+    expect(screen.contains('esc close')).toBe(true)
+    await press(app, 'v')
+    expect(document(app)).toBeNull()
+  })
+
+  it('⏎ on a file opens it too, and esc closes it before it would quit', async () => {
+    const { app } = docs()
+    goto(app, 'code.ts')
+    await press(app, 'enter')
+    expect(document(app)?.kind).toBe('text')
+    expect(frame(app).contains('2 │ const b = 2')).toBe(true)
+    expect(await app.onKey(key('escape'))).toBe(true)
+    expect(document(app)).toBeNull()
+    expect(await app.onKey(key('escape'))).toBe(false)
+  })
+
+  it('v on a directory opens nothing and says why', async () => {
+    const { app } = docs()
+    goto(app, 'src')
+    await press(app, 'v')
+    expect(document(app)).toBeNull()
+    expect(state(app).status?.text).toContain('v views a file')
+  })
+
+  it('tells a binary from text, and reads an extensionless README as markdown', async () => {
+    const { app } = docs()
+    goto(app, 'blob.bin')
+    await press(app, 'v')
+    expect(document(app)?.kind).toBe('binary')
+    expect(frame(app).contains('00000000  89 50 4e 47 00 01 02')).toBe(true)
+    goto(app, 'NOTES')
+    await press(app, 'v', 'v')
+    expect(document(app)?.kind).toBe('markdown')
+    expect(frame(app).contains('• one')).toBe(true)
+  })
+
+  it('follows the cursor from file to file, and stays put over a directory', async () => {
+    const { app } = docs()
+    goto(app, 'code.ts')
+    await press(app, 'v')
+    expect(document(app)?.name).toBe('code.ts')
+    // Files sort by name after the one directory: src, blob.bin, code.ts, long.txt, NOTES, README.md.
+    await press(app, 'down')
+    await settle()
+    expect(document(app)?.name).toBe('long.txt')
+    await press(app, 'up', 'up')
+    await settle()
+    expect(document(app)?.name).toBe('blob.bin')
+    // `src` sorts first: the cursor is on a directory and the viewer keeps the last file.
+    await press(app, 'up')
+    await settle()
+    expect(pane(app, 'left').index).toBe(0)
+    expect(document(app)?.name).toBe('blob.bin')
+  })
+
+  it('a click on another file switches the viewer to it', async () => {
+    const { app } = docs()
+    goto(app, 'code.ts')
+    await press(app, 'v')
+    const screen = frame(app)
+    const readme = screen.find('README.md')!
+    screen.click(readme.x, readme.y)
+    await settle()
+    expect(document(app)?.name).toBe('README.md')
+  })
+
+  it('pages with pgdn, pgup, g and G while the arrows still move the cursor', async () => {
+    const { app } = docs()
+    goto(app, 'long.txt')
+    await press(app, 'v')
+    // A frame tells the app how many rows the document has.
+    frame(app)
+    await press(app, 'pagedown')
+    expect(document(app)?.scroll).toBe(16)
+    await press(app, 'G')
+    expect(document(app)?.scroll).toBe(200 - 16)
+    await press(app, 'pageup')
+    expect(document(app)?.scroll).toBe(200 - 32)
+    await press(app, 'g')
+    expect(document(app)?.scroll).toBe(0)
+    const before = pane(app, 'left').index
+    await press(app, 'up')
+    expect(pane(app, 'left').index).toBe(before - 1)
+  })
+
+  it('scrolls with the wheel over the document, and clamps at the end', async () => {
+    const { app } = docs()
+    goto(app, 'long.txt')
+    await press(app, 'v')
+    let screen = frame(app)
+    const line = screen.find('line 3')!
+    expect(screen.scroll(line.x, line.y, 1)).toBe(true)
+    expect(document(app)?.scroll).toBe(3)
+    for (let i = 0; i < 200; i += 1) screen.scroll(line.x, line.y, 1)
+    expect(document(app)?.scroll).toBe(200 - 16)
+    screen = frame(app)
+    expect(screen.contains('200 │ line 200')).toBe(true)
+  })
+
+  it('reads a remote file over sftp, and shows the error when it cannot', async () => {
+    const connection = { id: 'prod', name: 'prod', host: 'prod.example', port: 22, username: 'deploy' }
+    const left = blankPane('prod', '/srv/app', connection as never)
+    left.entries = [
+      { name: 'README.md', isDirectory: false, size: 4096, modifiedAt: null },
+      { name: 'gone.md', isDirectory: false, size: 1, modifiedAt: null },
+    ]
+    const app = new Tui(left, blankPane('Local', '/tmp/b'), [])
+    goto(app, 'README.md')
+    await press(app, 'v')
+    expect(document(app)?.kind).toBe('markdown')
+    expect(document(app)?.location).toBe('deploy@prod.example:/srv/app/README.md')
+    expect(frame(app).contains('over sftp')).toBe(true)
+    // `gone.md` sorts before it.
+    await press(app, 'up')
+    await settle()
+    expect(document(app)?.error).toBe('No such file')
+    expect(frame(app).contains('No such file')).toBe(true)
+  })
+
+  it('a preview takes the rows back', async () => {
+    const { app } = docs()
+    goto(app, 'code.ts')
+    await press(app, 'v')
+    await press(app, 'p')
+    expect(document(app)).toBeNull()
+    expect(state(app).transfer).not.toBeNull()
   })
 })

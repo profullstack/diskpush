@@ -9,8 +9,8 @@
  */
 import { describe, expect, it } from 'vitest'
 import { renderToScreen, renderToText } from '@profullstack/hqtui/testing'
-import { blankPane, type Entry, type Pane, type Transfer } from './model.js'
-import { type Action, type ViewHandlers, type ViewState, draw, filterChoices, truncatePath } from './view.js'
+import { blankDocument, blankPane, fillDocument, type Document, type Entry, type Pane, type Transfer } from './model.js'
+import { type Action, type ViewHandlers, type ViewState, draw, filterChoices, paneRowsBeside, truncatePath } from './view.js'
 
 const entry = (name: string, over: Partial<Entry> = {}): Entry => ({
   name,
@@ -36,6 +36,7 @@ function state(over: Partial<ViewState> = {}): ViewState {
     active: 'left',
     overlay: null,
     transfer: null,
+    document: null,
     filtering: null,
     status: null,
     choices: [
@@ -501,5 +502,132 @@ describe('the help overlay', () => {
     expect(text).toContain('switch pane')
     expect(text).toContain('fold or unfold')
     expect(text).toContain('Mirror')
+  })
+})
+
+describe('a file open under the panes', () => {
+  const render = (s: ViewState, handlers: ViewHandlers = {}) =>
+    renderToScreen(({ ui, theme }) => draw(ui, theme, 100, 30, s, handlers), {
+      width: 100,
+      height: 30,
+      collapseBorders: true,
+    })
+
+  function document(name: string, text: string, over: Partial<Document> = {}): Document {
+    const doc = blankDocument('left', name, `/home/me/project/${name}`)
+    fillDocument(doc, { bytes: Buffer.from(text), size: Buffer.byteLength(text) })
+    return { ...doc, ...over }
+  }
+
+  it('offers v in the footer', () => {
+    expect(screen(state())).toContain('v view')
+  })
+
+  it('draws the document under both panes, rendered, with its name and where it lives', () => {
+    const text = screen(state({ document: document('README.md', '# DiskPush\n\nPush files fast.\n') }))
+    const lines = text.split('\n')
+    expect(text).toContain('README.md')
+    expect(text).toContain('/home/me/project/README.md')
+    // The panes are still there, above it, and the heading is rendered rather than shown as `# DiskPush`.
+    expect(text).toContain('/srv/app')
+    expect(text).toContain('DiskPush')
+    expect(text).not.toContain('# DiskPush')
+    expect(text).toContain('Push files fast.')
+    expect(text).toContain('markdown')
+    // The panes keep a fixed share and the document takes the rest.
+    const paneBottom = lines.findIndex((line) => line.includes('items'))
+    expect(paneBottom).toBe(paneRowsBeside(30))
+    expect(lines[paneBottom + 1]).toContain('README.md')
+  })
+
+  it('leaves the panes a listing on a short terminal, and the document more than a title', () => {
+    expect(paneRowsBeside(30)).toBe(10)
+    expect(paneRowsBeside(18)).toBe(6)
+    expect(paneRowsBeside(12)).toBe(4)
+    const text = screen(state({ document: document('a.ts', 'const a = 1\n') }), 80, 14)
+    expect(text).toContain('1 │ const a = 1')
+    expect(text).toContain('a.ts')
+  })
+
+  it('numbers text, and dumps a binary as hex', () => {
+    expect(screen(state({ document: document('a.ts', 'const a = 1\nconst b = 2\n') }))).toContain('2 │ const b = 2')
+    const text = screen(state({ document: document('a.bin', 'AB\0C') }))
+    expect(text).toContain('00000000  41 42 00 43')
+    expect(text).toContain('|AB.C|')
+    expect(text).toContain('binary')
+  })
+
+  it('says where in the file you are, and how much of a big file was read', () => {
+    const long = Array.from({ length: 100 }, (_, i) => `line ${i + 1}`).join('\n') + '\n'
+    let text = screen(state({ document: document('big.log', long) }))
+    expect(text).toContain('lines 1–16 of 100')
+    expect(text).toContain('1 │ line 1')
+    text = screen(state({ document: document('big.log', long, { scroll: 50 }) }))
+    expect(text).toContain('lines 51–66 of 100')
+    expect(text).toContain('51 │ line 51')
+    expect(text).not.toContain('1 │ line 1 ')
+    text = screen(state({ document: document('big.log', long, { size: 50 * 1024 * 1024 }) }))
+    expect(text).toContain('first 792B of 52M')
+  })
+
+  it('reports the layout it drew, so the app can clamp a scroll', () => {
+    const layouts: [number, number][] = []
+    const long = Array.from({ length: 100 }, (_, i) => `line ${i + 1}`).join('\n') + '\n'
+    render(state({ document: document('big.log', long) }), { onDocumentLayout: (total, rows) => layouts.push([total, rows]) })
+    expect(layouts).toEqual([[100, 16]])
+  })
+
+  it('scrolls with the wheel over the text', () => {
+    const scrolled: number[] = []
+    const long = Array.from({ length: 100 }, (_, i) => `line ${i + 1}`).join('\n') + '\n'
+    const s = render(state({ document: document('big.log', long) }), { onDocumentScroll: (delta) => scrolled.push(delta) })
+    const line = s.find('line 5')!
+    expect(s.scroll(line.x, line.y, 1)).toBe(true)
+    expect(scrolled).toEqual([1])
+  })
+
+  it('says Reading… while the head is on its way, and shows the error when it fails', () => {
+    const loading = blankDocument('left', 'slow.md', 'deploy@prod:/srv/slow.md')
+    expect(screen(state({ document: loading }))).toContain('Reading…')
+    expect(screen(state({ document: { ...loading, loading: false, error: 'Permission denied' } }))).toContain('Permission denied')
+  })
+
+  it('swaps the footer for the viewer keys, and the caps still act', () => {
+    const actions: Action[] = []
+    const s = render(state({ document: document('a.ts', 'x\n') }), { onAction: (action) => actions.push(action) })
+    const text = s.text()
+    expect(text).toContain('esc close')
+    expect(text).toContain('pgdn pgup page')
+    expect(text).not.toContain('v view')
+    const close = s.find('esc close')!
+    s.click(close.x, close.y)
+    expect(actions).toEqual(['closeDocument'])
+  })
+
+  it('takes the rows a finished transfer panel would have had', () => {
+    const transfer: Transfer = {
+      mode: 'preview',
+      from: '/a/',
+      to: '/b/',
+      what: 'everything',
+      running: false,
+      startedAt: 0,
+      endedAt: 1000,
+      progress: null,
+      scanned: null,
+      recent: [],
+      summary: { add: 0, update: 0, metadata: 0, delete: 0, unchanged: 0, error: 0 },
+      outcome: { ok: true, message: 'Preview complete' },
+      cancel: () => {},
+    }
+    const text = screen(state({ transfer, document: document('a.ts', 'x\n') }))
+    expect(text).toContain('1 │ x')
+    expect(text).not.toContain('Preview complete')
+  })
+
+  it('lists v in the help', () => {
+    const text = screen(state({ overlay: { kind: 'help' } }))
+    expect(text).toContain('view it under the panes')
+    expect(text).toContain('page the open file')
   })
 })

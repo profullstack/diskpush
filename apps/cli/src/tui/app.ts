@@ -17,6 +17,7 @@ import { SftpBrowser, SshSession } from '@diskpush/ssh-core'
 import { defaultRsyncOptions, type Change, type Connection } from '@diskpush/schemas'
 import { parseEndpoint, planTransfer, runToCompletion } from '@diskpush/rsync-core'
 import {
+  type Document,
   type EndpointChoice,
   type Entry,
   type Overlay,
@@ -26,12 +27,17 @@ import {
   type SortKey,
   SORT_KEYS,
   type Transfer,
+  DOCUMENT_LIMIT,
+  blankDocument,
   blankPane,
   clampIndex,
+  endpointString,
+  fillDocument,
   listLocal,
   nothingToDo,
   parentPath,
   pushChange,
+  readLocalHead,
   resetTree,
   scannedFrom,
   scopeTransfer,
@@ -39,6 +45,7 @@ import {
   visibleRows,
 } from './model.js'
 import { type Action, type Tone, type ViewState, draw, filterChoices } from './view.js'
+import { maxScroll, readsAsMarkdown } from './document.js'
 
 export {
   blankPane,
@@ -59,6 +66,10 @@ export class Tui {
   /** Whatever is on screen instead of the panes, and owns the keyboard while it is. */
   private overlay: Overlay | null = null
   private transfer: Transfer | null = null
+  /** The file open under the panes, if any. */
+  private document: Document | null = null
+  /** What the last frame drew of it: its line count and the rows it had, so a scroll can be clamped. */
+  private documentLayout = { total: 0, rows: 1 }
   private filtering: Side | null = null
   private status: { text: string; tone: Tone } | null = null
   private busy = false
@@ -96,6 +107,7 @@ export class Tui {
       active: this.active,
       overlay: this.overlay,
       transfer: this.transfer,
+      document: this.document,
       filtering: this.filtering,
       status: this.status,
       choices: this.choices,
@@ -118,6 +130,8 @@ export class Tui {
         clampIndex(pane)
         const row = selectedRow(pane)
         if (row?.entry.isDirectory && !this.busy) void this.toggle(side, row)
+        // With the viewer open, a click on a file is a request to see it.
+        else if (row && this.document) void this.viewRow(side, row)
         this.invalidate()
       },
       onGoUp: (side) => {
@@ -154,6 +168,13 @@ export class Tui {
       },
       onHostKeyDecide: (trust) => {
         if (this.overlay?.kind === 'hostKey') this.overlay.decide(trust)
+      },
+      onDocumentScroll: (delta) => {
+        this.scrollDocument(delta * WHEEL_ROWS)
+        this.invalidate()
+      },
+      onDocumentLayout: (total, rows) => {
+        this.documentLayout = { total, rows }
       },
     })
   }
@@ -209,6 +230,12 @@ export class Tui {
         break
       case 'endpoint':
         if (!this.busy) this.openPicker()
+        break
+      case 'view':
+        if (!this.busy) await this.toggleDocument()
+        break
+      case 'closeDocument':
+        this.document = null
         break
       case 'preview':
         if (!this.busy) await this.transferTo(true)
@@ -379,10 +406,17 @@ export class Tui {
         this.dismissTransfer()
         return true
       }
+      // Then to the open file: it is the thing on top, and closing it is
+      // what escape means while it is there.
+      if (this.document) {
+        this.document = null
+        return true
+      }
       return false
     }
     if (key.name === 'q') return false
     if (this.busy) return true
+    if (this.document && this.onDocumentKey(key)) return true
 
     const pane = this.current
     const page = Math.max(1, (this.app?.height ?? 30) - 10)
@@ -420,6 +454,9 @@ export class Tui {
         break
       case key.name === 'c':
         this.openPicker()
+        break
+      case key.char === 'v':
+        await this.toggleDocument()
         break
       case key.name === 'r':
         await this.refresh(this.active)
@@ -515,6 +552,96 @@ export class Tui {
     const pane = this.current
     const last = Math.max(0, visibleRows(pane).length - 1)
     pane.index = Math.min(last, Math.max(0, pane.index + delta))
+    this.followCursor()
+  }
+
+  // ------------------------------------------------------------- documents
+
+  /**
+   * The keys the open file takes: paging and jumping.
+   *
+   * Not the arrows. Those stay with the panes so the viewer can follow the
+   * cursor from one file to the next, which is what makes it a preview rather
+   * than a detour. Returns false for a key that is not the viewer's.
+   */
+  private onDocumentKey(key: KeyEvent): boolean {
+    const rows = this.documentLayout.rows
+    if (key.name === 'pagedown' || key.name === 'space' || key.char === ' ') this.scrollDocument(rows)
+    else if (key.name === 'pageup' || key.char === 'b') this.scrollDocument(-rows)
+    else if (key.name === 'home' || key.char === 'g') this.scrollDocument(-Infinity)
+    else if (key.name === 'end' || key.char === 'G') this.scrollDocument(Infinity)
+    else return false
+    return true
+  }
+
+  private scrollDocument(delta: number): void {
+    const doc = this.document
+    if (!doc) return
+    const furthest = maxScroll(this.documentLayout.total, this.documentLayout.rows)
+    doc.scroll = Math.min(furthest, Math.max(0, doc.scroll + delta))
+  }
+
+  /** With a file open, the cursor landing on another file shows that one instead. */
+  private followCursor(): void {
+    if (!this.document) return
+    const row = selectedRow(this.current)
+    if (row && !row.entry.isDirectory) void this.viewRow(this.active, row)
+  }
+
+  /** `v`: the file under the cursor opens under the panes, or the open one closes. */
+  private async toggleDocument(): Promise<void> {
+    if (this.document) {
+      this.document = null
+      return
+    }
+    const row = selectedRow(this.current)
+    if (!row) return
+    if (row.entry.isDirectory) {
+      this.say('v views a file; ⏎ unfolds a directory', 'warn')
+      return
+    }
+    await this.viewRow(this.active, row)
+  }
+
+  /**
+   * Reads the head of a file and shows it under the panes.
+   *
+   * Only the head — see DOCUMENT_LIMIT. Nobody waits on the read: the cursor
+   * keeps moving, and a head that lands after the viewer has moved on to
+   * another file, or has been closed, is dropped rather than shown.
+   */
+  private async viewRow(side: Side, row: Row): Promise<void> {
+    const pane = this.panes[side]
+    const location = endpointString(pane, row.rel, false)
+    if (this.document?.location === location && !this.document.error) return
+
+    const doc = blankDocument(side, row.entry.name, location)
+    this.document = doc
+    // A finished transfer's panel and the document want the same rows.
+    if (this.transfer && !this.transfer.running) this.transfer = null
+    this.invalidate()
+    try {
+      const head = pane.connection
+        ? await this.readRemoteHead(pane, posix.join(pane.path, row.rel))
+        : readLocalHead(join(pane.path, row.rel), DOCUMENT_LIMIT)
+      if (this.document !== doc) return
+      fillDocument(doc, head, readsAsMarkdown)
+    } catch (error) {
+      if (this.document !== doc) return
+      doc.loading = false
+      doc.error = error instanceof Error ? error.message : String(error)
+    } finally {
+      this.invalidate()
+    }
+  }
+
+  private async readRemoteHead(pane: Pane, path: string): Promise<{ bytes: Uint8Array; size: number }> {
+    const browser = await SftpBrowser.open(await this.session(pane.connection!))
+    try {
+      return await browser.readHead(path, DOCUMENT_LIMIT)
+    } finally {
+      browser.close()
+    }
   }
 
   // ------------------------------------------------------------------ tree
@@ -552,9 +679,12 @@ export class Tui {
     return Promise.resolve(listLocal(join(pane.path, rel)))
   }
 
+  /** ⏎ unfolds a directory, and opens a file under the panes. */
   private async toggleSelected(): Promise<void> {
     const row = selectedRow(this.current)
-    if (row) await this.toggle(this.active, row)
+    if (!row) return
+    if (row.entry.isDirectory) await this.toggle(this.active, row)
+    else await this.viewRow(this.active, row)
   }
 
   /** → on a folded directory unfolds it; on an unfolded one it steps onto the first child. */
@@ -677,6 +807,8 @@ export class Tui {
       cancel: () => controller.abort(),
     }
     this.transfer = transfer
+    // The transfer panel takes the rows the document had.
+    this.document = null
     this.busy = true
     this.invalidate()
     // rsync can be silent for a long time while it walks a tree; the clock in
