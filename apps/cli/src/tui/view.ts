@@ -64,6 +64,8 @@ export type Action =
   | 'endpoint'
   | 'view'
   | 'closeDocument'
+  | 'edit'
+  | 'openWith'
   | 'preview'
   | 'sync'
   | 'filter'
@@ -370,7 +372,9 @@ function drawDocument(
   // The border and its padding take two columns a side; the scrollbar one more.
   const textWidth = Math.max(10, width - 5)
   const lines = doc.loading || doc.error ? [] : documentLines(doc, textWidth, theme)
-  const rows = Math.max(1, height - 2 - paneRowsBeside(height) - DOCUMENT_CHROME)
+  // A hex dump is the viewer admitting defeat, so it says what would work.
+  const hint = doc.kind === 'binary' ? 'Not a text file. e edits it; x opens it with a player, a viewer or the desktop.' : null
+  const rows = Math.max(1, height - 2 - paneRowsBeside(height) - DOCUMENT_CHROME - (hint ? 1 : 0))
   const scroll = Math.min(doc.scroll, maxScroll(lines.length, rows))
   const scrolls = lines.length > rows
   handlers.onDocumentLayout?.(lines.length, rows)
@@ -411,6 +415,7 @@ function drawDocument(
         panel.text('Empty file', { align: 'center', fg: theme.muted })
         return
       }
+      if (hint) panel.text(hint, { height: 1, fg: theme.muted })
       panel.row({ gap: 0, height: 'fill' }, (row) => {
         row.draw(
           (surface) => {
@@ -639,6 +644,8 @@ function drawFooter(ui: Container, theme: Theme, state: ViewState, width: number
                   { key: '↑↓', label: 'file' },
                   { key: 'pgdn pgup', label: 'page' },
                   { key: 'g G', label: 'top end' },
+                  { key: 'e', label: 'edit', onPress: act('edit') },
+                  { key: 'x', label: 'open…', onPress: act('openWith') },
                   { key: 'esc', label: 'close', onPress: act('closeDocument') },
                   { key: 'q', label: 'quit', onPress: act('quit') },
                 ]
@@ -646,6 +653,8 @@ function drawFooter(ui: Container, theme: Theme, state: ViewState, width: number
                 { key: 'tab', label: 'pane', onPress: act('pane') },
                 { key: '⏎', label: 'open', onPress: act('open') },
                 { key: 'v', label: 'view', onPress: act('view') },
+                { key: 'e', label: 'edit', onPress: act('edit') },
+                { key: 'x', label: 'open…', onPress: act('openWith') },
                 { key: 'c', label: 'endpoint', onPress: act('endpoint') },
                 { key: 'p', label: 'preview', onPress: act('preview') },
                 { key: 's', label: 'sync', onPress: act('sync') },
@@ -716,7 +725,7 @@ function drawHelp(ui: Container, theme: Theme, handlers: ViewHandlers): void {
     {
       title: ' Keys ',
       width: 66,
-      height: 26,
+      height: 28,
       buttons: [{ label: 'esc  close', variant: 'ghost', onPress: close }],
       onDismiss: close,
     },
@@ -732,6 +741,8 @@ function drawHelp(ui: Container, theme: Theme, handlers: ViewHandlers): void {
           { label: 'click ..', value: 'go up' },
           { label: 'v, or ⏎ on a file', value: 'view it under the panes; ↑ ↓ then follow' },
           { label: 'pgdn pgup g G', value: 'page the open file, jump to its ends' },
+          { label: 'e', value: 'edit it in $EDITOR: a tmux window, or here' },
+          { label: 'x', value: 'open it with a player, a viewer or the desktop' },
           { label: 'c', value: 'point this pane somewhere else' },
           { label: '/', value: 'filter this listing' },
           { label: 'o / O', value: 'cycle sort / reverse it' },
