@@ -13,6 +13,7 @@ import { renderToScreen } from '@profullstack/hqtui/testing'
 import { key } from './keys.fixture.js'
 import { visibleRows, type Entry, type Pane, type Side } from './model.js'
 import type { Launch, Launcher } from './launch.js'
+import { PNG_1x1 } from './graphics.test.js'
 
 vi.mock('@diskpush/ssh-core', () => ({
   SshSession: { connect: async () => ({ close: () => {} }) },
@@ -355,7 +356,7 @@ describe('the mouse', () => {
   it('quits from the key bar through the app it is attached to', async () => {
     const app = tui()
     const quit = vi.fn()
-    app.attach({ quit, invalidate: () => {} } as unknown as App)
+    app.attach({ quit, invalidate: () => {}, on: () => () => {} } as unknown as App)
     const screen = frame(app)
     const q = screen.find('q quit')!
     screen.click(q.x, q.y)
@@ -366,7 +367,7 @@ describe('the mouse', () => {
   it('gives a dialog the whole screen: the key bar under it is not clickable', async () => {
     const app = tui()
     const quit = vi.fn()
-    app.attach({ quit, invalidate: () => {} } as unknown as App)
+    app.attach({ quit, invalidate: () => {}, on: () => () => {} } as unknown as App)
     await press(app, '?')
     const screen = frame(app)
     // Bottom row, where the key bar is: the click is taken by the backdrop,
@@ -704,7 +705,7 @@ describe('editing and opening with the system', () => {
   it('without tmux, e hands the terminal over: the app quits and the runner gets the program', async () => {
     const { app, root, launched } = browser({ inTmux: false })
     const quit = vi.fn()
-    app.attach({ quit, invalidate: () => {}, height: 30 } as unknown as App)
+    app.attach({ quit, invalidate: () => {}, height: 30, on: () => () => {} } as unknown as App)
     goto(app, 'notes.md')
     await press(app, 'e')
     expect(launched).toEqual([])
@@ -717,7 +718,7 @@ describe('editing and opening with the system', () => {
 
   it('coming back from a hand-off re-reads the panes and the open file', async () => {
     const { app, root } = browser({ inTmux: false })
-    app.attach({ quit: () => {}, invalidate: () => {}, height: 30 } as unknown as App)
+    app.attach({ quit: () => {}, invalidate: () => {}, height: 30, on: () => () => {} } as unknown as App)
     goto(app, 'notes.md')
     await press(app, 'v')
     expect(state(app).document?.text).toBe('# notes\n')
@@ -785,5 +786,107 @@ describe('editing and opening with the system', () => {
     await settle()
     expect(launched).toHaveLength(1)
     expect(launched[0]?.launch.argv[0]).toBe('vim')
+  })
+})
+
+describe('viewing an image', () => {
+  /** A fake app that records raw terminal writes and lets a test fire the frame event. */
+  function fakeApp() {
+    const writes: string[] = []
+    const listeners: Record<string, () => void> = {}
+    const redraw = vi.fn()
+    const app = {
+      on: (event: string, fn: () => void) => {
+        listeners[event] = fn
+        return () => {}
+      },
+      terminal: { write: (data: string) => writes.push(data) },
+      redraw,
+      quit: () => {},
+      invalidate: () => {},
+      height: 30,
+    } as unknown as App
+    return { app, writes, listeners, redraw }
+  }
+  function withImage(inTmux: boolean, protocol: 'iterm2' | 'kitty' = 'iterm2') {
+    const root = mkdtempSync(join(tmpdir(), 'diskpush-img-'))
+    writeFileSync(join(root, 'dot.png'), PNG_1x1)
+    writeFileSync(join(root, 'notes.md'), '# notes\n')
+    const left = blankPane('Local', root)
+    left.entries = listLocal(root)
+    const launcher: Launcher = {
+      env: {},
+      available: () => false,
+      inTmux,
+      tmux: async () => {},
+      detach: () => {},
+    }
+    const tui = new Tui(left, blankPane('Local', '/tmp/b'), [], launcher, protocol)
+    const fake = fakeApp()
+    tui.attach(fake.app)
+    return { tui, root, ...fake }
+  }
+  const goto = (app: Tui, name: string) => {
+    const p = pane(app, 'left')
+    p.index = visibleRows(p).findIndex((row) => row.entry.name === name)
+  }
+
+  it('reads a PNG whole, says what it is, and hands it to the terminal once the frame is out', async () => {
+    const { tui, writes, listeners } = withImage(false)
+    goto(tui, 'dot.png')
+    await press(tui, 'v')
+    expect(state(tui).document?.kind).toBe('image')
+    expect(state(tui).document?.image).toEqual({ format: 'png', width: 1, height: 1 })
+    const screen = frame(tui)
+    expect(screen.contains('PNG 1×1')).toBe(true)
+    expect(writes).toEqual([])
+    listeners.frame!()
+    expect(writes).toHaveLength(1)
+    // Placed below the hint line, inside the panel, with the cursor put back.
+    expect(writes[0]).toMatch(/^\x1b7\x1b\[\d+;\d+H\x1b\]1337;File=inline=1;size=\d+;width=(?:\d+|auto);height=(?:\d+|auto);preserveAspectRatio=1:[A-Za-z0-9+/=]+\x07\x1b8$/)
+    // The same frame again draws nothing new.
+    frame(tui)
+    listeners.frame!()
+    expect(writes).toHaveLength(1)
+  })
+
+  it('under tmux the image is wrapped for passthrough, and the cursor moves are not', () => {
+    const { tui, writes, listeners } = withImage(true)
+    goto(tui, 'dot.png')
+    return press(tui, 'v').then(() => {
+      frame(tui)
+      listeners.frame!()
+      expect(writes[0]).toMatch(/^\x1b7\x1b\[\d+;\d+H\x1bPtmux;\x1b\x1b\]1337;.*\x07\x1b\\\x1b8$/)
+    })
+  })
+
+  it('kitty gets chunked APC, and a delete when the file closes', async () => {
+    const { tui, writes, listeners, redraw } = withImage(false, 'kitty')
+    goto(tui, 'dot.png')
+    await press(tui, 'v')
+    frame(tui)
+    listeners.frame!()
+    expect(writes[0]).toContain('\x1b_Ga=T,f=100,i=31337,')
+    await press(tui, 'escape')
+    frame(tui)
+    listeners.frame!()
+    expect(writes[1]).toBe('\x1b_Ga=d,d=I,i=31337,q=2\x1b\\')
+    expect(redraw).toHaveBeenCalledTimes(1)
+  })
+
+  it('moving to a text file takes the image down with a full repaint', async () => {
+    const { tui, writes, listeners, redraw } = withImage(false)
+    goto(tui, 'dot.png')
+    await press(tui, 'v')
+    frame(tui)
+    listeners.frame!()
+    expect(writes).toHaveLength(1)
+    goto(tui, 'notes.md')
+    await press(tui, 'enter')
+    frame(tui)
+    listeners.frame!()
+    // iTerm2 has nothing to write for a delete; the repaint is what erases it.
+    expect(writes).toHaveLength(1)
+    expect(redraw).toHaveBeenCalledTimes(1)
   })
 })

@@ -11,7 +11,8 @@
  * screen can be rendered and asserted on in a test with no pty.
  */
 import { join, posix } from 'node:path'
-import type { App, Container, KeyEvent, MouseEvent, Theme } from '@profullstack/hqtui'
+import type { App, Container, KeyEvent, MouseEvent, Rect, Theme } from '@profullstack/hqtui'
+import { detectCapabilities } from '@profullstack/hqtui'
 import { knownHostsPath } from '@diskpush/database'
 import { SftpBrowser, SshSession } from '@diskpush/ssh-core'
 import { defaultRsyncOptions, type Change, type Connection } from '@diskpush/schemas'
@@ -28,11 +29,13 @@ import {
   SORT_KEYS,
   type Transfer,
   DOCUMENT_LIMIT,
+  IMAGE_LIMIT,
   blankDocument,
   blankPane,
   clampIndex,
   endpointString,
   fillDocument,
+  isImageName,
   listLocal,
   looksBinary,
   nothingToDo,
@@ -48,6 +51,7 @@ import {
 import { type Action, type Tone, type ViewState, draw, filterChoices } from './view.js'
 import { maxScroll, readsAsMarkdown } from './document.js'
 import { type Launch, type Launcher, type Target, editLaunch, openLaunch, systemLauncher } from './launch.js'
+import { type Protocol, chooseProtocol, deleteImage, encodeImage, placeAt, tmuxPassthrough } from './graphics.js'
 
 export {
   blankPane,
@@ -74,6 +78,12 @@ export class Tui {
   private documentLayout = { total: 0, rows: 1 }
   /** A program waiting for the terminal, once the app has given it up. See `start`. */
   private handoff: Launch | null = null
+  /** Where the frame left room for an image, if it did. Set by the view, read after the frame. */
+  private imageRect: Rect | null = null
+  /** The image on screen and the cells it was drawn into, so the next frame knows whether to draw again. */
+  private shown: { doc: Document; cells: string } | null = null
+  /** How this terminal is handed an image. Decided once: the terminal does not change. */
+  private readonly protocol: Protocol
   private filtering: Side | null = null
   private status: { text: string; tone: Tone } | null = null
   private busy = false
@@ -91,13 +101,21 @@ export class Tui {
     right: Pane,
     private readonly choices: readonly EndpointChoice[] = [],
     private readonly launcher: Launcher = systemLauncher(),
+    protocol?: Protocol,
   ) {
     this.panes = { left, right }
+    this.protocol = protocol ?? chooseProtocol(detectCapabilities({}, launcher.env).program)
   }
 
-  /** Binds the app so background work (a load, a transfer tick) can redraw. */
+  /**
+   * Binds the app so background work (a load, a transfer tick) can redraw,
+   * and so an image can be drawn once each frame is on the terminal.
+   */
   attach(app: App): void {
     this.app = app
+    this.shown = null
+    app.on('frame', () => this.afterFrame())
+    app.on('exit', () => this.clearImage())
   }
 
   private invalidate(): void {
@@ -122,7 +140,11 @@ export class Tui {
 
   /** The render callback handed to `app.render`. */
   view(ui: Container, theme: Theme, width: number, height: number): void {
+    this.imageRect = null
     draw(ui, theme, width, height, this.snapshot(), {
+      onImageRect: (rect) => {
+        this.imageRect = rect
+      },
       onPaneFocus: (side) => {
         this.active = side
         this.invalidate()
@@ -637,10 +659,12 @@ export class Tui {
     // A finished transfer's panel and the document want the same rows.
     if (this.transfer && !this.transfer.running) this.transfer = null
     this.invalidate()
+    // An image is handed to the terminal whole, so it is read whole.
+    const limit = isImageName(row.entry.name) ? IMAGE_LIMIT : DOCUMENT_LIMIT
     try {
       const head = pane.connection
-        ? await this.readRemoteHead(pane, posix.join(pane.path, row.rel))
-        : readLocalHead(join(pane.path, row.rel), DOCUMENT_LIMIT)
+        ? await this.readRemoteHead(pane, posix.join(pane.path, row.rel), limit)
+        : readLocalHead(join(pane.path, row.rel), limit)
       if (this.document !== doc) return
       fillDocument(doc, head, readsAsMarkdown)
     } catch (error) {
@@ -650,6 +674,48 @@ export class Tui {
     } finally {
       this.invalidate()
     }
+  }
+
+  // ------------------------------------------------------------------ images
+
+  private writeRaw(data: string): void {
+    if (data) this.app?.terminal.write(data)
+  }
+
+  /**
+   * After each frame: draw the image the frame left room for, or take down
+   * the one that is no longer wanted.
+   *
+   * The image is not part of the frame. hqtui diffs cells, and an image is
+   * not a cell, so it is handed to the terminal separately, once, into cells
+   * the frame left blank — and drawn again only when the file or the box
+   * changes, never on every mouse move. Taking it down is a full repaint:
+   * an iTerm2 image is erased by drawing over it, and hqtui's diff would
+   * otherwise leave the untouched cells exactly as they were, image and all.
+   */
+  private afterFrame(): void {
+    const doc = this.document
+    const rect = this.imageRect
+    const want =
+      doc?.kind === 'image' && doc.image && rect && rect.width > 0 && rect.height > 0
+        ? { doc, cells: `${rect.x},${rect.y},${rect.width},${rect.height}` }
+        : null
+    if (this.shown && (!want || want.doc !== this.shown.doc || want.cells !== this.shown.cells)) {
+      this.clearImage()
+      this.app?.redraw()
+      return
+    }
+    if (!want || this.shown || !rect || !doc?.image) return
+    const sequence = encodeImage(this.protocol, doc.bytes, doc.image, { cols: rect.width, rows: rect.height })
+    if (sequence) this.writeRaw(placeAt(sequence, rect.x, rect.y, this.launcher.inTmux))
+    this.shown = want
+  }
+
+  private clearImage(): void {
+    if (!this.shown) return
+    const sequence = deleteImage(this.protocol)
+    if (sequence) this.writeRaw(this.launcher.inTmux ? tmuxPassthrough(sequence) : sequence)
+    this.shown = null
   }
 
   // --------------------------------------------------------------- launching
@@ -752,10 +818,10 @@ export class Tui {
     this.invalidate()
   }
 
-  private async readRemoteHead(pane: Pane, path: string): Promise<{ bytes: Uint8Array; size: number }> {
+  private async readRemoteHead(pane: Pane, path: string, limit: number): Promise<{ bytes: Uint8Array; size: number }> {
     const browser = await SftpBrowser.open(await this.session(pane.connection!))
     try {
-      return await browser.readHead(path, DOCUMENT_LIMIT)
+      return await browser.readHead(path, limit)
     } finally {
       browser.close()
     }
