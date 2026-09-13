@@ -6,9 +6,10 @@
  * text with no pty, and what keeps the app class down to state and effects.
  */
 import type { Color, Container, Theme } from '@profullstack/hqtui'
-import { stringWidth, truncate } from '@profullstack/hqtui'
+import { stringWidth, truncate, widgets } from '@profullstack/hqtui'
 import type { Change } from '@diskpush/schemas'
 import {
+  type Document,
   type EndpointChoice,
   type Overlay,
   type Pane,
@@ -19,11 +20,13 @@ import {
   formatDuration,
   formatSize,
   formatWhen,
+  isTruncated,
   nothingToDo,
   parentPath,
   rowTree,
   visibleEntries,
 } from './model.js'
+import { documentLines, maxScroll } from './document.js'
 
 /** What hqtui's tree draws: the model's `Row`, spelled the widget's way. */
 type TreeNode = {
@@ -41,6 +44,8 @@ export type ViewState = {
   active: Side
   overlay: Overlay | null
   transfer: Transfer | null
+  /** The file open under the panes, if any. */
+  document: Document | null
   /** Which pane's `/` prompt is being typed into, if any. */
   filtering: Side | null
   status: { text: string; tone: Tone } | null
@@ -57,6 +62,8 @@ export type Action =
   | 'pane'
   | 'open'
   | 'endpoint'
+  | 'view'
+  | 'closeDocument'
   | 'preview'
   | 'sync'
   | 'filter'
@@ -91,10 +98,36 @@ export type ViewHandlers = {
   onDismissOverlay?: () => void
   /** A click on one of the host-key question's answers. */
   onHostKeyDecide?: (trust: boolean) => void
+  /** The wheel over the open document, or a click on its scrollbar. */
+  onDocumentScroll?: (delta: number) => void
+  /**
+   * What the frame drew of the document: how many lines it has and how many
+   * of them fit. Only the frame knows either, and the app needs both to clamp
+   * a scroll before the next frame rather than after it.
+   */
+  onDocumentLayout?: (total: number, rows: number) => void
 }
 
 /** Rows the transfer panel takes when one is on screen. */
 const TRANSFER_HEIGHT = 9
+
+/** Rows of the document panel that are border rather than document. */
+const DOCUMENT_CHROME = 2
+
+/**
+ * Rows the panes keep while a document is open under them.
+ *
+ * The panes are how you got to the file and how you pick the next one, so
+ * they stay; the document is what you asked to look at, so it gets the larger
+ * share. A short terminal still leaves the panes enough rows to be a listing,
+ * and the document enough to be more than a title.
+ */
+export function paneRowsBeside(height: number): number {
+  // The header and the footer take a row each.
+  const usable = height - 2
+  const panes = Math.max(6, Math.floor(usable * 0.38))
+  return Math.min(panes, Math.max(4, usable - DOCUMENT_CHROME - 4))
+}
 
 const ACTION_LEVEL: Record<Change['action'], string> = {
   add: 'ADD',
@@ -154,14 +187,17 @@ export function draw(
 ): void {
   drawHeader(ui, theme, state, handlers)
 
-  ui.row({ gap: 0, height: 'fill' }, (row) => {
+  // With a document open the panes give up most of the screen to it, which
+  // is the ask: the listing stays where it was, and the file opens under it.
+  ui.row({ gap: 0, height: state.document ? paneRowsBeside(height) : 'fill' }, (row) => {
     drawPane(row, theme, state, 'left', Math.floor(width / 2), handlers)
     drawPane(row, theme, state, 'right', Math.floor(width / 2), handlers)
   })
 
+  if (state.document) drawDocument(ui, theme, state.document, width, height, handlers)
   // A short terminal gives its rows to the panes; the transfer is still
   // readable from the status line, and half a panel is worse than none.
-  if (state.transfer && height >= TRANSFER_HEIGHT + 8) drawTransfer(ui, theme, state, state.transfer, handlers)
+  else if (state.transfer && height >= TRANSFER_HEIGHT + 8) drawTransfer(ui, theme, state, state.transfer, handlers)
 
   drawFooter(ui, theme, state, width, handlers)
 
@@ -309,6 +345,93 @@ function drawPane(
         panel.spacer(1)
         panel.text(pane.filter ? `Nothing matches “${pane.filter}”` : 'Empty', { align: 'center', fg: theme.muted })
       }
+    },
+  )
+}
+
+/**
+ * The open file, under the panes.
+ *
+ * Markdown is drawn rendered, text as numbered lines, a binary as a hex dump
+ * of its head; `documentLines` decides which. The panel's footer says where
+ * in the file you are and how much of it was read, because the viewer reads a
+ * head and not the file, and a listing that ends is not the same as a file
+ * that does.
+ */
+function drawDocument(
+  ui: Container,
+  theme: Theme,
+  doc: Document,
+  width: number,
+  height: number,
+  handlers: ViewHandlers,
+): void {
+  const title = ` ${doc.name} `
+  // The border and its padding take two columns a side; the scrollbar one more.
+  const textWidth = Math.max(10, width - 5)
+  const lines = doc.loading || doc.error ? [] : documentLines(doc, textWidth, theme)
+  const rows = Math.max(1, height - 2 - paneRowsBeside(height) - DOCUMENT_CHROME)
+  const scroll = Math.min(doc.scroll, maxScroll(lines.length, rows))
+  const scrolls = lines.length > rows
+  handlers.onDocumentLayout?.(lines.length, rows)
+
+  const last = Math.min(lines.length, scroll + rows)
+  const footerParts = [
+    lines.length > 0 ? `lines ${scroll + 1}–${last} of ${lines.length}` : '',
+    doc.loading || doc.error ? '' : doc.kind,
+    doc.loading
+      ? ''
+      : isTruncated(doc)
+        ? `first ${formatSize(doc.bytes.length)} of ${formatSize(doc.size)}`
+        : formatSize(doc.size),
+  ].filter(Boolean)
+
+  ui.panel(
+    {
+      height: 'fill',
+      title,
+      titleColor: theme.primary,
+      subtitle: truncatePath(doc.location, Math.max(12, width - stringWidth(title) - 8)),
+      subtitleColor: theme.muted,
+      footer: footerParts.length > 0 ? ` ${footerParts.join('  ·  ')} ` : undefined,
+    },
+    (panel) => {
+      if (doc.loading) {
+        panel.spacer(1)
+        panel.text('Reading…', { align: 'center', fg: theme.muted })
+        return
+      }
+      if (doc.error) {
+        panel.spacer(1)
+        panel.text(doc.error, { fg: theme.danger, wrap: true, align: 'center' })
+        return
+      }
+      if (lines.length === 0) {
+        panel.spacer(1)
+        panel.text('Empty file', { align: 'center', fg: theme.muted })
+        return
+      }
+      panel.row({ gap: 0, height: 'fill' }, (row) => {
+        row.draw(
+          (surface) => {
+            widgets.drawText(surface, lines, { scroll })
+            // `text` claims no region of its own, so the wheel over the
+            // document is wired here: the same scroll the bar beside it does.
+            row.ctx.hit({ rect: surface.hitRect(), onScroll: (delta) => handlers.onDocumentScroll?.(delta) })
+          },
+          { width: '1fr' },
+        )
+        // A bar whose thumb fills the track says nothing; a file that fits gets none.
+        if (scrolls) {
+          row.scrollbar({
+            width: 1,
+            total: lines.length,
+            viewport: rows,
+            offset: scroll,
+            onScroll: (delta) => handlers.onDocumentScroll?.(delta),
+          })
+        }
+      })
     },
   )
 }
@@ -508,9 +631,21 @@ function drawFooter(ui: Container, theme: Theme, state: ViewState, width: number
                 { key: 'esc', label: 'cancel', onPress: act('cancelTransfer') },
                 { key: 'q', label: 'quit', onPress: act('quit') },
               ]
-            : [
+            : state.document
+              ? [
+                  // The panes keep the arrows, so the document follows the
+                  // cursor from file to file; paging is what the viewer owns.
+                  { key: 'tab', label: 'pane', onPress: act('pane') },
+                  { key: '↑↓', label: 'file' },
+                  { key: 'pgdn pgup', label: 'page' },
+                  { key: 'g G', label: 'top end' },
+                  { key: 'esc', label: 'close', onPress: act('closeDocument') },
+                  { key: 'q', label: 'quit', onPress: act('quit') },
+                ]
+              : [
                 { key: 'tab', label: 'pane', onPress: act('pane') },
                 { key: '⏎', label: 'open', onPress: act('open') },
+                { key: 'v', label: 'view', onPress: act('view') },
                 { key: 'c', label: 'endpoint', onPress: act('endpoint') },
                 { key: 'p', label: 'preview', onPress: act('preview') },
                 { key: 's', label: 'sync', onPress: act('sync') },
@@ -580,8 +715,8 @@ function drawHelp(ui: Container, theme: Theme, handlers: ViewHandlers): void {
   ui.modal(
     {
       title: ' Keys ',
-      width: 58,
-      height: 24,
+      width: 66,
+      height: 26,
       buttons: [{ label: 'esc  close', variant: 'ghost', onPress: close }],
       onDismiss: close,
     },
@@ -595,6 +730,8 @@ function drawHelp(ui: Container, theme: Theme, handlers: ViewHandlers): void {
           { label: 'pgup pgdn home end', value: 'jump' },
           { label: 'click', value: 'select; fold or unfold a directory' },
           { label: 'click ..', value: 'go up' },
+          { label: 'v, or ⏎ on a file', value: 'view it under the panes; ↑ ↓ then follow' },
+          { label: 'pgdn pgup g G', value: 'page the open file, jump to its ends' },
           { label: 'c', value: 'point this pane somewhere else' },
           { label: '/', value: 'filter this listing' },
           { label: 'o / O', value: 'cycle sort / reverse it' },
@@ -602,7 +739,7 @@ function drawHelp(ui: Container, theme: Theme, handlers: ViewHandlers): void {
           { label: 'r', value: 'reload' },
           { label: 'p', value: 'preview syncing this to the other pane' },
           { label: 's', value: 'sync it, into the same place over there' },
-          { label: 'esc', value: 'cancel a transfer, or close this' },
+          { label: 'esc', value: 'cancel a transfer, close a file or this' },
           { label: 'q', value: 'quit' },
         ],
         { labelColor: theme.accent },

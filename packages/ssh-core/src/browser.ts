@@ -201,6 +201,40 @@ export class SftpBrowser {
   }
 
   /**
+   * The first `limit` bytes of a file, and how big the whole file is.
+   *
+   * Not ssh2's `readFile`: that pulls the entire file into memory, and the
+   * viewer is pointed at whatever sits under the cursor, which is as likely
+   * to be a 40 GB backup as a README. A short read is normal here — the
+   * server answers one request with however much it feels like, so the loop
+   * runs until it has what it asked for or the file ran out.
+   */
+  async readHead(path: string, limit: number): Promise<{ bytes: Buffer; size: number }> {
+    const handle = await new Promise<Buffer>((resolve, reject) => {
+      this.sftp.open(path, 'r', (error, opened) => (error ? reject(error) : resolve(opened)))
+    })
+    try {
+      const size = await new Promise<number>((resolve, reject) => {
+        this.sftp.fstat(handle, (error, stats) => (error ? reject(error) : resolve(stats.size)))
+      })
+      const bytes = Buffer.alloc(Math.max(0, Math.min(size, limit)))
+      let read = 0
+      while (read < bytes.length) {
+        const count = await new Promise<number>((resolve, reject) => {
+          this.sftp.read(handle, bytes, read, bytes.length - read, read, (error, got) =>
+            error ? reject(error) : resolve(got),
+          )
+        })
+        if (count === 0) break
+        read += count
+      }
+      return { bytes: bytes.subarray(0, read), size }
+    } finally {
+      await new Promise<void>((resolve) => this.sftp.close(handle, () => resolve()))
+    }
+  }
+
+  /**
    * Removes a directory and everything under it.
    *
    * SFTP's rmdir only unlinks an empty directory, so deleting a populated one

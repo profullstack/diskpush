@@ -1,3 +1,6 @@
+import { mkdtempSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   type Entry,
@@ -10,8 +13,7 @@ import {
   pushChange,
   selectedEntry,
   visibleEntries,
-  TRANSFER_LOG_LIMIT,
-} from './model.js'
+  TRANSFER_LOG_LIMIT, DOCUMENT_LIMIT, blankDocument, decodeText, fillDocument, hexDump, isMarkdownName, isTruncated, looksBinary, readLocalHead } from './model.js'
 import type { Transfer } from './model.js'
 
 const entry = (name: string, over: Partial<Entry> = {}): Entry => ({
@@ -140,5 +142,70 @@ describe('the transfer log', () => {
     expect(t.summary.add).toBe(TRANSFER_LOG_LIMIT + 50)
     expect(t.recent).toHaveLength(TRANSFER_LOG_LIMIT)
     expect(t.recent.at(-1)?.path).toBe(`file-${TRANSFER_LOG_LIMIT + 49}`)
+  })
+})
+
+describe('documents', () => {
+  const doc = (name: string, bytes: Uint8Array | string, size?: number, byContent = () => false) => {
+    const d = blankDocument('left', name, `/x/${name}`)
+    const raw = typeof bytes === 'string' ? Buffer.from(bytes) : bytes
+    fillDocument(d, { bytes: raw, size: size ?? raw.length }, byContent)
+    return d
+  }
+
+  it('knows markdown by its extension, the way readm3 does', () => {
+    for (const name of ['README.md', 'notes.markdown', 'a.MD', 'page.mdx']) expect(isMarkdownName(name)).toBe(true)
+    for (const name of ['README', 'a.ts', 'md', 'a.md.bak']) expect(isMarkdownName(name)).toBe(false)
+  })
+
+  it('calls a head with a NUL in it binary, and text otherwise', () => {
+    expect(looksBinary(Buffer.from('hello\n'))).toBe(false)
+    expect(looksBinary(Buffer.from('hel\0lo'))).toBe(true)
+    expect(looksBinary(new Uint8Array())).toBe(false)
+    // Tabs, newlines and colour escapes are text; a head of other control bytes is not.
+    expect(looksBinary(Buffer.from('\t\x1b[31mred\x1b[0m\r\n'))).toBe(false)
+    expect(looksBinary(Buffer.from([1, 2, 3, 4, 5, 6, 7, 8, 65, 66]))).toBe(true)
+    // Noise without a NUL is still not text, and Latin-1 prose still is.
+    expect(looksBinary(Uint8Array.from({ length: 300 }, (_, i) => 0x80 + ((i * 37) % 0x7f)))).toBe(true)
+    expect(looksBinary(Buffer.from('Le caf\xe9 est pr\xeat, dit-elle, et la journ\xe9e commence.', 'latin1'))).toBe(false)
+    expect(looksBinary(Buffer.from('Ünïcödé is fine, and so is 日本語 and emoji 🎉.'))).toBe(false)
+  })
+
+  it('decodes text, dropping a BOM and folding Windows line ends', () => {
+    expect(decodeText(Buffer.from('﻿a\r\nb\rc\n'))).toBe('a\nb\nc\n')
+  })
+
+  it('dumps hex sixteen bytes to a row, gapped after eight, printable bytes alongside', () => {
+    const rows = hexDump(Buffer.from('Hello, world!\n\0\xff!'))
+    expect(rows).toEqual([
+      '00000000  48 65 6c 6c 6f 2c 20 77  6f 72 6c 64 21 0a 00 c3  |Hello, world!...|',
+      '00000010  bf 21                                             |.!|',
+    ])
+    expect(hexDump(new Uint8Array(10_000)).length).toBe(4096 / 16)
+  })
+
+  it('decides the kind by name first, and by content only for a file with no extension', () => {
+    expect(doc('README.md', 'plain words').kind).toBe('markdown')
+    expect(doc('a.ts', '# not a heading').kind).toBe('text')
+    expect(doc('README', '# Notes', undefined, () => true).kind).toBe('markdown')
+    expect(doc('a.txt', '# Notes', undefined, () => true).kind).toBe('text')
+    expect(doc('a.md', 'x\0y').kind).toBe('binary')
+  })
+
+  it('knows when it holds only the head of a file', () => {
+    expect(isTruncated(doc('big.log', 'first bytes', 5_000_000))).toBe(true)
+    expect(isTruncated(doc('small.log', 'all of it'))).toBe(false)
+  })
+
+  it('reads only the head of a local file, and reports the whole size', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'diskpush-doc-'))
+    const path = join(dir, 'big.txt')
+    writeFileSync(path, 'x'.repeat(5000))
+    const head = readLocalHead(path, 100)
+    expect(head.bytes.length).toBe(100)
+    expect(head.size).toBe(5000)
+    const whole = readLocalHead(path, DOCUMENT_LIMIT)
+    expect(whole.bytes.length).toBe(5000)
+    expect(DOCUMENT_LIMIT).toBe(1024 * 1024)
   })
 })

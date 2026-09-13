@@ -22,6 +22,8 @@
     "@diskpush/schemas": "workspace:*",
     "@diskpush/ssh-core": "workspace:*",
     "@profullstack/hqtui": "^0.5.1",
+    "@profullstack/readm3": "^0.3.0",
+    "@profullstack/text-type-detection": "^1.0.0",
     "zod": "^3.24.1"
   }
 }
