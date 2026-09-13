@@ -11,7 +11,7 @@
  *
  * The planning is pure and tested; the two effects at the bottom are thin.
  */
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { delimiter, dirname, extname, join } from 'node:path'
 import { shellJoin, shellQuote } from '@diskpush/rsync-core'
@@ -206,5 +206,23 @@ export function systemLauncher(env: NodeJS.ProcessEnv = process.env): Launcher {
     inTmux: Boolean(env.TMUX),
     tmux: (launch) => openTmuxWindow(launch, env),
     detach: (launch) => spawnDetached(launch, env),
+  }
+}
+
+/**
+ * Lets terminal graphics through tmux for this pane.
+ *
+ * tmux swallows the escape sequences an image rides on unless
+ * `allow-passthrough` is on, and it is off by default. Setting it on the
+ * pane, not the server, changes nothing for anyone else's windows and needs
+ * no line in anyone's config. A tmux too old to know the option says so on
+ * stderr, which is ignored: the image is then simply not drawn.
+ */
+export function enableTmuxPassthrough(env: NodeJS.ProcessEnv = process.env): void {
+  if (!env.TMUX) return
+  try {
+    spawnSync('tmux', ['set', '-p', 'allow-passthrough', 'on'], { env, stdio: 'ignore' })
+  } catch {
+    // No tmux binary on PATH despite $TMUX: nothing to do.
   }
 }

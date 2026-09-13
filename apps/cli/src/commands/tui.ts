@@ -5,7 +5,7 @@ import { failure, type Output } from '../output.js'
 import { type ParsedArgv } from '../parse-argv.js'
 import { resolveEndpoint, sshConfigHosts } from '../resolve.js'
 import { blankPane, buildEndpointChoices, defaultLocalPath, Tui } from '../tui/app.js'
-import { runInherited } from '../tui/launch.js'
+import { enableTmuxPassthrough, runInherited } from '../tui/launch.js'
 
 /**
  * `diskpush tui` — the two-pane browser, in a terminal.
@@ -41,6 +41,9 @@ export async function runTui(parsed: ParsedArgv, store: DiskPushStore, output: O
 
   const choices = buildEndpointChoices(await store.listConnections(), sshConfigHosts(), defaultLocalPath())
   const tui = new Tui(panes[0]!, panes[1]!, choices)
+
+  // Images ride on escape sequences tmux drops by default.
+  enableTmuxPassthrough()
 
   try {
     void tui.loadBoth()

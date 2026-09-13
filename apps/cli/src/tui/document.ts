@@ -41,6 +41,8 @@ function fromMarkdown(span: MarkdownSpan, theme: Theme): SpanLine[number] {
 }
 
 function render(doc: Document, width: number, theme: Theme): SpanLine[] {
+  // An image is drawn by the terminal, over cells this leaves blank.
+  if (doc.kind === 'image') return []
   if (doc.kind === 'markdown') {
     return renderMarkdown(doc.text, Math.max(20, width)).map((line) => line.spans.map((span) => fromMarkdown(span, theme)))
   }

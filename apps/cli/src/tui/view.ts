@@ -5,7 +5,7 @@
  * describes a frame. That is what lets `view.test.ts` assert on real rendered
  * text with no pty, and what keeps the app class down to state and effects.
  */
-import type { Color, Container, Theme } from '@profullstack/hqtui'
+import type { Color, Container, Rect, Theme } from '@profullstack/hqtui'
 import { stringWidth, truncate, widgets } from '@profullstack/hqtui'
 import type { Change } from '@diskpush/schemas'
 import {
@@ -108,6 +108,12 @@ export type ViewHandlers = {
    * a scroll before the next frame rather than after it.
    */
   onDocumentLayout?: (total: number, rows: number) => void
+  /**
+   * Where an image should be drawn, in screen cells. The frame leaves the
+   * cells blank; the app hands the terminal the image after the frame is
+   * out, because an image is not a cell and no framebuffer can hold it.
+   */
+  onImageRect?: (rect: Rect) => void
 }
 
 /** Rows the transfer panel takes when one is on screen. */
@@ -372,8 +378,14 @@ function drawDocument(
   // The border and its padding take two columns a side; the scrollbar one more.
   const textWidth = Math.max(10, width - 5)
   const lines = doc.loading || doc.error ? [] : documentLines(doc, textWidth, theme)
-  // A hex dump is the viewer admitting defeat, so it says what would work.
-  const hint = doc.kind === 'binary' ? 'Not a text file. e edits it; x opens it with a player, a viewer or the desktop.' : null
+  // A hex dump is the viewer admitting defeat, so it says what would work;
+  // an image says what it is, because the terminal may draw nothing at all.
+  const hint =
+    doc.kind === 'binary'
+      ? 'Not a text file. e edits it; x opens it with a player, a viewer or the desktop.'
+      : doc.kind === 'image' && doc.image
+        ? `${doc.image.format.toUpperCase()} ${doc.image.width}×${doc.image.height}. Drawn below when the terminal can (WezTerm, kitty, iTerm2, Konsole); x opens it elsewhere.`
+        : null
   const rows = Math.max(1, height - 2 - paneRowsBeside(height) - DOCUMENT_CHROME - (hint ? 1 : 0))
   const scroll = Math.min(doc.scroll, maxScroll(lines.length, rows))
   const scrolls = lines.length > rows
@@ -382,6 +394,7 @@ function drawDocument(
   const last = Math.min(lines.length, scroll + rows)
   const footerParts = [
     lines.length > 0 ? `lines ${scroll + 1}–${last} of ${lines.length}` : '',
+    doc.kind === 'image' && doc.image ? `${doc.image.width}×${doc.image.height}` : '',
     doc.loading || doc.error ? '' : doc.kind,
     doc.loading
       ? ''
@@ -408,6 +421,12 @@ function drawDocument(
       if (doc.error) {
         panel.spacer(1)
         panel.text(doc.error, { fg: theme.danger, wrap: true, align: 'center' })
+        return
+      }
+      if (doc.kind === 'image') {
+        if (hint) panel.text(hint, { height: 1, fg: theme.muted })
+        // Blank on purpose: the image goes here, after the frame.
+        panel.draw((surface) => handlers.onImageRect?.(surface.hitRect()), { height: 'fill' })
         return
       }
       if (lines.length === 0) {

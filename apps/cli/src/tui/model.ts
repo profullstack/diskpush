@@ -384,8 +384,81 @@ export function formatDuration(seconds: number): string {
  */
 export const DOCUMENT_LIMIT = 1024 * 1024
 
-/** How a document is drawn: rendered markdown, plain lines, or a hex dump. */
-export type DocumentKind = 'markdown' | 'text' | 'binary'
+/**
+ * An image is read whole, up to this, because the terminal is handed the file
+ * itself and half a PNG draws nothing. Eight megabytes covers a photo; a
+ * scan or a poster past it shows as a hex dump with the way out spelled.
+ */
+export const IMAGE_LIMIT = 8 * 1024 * 1024
+
+/** How a document is drawn: rendered markdown, plain lines, an image, or a hex dump. */
+export type DocumentKind = 'markdown' | 'text' | 'image' | 'binary'
+
+export type ImageFormat = 'png' | 'jpeg' | 'gif' | 'webp' | 'bmp'
+
+/** What the header of an image file says about it. */
+export type ImageInfo = { format: ImageFormat; width: number; height: number }
+
+/** Files that are worth reading whole, because they are drawn rather than dumped. */
+export function isImageName(name: string): boolean {
+  return /\.(?:png|jpe?g|gif|webp|bmp)$/i.test(name)
+}
+
+const ascii = (bytes: Uint8Array, at: number, text: string) =>
+  bytes.length >= at + text.length && Buffer.from(bytes.subarray(at, at + text.length)).toString('latin1') === text
+
+/**
+ * The format and pixel size of an image, from its header alone.
+ *
+ * Nothing is decoded: each format writes its dimensions near the top, and
+ * that is what the viewer needs to size the box the terminal draws into and
+ * to say `PNG 2172×724` in the footer. A file whose header fits none of them
+ * is not an image, whatever its name.
+ */
+export function imageInfo(bytes: Uint8Array): ImageInfo | null {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+  if (ascii(bytes, 1, 'PNG') && bytes[0] === 0x89 && bytes.length >= 24) {
+    return { format: 'png', width: view.getUint32(16), height: view.getUint32(20) }
+  }
+  if (ascii(bytes, 0, 'GIF8') && bytes.length >= 10) {
+    return { format: 'gif', width: view.getUint16(6, true), height: view.getUint16(8, true) }
+  }
+  if (ascii(bytes, 0, 'BM') && bytes.length >= 26) {
+    return { format: 'bmp', width: view.getInt32(18, true), height: Math.abs(view.getInt32(22, true)) }
+  }
+  if (ascii(bytes, 0, 'RIFF') && ascii(bytes, 8, 'WEBP') && bytes.length >= 30) {
+    const chunk = Buffer.from(bytes.subarray(12, 16)).toString('latin1')
+    if (chunk === 'VP8X') {
+      const width = 1 + (bytes[24]! | (bytes[25]! << 8) | (bytes[26]! << 16))
+      const height = 1 + (bytes[27]! | (bytes[28]! << 8) | (bytes[29]! << 16))
+      return { format: 'webp', width, height }
+    }
+    if (chunk === 'VP8 ') return { format: 'webp', width: view.getUint16(26, true) & 0x3fff, height: view.getUint16(28, true) & 0x3fff }
+    if (chunk === 'VP8L') {
+      const bits = view.getUint32(21, true)
+      return { format: 'webp', width: 1 + (bits & 0x3fff), height: 1 + ((bits >> 14) & 0x3fff) }
+    }
+    return null
+  }
+  if (bytes[0] === 0xff && bytes[1] === 0xd8) {
+    // Walk the markers to the first start-of-frame, which carries the size.
+    let at = 2
+    while (at + 9 < bytes.length && bytes[at] === 0xff) {
+      const marker = bytes[at + 1]!
+      if (marker === 0xd8 || (marker >= 0xd0 && marker <= 0xd7) || marker === 0x01) {
+        at += 2
+        continue
+      }
+      const length = view.getUint16(at + 2)
+      if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
+        return { format: 'jpeg', height: view.getUint16(at + 5), width: view.getUint16(at + 7) }
+      }
+      at += 2 + length
+    }
+    return null
+  }
+  return null
+}
 
 /** A file open under the panes. */
 export type Document = {
@@ -398,6 +471,8 @@ export type Document = {
   loading: boolean
   error: string | null
   kind: DocumentKind
+  /** Format and pixel size, for an image. */
+  image: ImageInfo | null
   /** Decoded text for markdown and text; empty for a binary. */
   text: string
   /** The raw head, kept for the hex view. */
@@ -416,6 +491,7 @@ export function blankDocument(side: Side, name: string, location: string): Docum
     loading: true,
     error: null,
     kind: 'text',
+    image: null,
     text: '',
     bytes: new Uint8Array(),
     size: 0,
@@ -510,8 +586,13 @@ export function fillDocument(
   doc.loading = false
   doc.error = null
   doc.scroll = 0
+  doc.image = null
   if (looksBinary(head.bytes)) {
-    doc.kind = 'binary'
+    // An image the terminal can be handed whole is drawn; one cut short by
+    // the read limit is a hex dump like any other binary.
+    const info = imageInfo(head.bytes)
+    doc.kind = info && head.size === head.bytes.length ? 'image' : 'binary'
+    doc.image = doc.kind === 'image' ? info : null
     doc.text = ''
     return
   }
