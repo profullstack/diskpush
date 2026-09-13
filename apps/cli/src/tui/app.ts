@@ -29,9 +29,12 @@ import {
   blankPane,
   clampIndex,
   listLocal,
+  nothingToDo,
   parentPath,
   pushChange,
   resetTree,
+  scannedFrom,
+  scopeTransfer,
   selectedRow,
   visibleRows,
 } from './model.js'
@@ -306,6 +309,35 @@ export class Tui {
     await this.load('right')
   }
 
+  /**
+   * Lists the pane again without folding anything: the root and every
+   * unfolded directory are re-read in place, so a sync landing in the other
+   * pane shows up under the rows that were already open.
+   */
+  async refresh(side: Side): Promise<void> {
+    const pane = this.panes[side]
+    pane.error = null
+    try {
+      pane.entries = pane.connection ? await this.listRemote(pane, pane.path) : listLocal(pane.path)
+      for (const rel of [...pane.unfolded]) {
+        try {
+          pane.children.set(rel, await this.listBelow(pane, rel))
+        } catch {
+          // Gone, or unreadable now: fold it rather than show a stale listing.
+          pane.unfolded.delete(rel)
+          pane.children.delete(rel)
+        }
+      }
+      clampIndex(pane)
+    } catch (error) {
+      pane.entries = []
+      resetTree(pane)
+      pane.error = error instanceof Error ? error.message : String(error)
+    } finally {
+      this.invalidate()
+    }
+  }
+
   private async listRemote(pane: Pane, path: string): Promise<Entry[]> {
     const browser = await SftpBrowser.open(await this.session(pane.connection!))
     try {
@@ -390,7 +422,7 @@ export class Tui {
         this.openPicker()
         break
       case key.name === 'r':
-        await this.load(this.active)
+        await this.refresh(this.active)
         break
       case key.name === '/':
         this.filtering = this.active
@@ -627,13 +659,18 @@ export class Tui {
     const source = this.current
     const destination = this.other
     const controller = new AbortController()
+    const scope = scopeTransfer(source, destination)
 
     const transfer: Transfer = {
       mode: previewOnly ? 'preview' : 'sync',
-      from: endpointString(source),
-      to: endpointString(destination),
+      from: scope.from,
+      to: scope.to,
+      what: scope.what,
       running: true,
+      startedAt: Date.now(),
+      endedAt: null,
       progress: null,
+      scanned: null,
       recent: [],
       summary: { add: 0, update: 0, metadata: 0, delete: 0, unchanged: 0, error: 0 },
       outcome: null,
@@ -642,38 +679,57 @@ export class Tui {
     this.transfer = transfer
     this.busy = true
     this.invalidate()
+    // rsync can be silent for a long time while it walks a tree; the clock in
+    // the panel must not be.
+    const clock = setInterval(() => this.invalidate(), 1000)
 
     try {
       const remote = source.connection ?? destination.connection
       const plan = planTransfer({
         source: parseEndpoint(transfer.from),
         destination: parseEndpoint(transfer.to),
-        options: defaultRsyncOptions({ dryRun: previewOnly, stats: true }),
+        // mkpath: the destination of a nested directory may not exist yet.
+        options: defaultRsyncOptions({ dryRun: previewOnly, stats: true, mkpath: true }),
         ...(remote ? { remoteShell: { keyPath: remote.keyPath, port: remote.port } } : {}),
       })
 
       const result = await runToCompletion(plan, { signal: controller.signal }, (event) => {
         if (event.type === 'change') pushChange(transfer, event.change as Change)
-        else if (event.type === 'progress') transfer.progress = event.progress
+        else if (event.type === 'progress') {
+          transfer.progress = event.progress
+          transfer.scanned = scannedFrom(event.progress) ?? transfer.scanned
+        } else if (event.type === 'stats' && event.stats.filesTotal !== null) {
+          transfer.scanned = { checked: event.stats.filesTotal, total: event.stats.filesTotal }
+        }
         this.invalidate()
       })
 
       transfer.running = false
       const moved = transfer.summary.add + transfer.summary.update
+      const kind = previewOnly ? 'Preview' : 'Sync'
 
-      if (!result.ok) {
+      if (controller.signal.aborted) {
+        // Esc, not a fault: rsync was asked to stop and did.
+        transfer.outcome = { ok: false, cancelled: true, message: `${kind} cancelled.` }
+        this.say(`${kind} cancelled`, 'warn')
+      } else if (!result.ok) {
         transfer.outcome = { ok: false, message: result.message }
         this.say(result.message, 'error')
       } else if (previewOnly) {
         transfer.outcome = { ok: true, message: 'Preview complete' }
-        this.say(
-          `Preview: ${transfer.summary.add} to add, ${transfer.summary.update} to update, ${transfer.summary.unchanged} unchanged`,
-          'ok',
-        )
+        if (nothingToDo(transfer)) {
+          const total = transfer.scanned?.total
+          this.say(`Already in sync${total != null ? `: ${total} files checked` : ''}`, 'ok')
+        } else {
+          this.say(
+            `Preview: ${transfer.summary.add} to add, ${transfer.summary.update} to update, ${transfer.summary.unchanged} unchanged`,
+            'ok',
+          )
+        }
       } else {
         transfer.outcome = { ok: true, message: 'Sync complete' }
-        this.say(`Synced ${moved} file${moved === 1 ? '' : 's'}`, 'ok')
-        await this.load(this.active === 'left' ? 'right' : 'left')
+        this.say(`Synced ${moved} file${moved === 1 ? '' : 's'} to ${transfer.to}`, 'ok')
+        await this.refresh(this.active === 'left' ? 'right' : 'left')
       }
     } catch (error) {
       transfer.running = false
@@ -681,7 +737,9 @@ export class Tui {
       transfer.outcome = { ok: false, message }
       this.say(message, 'error')
     } finally {
+      clearInterval(clock)
       transfer.running = false
+      transfer.endedAt = Date.now()
       this.busy = false
       this.invalidate()
     }
@@ -691,10 +749,4 @@ export class Tui {
     this.transfer?.cancel()
     for (const session of this.sessions.values()) session.close()
   }
-}
-
-function endpointString(pane: Pane): string {
-  const path = pane.path.endsWith('/') ? pane.path : `${pane.path}/`
-  if (!pane.connection) return path
-  return `${pane.connection.username}@${pane.connection.host}:${path}`
 }

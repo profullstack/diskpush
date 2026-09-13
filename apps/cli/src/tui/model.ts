@@ -7,7 +7,7 @@
  */
 import { readdirSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join, posix } from 'node:path'
+import { dirname, join, posix } from 'node:path'
 import type { Change, ChangeSummary, Connection, RsyncProgress } from '@diskpush/schemas'
 
 export type Entry = {
@@ -287,13 +287,67 @@ export type Transfer = {
   mode: 'preview' | 'sync'
   from: string
   to: string
+  /** What is being synced, for a person: `src/lib`, `README.md`, or `everything`. */
+  what: string
   running: boolean
+  /** `Date.now()` when rsync was started, so the clock ticks without rsync saying anything. */
+  startedAt: number
+  /** `Date.now()` when it stopped, however it stopped; null while running. */
+  endedAt: number | null
   progress: RsyncProgress | null
+  /**
+   * Files rsync has checked against the other side, out of the total it
+   * found. This is the number that moves during a preview, where the byte
+   * percentage is zero by definition: a dry run transfers nothing.
+   */
+  scanned: { checked: number; total: number } | null
   /** Most recent paths rsync reported, newest last. Capped by `pushChange`. */
   recent: Change[]
   summary: ChangeSummary
-  outcome: { ok: boolean; message: string } | null
+  outcome: { ok: boolean; message: string; cancelled?: boolean } | null
   cancel: () => void
+}
+
+/** True when a finished preview found nothing that a sync would change. */
+export function nothingToDo(transfer: Transfer): boolean {
+  const { add, update, metadata, delete: removed, error } = transfer.summary
+  return transfer.outcome?.ok === true && add + update + metadata + removed + error === 0
+}
+
+/** Files checked from rsync's `to-chk=remaining/total`, once it has said. */
+export function scannedFrom(progress: RsyncProgress): { checked: number; total: number } | null {
+  if (progress.filesTotal === null || progress.filesRemaining === null) return null
+  return { checked: Math.max(0, progress.filesTotal - progress.filesRemaining), total: progress.filesTotal }
+}
+
+/** An rsync endpoint for a path under the pane: `user@host:/srv/app/src/` or `/home/me/src/`. */
+export function endpointString(pane: Pane, rel = '', isDirectory = true): string {
+  const joined = pane.connection ? posix.join(pane.path, rel) : join(pane.path, rel)
+  const path = isDirectory && !joined.endsWith('/') ? `${joined}/` : joined
+  if (!pane.connection) return path
+  return `${pane.connection.username}@${pane.connection.host}:${path}`
+}
+
+export type TransferScope = { from: string; to: string; what: string }
+
+/**
+ * What a preview or sync covers: the row under the cursor, mirrored to the
+ * same relative path in the other pane, so the two trees stay aligned. A
+ * directory goes to the directory of the same name; a file goes into the
+ * directory that holds it. With nothing under the cursor, the whole pane.
+ */
+export function scopeTransfer(source: Pane, destination: Pane): TransferScope {
+  const row = selectedRow(source)
+  if (!row) return { from: endpointString(source), to: endpointString(destination), what: 'everything' }
+  if (row.entry.isDirectory) {
+    return { from: endpointString(source, row.rel), to: endpointString(destination, row.rel), what: row.rel }
+  }
+  const parent = dirname(row.rel)
+  return {
+    from: endpointString(source, row.rel, false),
+    to: endpointString(destination, parent === '.' ? '' : parent),
+    what: row.rel,
+  }
 }
 
 export const TRANSFER_LOG_LIMIT = 200

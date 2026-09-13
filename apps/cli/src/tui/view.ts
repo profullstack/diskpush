@@ -19,6 +19,7 @@ import {
   formatDuration,
   formatSize,
   formatWhen,
+  nothingToDo,
   parentPath,
   rowTree,
   visibleEntries,
@@ -160,7 +161,7 @@ export function draw(
 
   // A short terminal gives its rows to the panes; the transfer is still
   // readable from the status line, and half a panel is worse than none.
-  if (state.transfer && height >= TRANSFER_HEIGHT + 8) drawTransfer(ui, theme, state.transfer, handlers)
+  if (state.transfer && height >= TRANSFER_HEIGHT + 8) drawTransfer(ui, theme, state, state.transfer, handlers)
 
   drawFooter(ui, theme, state, width, handlers)
 
@@ -312,20 +313,30 @@ function drawPane(
   )
 }
 
-function drawTransfer(ui: Container, theme: Theme, transfer: Transfer, handlers: ViewHandlers): void {
+function drawTransfer(ui: Container, theme: Theme, state: ViewState, transfer: Transfer, handlers: ViewHandlers): void {
   const progress = transfer.progress
-  // rsync's last progress line is whatever it happened to print before it
-  // exited — 80% on a preview that finished. A completed transfer is 100%.
-  const percent = transfer.outcome?.ok ? 100 : (progress?.percent ?? 0)
-  const remaining = estimateRemaining(progress)
   const preview = transfer.mode === 'preview'
+  const cancelled = transfer.outcome?.cancelled === true
+  const failed = transfer.outcome !== null && !transfer.outcome.ok && !cancelled
+  const idle = nothingToDo(transfer)
+  // rsync's last progress line is whatever it happened to print before it
+  // exited — 80% on a sync that finished. A completed transfer is 100%.
+  const percent = transfer.outcome?.ok ? 100 : (progress?.percent ?? 0)
+  const remaining = preview ? null : estimateRemaining(progress)
+  // The clock runs off the wall, not off rsync: a dry run over a big tree can
+  // say nothing for a minute, and a panel that stops counting looks dead.
+  const elapsed = Math.max(0, ((transfer.endedAt ?? state.now.getTime()) - transfer.startedAt) / 1000)
 
   const title = transfer.running
-    ? ` ${preview ? 'Previewing' : 'Syncing'} `
-    : transfer.outcome?.ok
-      ? ` ${preview ? 'Preview' : 'Sync'} complete `
-      : ' Failed '
-  const titleColor = transfer.running ? theme.warning : transfer.outcome?.ok ? theme.success : theme.danger
+    ? ` ${preview ? 'Scanning' : 'Syncing'} ${transfer.what} `
+    : cancelled
+      ? ' Cancelled '
+      : transfer.outcome?.ok
+        ? idle && preview
+          ? ' Already in sync '
+          : ` ${preview ? 'Preview' : 'Sync'} complete `
+        : ' Failed '
+  const titleColor = transfer.running || cancelled ? theme.warning : transfer.outcome?.ok ? theme.success : theme.danger
 
   ui.panel(
     {
@@ -343,22 +354,47 @@ function drawTransfer(ui: Container, theme: Theme, transfer: Transfer, handlers:
       ...(transfer.running ? {} : { onClick: () => handlers.onAction?.('dismissTransfer') }),
     },
     (panel) => {
-      panel.meter({
-        height: 1,
-        value: Math.max(0, Math.min(1, percent / 100)),
-        label: preview ? 'scan' : 'copy',
-        text: `${percent.toFixed(0)}%`,
-        heat: false,
-        color: transfer.outcome?.ok === false ? theme.danger : theme.primary,
-      })
+      if (preview) {
+        // A dry run moves no bytes, so its percentage is 0 until the end by
+        // definition. What moves is the count of files checked.
+        const scanned = transfer.scanned
+        const value = transfer.outcome?.ok ? 1 : scanned && scanned.total > 0 ? scanned.checked / scanned.total : 0
+        const text = scanned
+          ? `${transfer.outcome?.ok ? scanned.total : scanned.checked}/${scanned.total} files`
+          : transfer.running
+            ? 'scanning…'
+            : ''
+        panel.meter({
+          height: 1,
+          value: Math.max(0, Math.min(1, value)),
+          label: 'checked',
+          text,
+          heat: false,
+          color: failed ? theme.danger : cancelled ? theme.warning : theme.primary,
+        })
+      } else {
+        panel.meter({
+          height: 1,
+          value: Math.max(0, Math.min(1, percent / 100)),
+          label: 'copy',
+          text: `${percent.toFixed(0)}%`,
+          heat: false,
+          color: failed ? theme.danger : cancelled ? theme.warning : theme.primary,
+        })
+      }
 
       panel.row({ height: 1, gap: 1 }, (row) => {
-        const rate = progress && progress.bytesPerSecond > 0 ? `${formatSize(progress.bytesPerSecond)}/s` : '—'
-        const moved = progress ? formatSize(progress.bytesTransferred) : '—'
-        const files = progress?.filesTransferred != null ? String(progress.filesTransferred) : '—'
-        row.text(`  ${moved}  ·  ${rate}  ·  ${files} files`, { fg: theme.muted })
+        if (preview) {
+          const found = transfer.summary.add + transfer.summary.update + transfer.summary.delete
+          row.text(`  ${found} change${found === 1 ? '' : 's'} found so far`, { fg: theme.muted })
+        } else {
+          const rate = progress && progress.bytesPerSecond > 0 ? `${formatSize(progress.bytesPerSecond)}/s` : '—'
+          const moved = progress ? formatSize(progress.bytesTransferred) : '—'
+          const files = progress?.filesTransferred != null ? String(progress.filesTransferred) : '—'
+          row.text(`  ${moved}  ·  ${rate}  ·  ${files} files`, { fg: theme.muted })
+        }
         row.text(
-          remaining != null ? `${formatDuration(remaining)} left  ` : progress ? `${formatDuration(progress.elapsedSeconds)}  ` : '',
+          remaining != null ? `${formatDuration(remaining)} left  ` : `${formatDuration(elapsed)}  `,
           { fg: theme.muted, align: 'right' },
         )
       })
@@ -379,8 +415,23 @@ function drawTransfer(ui: Container, theme: Theme, transfer: Transfer, handlers:
         row.spacer('fill')
       })
 
-      if (transfer.outcome && !transfer.outcome.ok) {
-        panel.text(transfer.outcome.message, { fg: theme.danger, wrap: true })
+      if (cancelled) {
+        panel.text(`${transfer.outcome!.message} It was stopped by esc; nothing on either side was changed by stopping it.`, {
+          fg: theme.warning,
+          wrap: true,
+        })
+        return
+      }
+      if (failed) {
+        panel.text(transfer.outcome!.message, { fg: theme.danger, wrap: true })
+        return
+      }
+      if (idle) {
+        const total = transfer.scanned?.total
+        panel.text(
+          `Nothing to do: ${total != null ? `${total} files checked, ` : ''}the other side already matches.`,
+          { fg: theme.muted, wrap: true },
+        )
         return
       }
 
@@ -549,8 +600,8 @@ function drawHelp(ui: Container, theme: Theme, handlers: ViewHandlers): void {
           { label: 'o / O', value: 'cycle sort / reverse it' },
           { label: '.', value: 'show hidden files' },
           { label: 'r', value: 'reload' },
-          { label: 'p', value: 'preview a sync to the other pane' },
-          { label: 's', value: 'sync to the other pane' },
+          { label: 'p', value: 'preview syncing this to the other pane' },
+          { label: 's', value: 'sync it, into the same place over there' },
           { label: 'esc', value: 'cancel a transfer, or close this' },
           { label: 'q', value: 'quit' },
         ],
