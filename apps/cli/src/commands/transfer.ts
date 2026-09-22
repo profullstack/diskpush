@@ -262,6 +262,7 @@ export async function runTransfer(
   // aggregate percentage alone tells you it is alive but not what it is doing.
   let currentFile = ''
   let lastProgress: import('@diskpush/schemas').RsyncProgress | null = null
+  let stats: import('@diskpush/schemas').RsyncStats | null = null
   let exitCode: number = EXIT.internal
   let message = ''
   let resumable = false
@@ -291,6 +292,9 @@ export async function runTransfer(
           output.status(currentFile === '' ? head : `${head}  ${truncatePath(currentFile, head.length)}`)
           break
         }
+        case 'stats':
+          stats = event.stats
+          break
         case 'stderr':
           stderr.push(event.line)
           break
@@ -332,6 +336,11 @@ export async function runTransfer(
   if (lastProgress) {
     output.line(`Transferred: ${formatBytes(lastProgress.bytesTransferred)} in ${formatDuration(lastProgress.elapsedSeconds)}`)
   }
+  // Only rsync 3.5.0+ on both ends reports this, so the line is absent rather
+  // than zero everywhere else.
+  if (stats?.logicalBlocksTouched != null) {
+    output.line(`Blocks touched: ${stats.logicalBlocksTouched.toLocaleString('en-US')} x 4 KiB`)
+  }
   output.line(message)
 
   if (output.isJson) {
@@ -343,6 +352,7 @@ export async function runTransfer(
       resumable,
       message,
       changes: summary,
+      stats,
       command: plan.display,
       control: plan.controlDisplay ?? null,
       direct: plan.direct,

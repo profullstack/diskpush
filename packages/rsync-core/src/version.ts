@@ -18,6 +18,11 @@ export type RsyncCapabilities = {
   secludedArgsAvailable: boolean
   /** `--mkpath` (3.2.3+). */
   mkpath: boolean
+  /**
+   * `--stats` reports the number of 4 KiB logical blocks touched. This rides on
+   * protocol 33, which rsync 3.5.0 introduced, and both ends must negotiate it.
+   */
+  blockStats: boolean
   acls: boolean
   xattrs: boolean
   hardLinks: boolean
@@ -30,6 +35,7 @@ const UNKNOWN: RsyncCapabilities = {
   secludedArgsByDefault: false,
   secludedArgsAvailable: false,
   mkpath: false,
+  blockStats: false,
   acls: false,
   xattrs: false,
   hardLinks: true,
@@ -68,6 +74,7 @@ export function parseRsyncCapabilities(banner: string): RsyncCapabilities {
 
   const lower = banner.toLowerCase()
   const protocolMatch = /protocol\s+version\s+(\d+)/i.exec(banner)
+  const protocol = protocolMatch ? Number(protocolMatch[1]) : null
 
   // The compress list is authoritative for zstd; the version only makes it possible.
   const compressList = /compress list:\s*([^\n]*)/i.exec(lower)
@@ -75,11 +82,14 @@ export function parseRsyncCapabilities(banner: string): RsyncCapabilities {
 
   return {
     version,
-    protocol: protocolMatch ? Number(protocolMatch[1]) : null,
+    protocol,
     zstd,
     secludedArgsByDefault: atLeast(version, 3, 2, 4),
     secludedArgsAvailable: atLeast(version, 3, 0, 0),
     mkpath: atLeast(version, 3, 2, 3),
+    // The negotiated protocol is what actually decides this; the version is
+    // only a fallback for a banner that does not print a protocol line.
+    blockStats: protocol === null ? atLeast(version, 3, 5, 0) : protocol >= 33,
     acls: /\bACLs\b/i.test(banner) && !/no ACLs/i.test(banner),
     xattrs: /\bxattrs\b/i.test(banner) && !/no xattrs/i.test(banner),
     hardLinks: !/no hardlinks/i.test(lower),
@@ -105,6 +115,7 @@ export function intersectCapabilities(a: RsyncCapabilities, b: RsyncCapabilities
     secludedArgsByDefault: a.secludedArgsByDefault && b.secludedArgsByDefault,
     secludedArgsAvailable: a.secludedArgsAvailable && b.secludedArgsAvailable,
     mkpath: a.mkpath && b.mkpath,
+    blockStats: a.blockStats && b.blockStats,
     acls: a.acls && b.acls,
     xattrs: a.xattrs && b.xattrs,
     hardLinks: a.hardLinks && b.hardLinks,

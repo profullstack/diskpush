@@ -74,6 +74,12 @@ the run. DiskPush parses `rsync --version` on both ends and intersects them.
 | `--protect-args` | 3.0.0+ |
 | `--secluded-args` by default | 3.2.4+ |
 | `--acls`, `--xattrs` | a build with support, on both ends |
+| 4 KiB blocks touched in `--stats` | 3.5.0+ on both ends (protocol 33) |
+
+DiskPush runs against every rsync from 2.6.9 up, including 3.5.1. A newer rsync
+is never gated out: the table above is all lower bounds, and an unrecognised
+`--stats` line from a future release is passed through to the log rather than
+treated as an error.
 
 The remote side is only known once `diskpush connections test` has run; its
 report is cached against the connection. Without it, DiskPush uses the local
