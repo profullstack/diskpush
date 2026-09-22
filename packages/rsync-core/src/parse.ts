@@ -100,13 +100,29 @@ export function classifyItemize(itemize: string): ChangeAction {
   return 'update'
 }
 
-const STATS_PATTERNS: Array<[keyof RsyncStats, RegExp]> = [
+/**
+ * Counts. rsync prints these with `comma_num`, so they are exact integers
+ * whatever `--human-readable` is doing.
+ */
+const COUNT_PATTERNS: Array<[keyof RsyncStats, RegExp]> = [
   ['filesTotal', /^Number of files:\s+([\d,]+)/],
   ['filesTransferred', /^Number of (?:regular files transferred|files transferred):\s+([\d,]+)/],
-  ['literalBytes', /^Literal data:\s+([\d,]+)/],
-  ['matchedBytes', /^Matched data:\s+([\d,]+)/],
-  ['totalBytesSent', /^Total bytes sent:\s+([\d,]+)/],
-  ['totalBytesReceived', /^Total bytes received:\s+([\d,]+)/],
+  // Protocol 33 (rsync 3.5.0+) prints this between "Literal data" and
+  // "Matched data". Older rsync omits the line entirely.
+  ['logicalBlocksTouched', /^Number of 4 KiB logical blocks touched:\s+([\d,]+)/],
+]
+
+/**
+ * Byte totals. rsync prints these with `human_num`, so under
+ * `--human-readable` -- which DiskPush passes by default -- they arrive as
+ * "3.50M" rather than "3,500,000". The unit suffix has to be read back or the
+ * value truncates to its leading digit.
+ */
+const BYTE_PATTERNS: Array<[keyof RsyncStats, RegExp]> = [
+  ['literalBytes', /^Literal data:\s+([\d,.]+)([KMGTP])?/],
+  ['matchedBytes', /^Matched data:\s+([\d,.]+)([KMGTP])?/],
+  ['totalBytesSent', /^Total bytes sent:\s+([\d,.]+)([KMGTP])?/],
+  ['totalBytesReceived', /^Total bytes received:\s+([\d,.]+)([KMGTP])?/],
 ]
 
 export function emptyStats(): RsyncStats {
@@ -116,6 +132,7 @@ export function emptyStats(): RsyncStats {
     totalBytesSent: null,
     totalBytesReceived: null,
     literalBytes: null,
+    logicalBlocksTouched: null,
     matchedBytes: null,
     speedup: null,
   }
@@ -123,14 +140,21 @@ export function emptyStats(): RsyncStats {
 
 /** Folds one `--stats` line into an accumulating stats object. */
 export function parseStatsLine(line: string, into: RsyncStats): boolean {
-  for (const [key, pattern] of STATS_PATTERNS) {
+  for (const [key, pattern] of COUNT_PATTERNS) {
     const match = pattern.exec(line)
     if (match) {
       into[key] = Number((match[1] ?? '').replaceAll(',', ''))
       return true
     }
   }
-  const speedup = /^(?:total size is [\d,]+\s+)?speedup is ([\d.]+)/i.exec(line)
+  for (const [key, pattern] of BYTE_PATTERNS) {
+    const match = pattern.exec(line)
+    if (match) {
+      into[key] = toNumber(match[1] ?? '0', match[2])
+      return true
+    }
+  }
+  const speedup = /^(?:total size is [\d,.]+[KMGTP]?\s+)?speedup is ([\d.]+)/i.exec(line)
   if (speedup) {
     into.speedup = Number(speedup[1])
     return true

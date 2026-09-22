@@ -18,6 +18,12 @@ export type RsyncStats = {
   totalBytesSent: number | null
   totalBytesReceived: number | null
   literalBytes: number | null
+  /**
+   * Distinct 4 KiB logical file blocks the receiver touched. rsync prints this
+   * only when both ends negotiate protocol 33 (rsync 3.5.0+), so it stays null
+   * against anything older rather than being reported as zero.
+   */
+  logicalBlocksTouched: number | null
   matchedBytes: number | null
   speedup: number | null
 }

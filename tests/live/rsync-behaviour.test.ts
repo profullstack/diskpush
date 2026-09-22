@@ -224,3 +224,34 @@ describe.skipIf(!hasRsync)('live rsync: resume', () => {
     expect(readFileSync(join(dst, 'big.bin')).equals(big)).toBe(true)
   }, 60_000)
 })
+
+describe.skipIf(!hasRsync)('live rsync: --stats against the installed binary', () => {
+  it('reads byte totals back at full size rather than truncating them', async () => {
+    const { src, dst } = tree('stats-bytes')
+    // Large enough that rsync renders the totals as "3.50M" under
+    // --human-readable, which DiskPush passes by default.
+    writeFileSync(join(src, 'blob.bin'), Buffer.alloc(3_500_000, 7))
+
+    const result = await sync(src, dst)
+    expect(result.ok).toBe(true)
+    expect(result.stats).not.toBeNull()
+    expect(result.stats?.totalBytesSent).toBeGreaterThan(3_000_000)
+    expect(result.stats?.literalBytes).toBeGreaterThan(3_000_000)
+    expect(result.stats?.speedup).toBeGreaterThan(0)
+  }, 60_000)
+
+  it('reports 4 KiB blocks touched exactly when this rsync speaks protocol 33', async () => {
+    const { src, dst } = tree('stats-blocks')
+    writeFileSync(join(src, 'blob.bin'), Buffer.alloc(200_000, 3))
+
+    const result = await sync(src, dst)
+    expect(result.ok).toBe(true)
+    // rsync 3.5.0+ prints the stat; anything older omits the line, and the
+    // field stays null rather than being reported as zero.
+    if (capabilities.blockStats) {
+      expect(result.stats?.logicalBlocksTouched).toBeGreaterThan(0)
+    } else {
+      expect(result.stats?.logicalBlocksTouched).toBeNull()
+    }
+  }, 60_000)
+})

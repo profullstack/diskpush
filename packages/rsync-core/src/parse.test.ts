@@ -126,6 +126,49 @@ describe('parseStatsLine', () => {
     })
   })
 
+  it('reads human-readable byte totals, which is how DiskPush runs rsync', () => {
+    const stats = emptyStats()
+    // Verbatim from `rsync --human-readable --stats`; reading these as plain
+    // digits truncated "3.50M" to 3.
+    for (const line of [
+      'Literal data: 3.50M bytes',
+      'Matched data: 0 bytes',
+      'Total bytes sent: 3.50M',
+      'Total bytes received: 85',
+      'total size is 3.50M  speedup is 1.00',
+    ]) {
+      expect(parseStatsLine(line, stats)).toBe(true)
+    }
+    expect(stats).toMatchObject({
+      literalBytes: 3_500_000,
+      matchedBytes: 0,
+      totalBytesSent: 3_500_000,
+      totalBytesReceived: 85,
+      speedup: 1,
+    })
+  })
+
+  it('reads the protocol 33 block stat that rsync 3.5 added', () => {
+    const stats = emptyStats()
+    // rsync prints this between "Literal data" and "Matched data".
+    for (const line of [
+      'Literal data: 1,234,567 bytes',
+      'Number of 4 KiB logical blocks touched: 12,345',
+      'Matched data: 89 bytes',
+    ]) {
+      expect(parseStatsLine(line, stats)).toBe(true)
+    }
+    expect(stats.logicalBlocksTouched).toBe(12345)
+    expect(stats.literalBytes).toBe(1234567)
+    expect(stats.matchedBytes).toBe(89)
+  })
+
+  it('leaves the block stat null on an older rsync that never prints it', () => {
+    const stats = emptyStats()
+    expect(parseStatsLine('Literal data: 1,234,567 bytes', stats)).toBe(true)
+    expect(stats.logicalBlocksTouched).toBeNull()
+  })
+
   it('ignores lines that are not stats', () => {
     expect(parseStatsLine('>f+++++++++ a.txt', emptyStats())).toBe(false)
   })
