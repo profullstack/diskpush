@@ -136,8 +136,8 @@ importers:
   apps/web:
     dependencies:
       '@profullstack/x402-gateway':
-        specifier: ^0.1.0
-        version: 0.1.0
+        specifier: ^0.7.0
+        version: 0.7.0
       marked:
         specifier: ^15.0.7
         version: 15.0.12
@@ -1132,6 +1132,10 @@ packages:
     engines: {bun: '>=1.1', node: '>=22.6'}
     hasBin: true
 
+  '@profullstack/keys@0.1.0':
+    resolution: {integrity: sha512-Vys47LvS5ivhdZu4SYOxh9Le3DEmWhjP0+CtrU45RhXAbY0ZFG/2Dk9V1bIIUGDp8UWMJqctvUD21JrNjfh04w==}
+    engines: {node: '>=20.11'}
+
   '@profullstack/readm3@0.3.0':
     resolution: {integrity: sha512-WBCr6/aekifSQCue6E0jv+6SgNP0HI3cWOnoKQRZUt9ohrRbzvSnZ/ae4WDgCtc+vKXsiJPOuIDFNnMCcQxGRw==}
     engines: {bun: '>=1.1', node: '>=22.6'}
@@ -1141,8 +1145,8 @@ packages:
     resolution: {integrity: sha512-3tG0Icz2gwLfwbOwdYxgCTTcjCyAAhEnU82ReIrbOQiN8f3R84WrPLWfE4Pqg/ce57VFVPpNkSmd5doaXKV+dw==}
     engines: {node: '>=20.0.0'}
 
-  '@profullstack/x402-gateway@0.1.0':
-    resolution: {integrity: sha512-B7tWvWk/bIEoqyec6UoyRF1pO7X/+b+wFRv2ZFIClqskmEpyxoA559ZgdTvnxqAIvuDeE9v56nVpYRQ+lmOZQQ==}
+  '@profullstack/x402-gateway@0.7.0':
+    resolution: {integrity: sha512-xsZRWHdOD9Y9EuRS4PsRmykVS2geOu/luY0jBlliOF3SEgxiLhgmx7ks+2jOUtGlq+cIfSonnk5eEObRGCOJ9w==}
     engines: {node: '>=20.11'}
 
   '@radix-ui/primitive@1.1.7':
@@ -5025,6 +5029,8 @@ snapshots:
 
   '@profullstack/hqtui@0.5.1': {}
 
+  '@profullstack/keys@0.1.0': {}
+
   '@profullstack/readm3@0.3.0':
     dependencies:
       '@profullstack/hqtui': 0.1.12
@@ -5032,7 +5038,9 @@ snapshots:
 
   '@profullstack/text-type-detection@1.0.0': {}
 
-  '@profullstack/x402-gateway@0.1.0': {}
+  '@profullstack/x402-gateway@0.7.0':
+    dependencies:
+      '@profullstack/keys': 0.1.0
 
   '@radix-ui/primitive@1.1.7': {}
 
