@@ -194,6 +194,14 @@ importers:
         specifier: ^3.24.1
         version: 3.25.76
 
+  packages/plugin-api: {}
+
+  packages/plugin-mediaanalyzer:
+    dependencies:
+      '@diskpush/plugin-api':
+        specifier: workspace:*
+        version: link:../plugin-api
+
   packages/rsync-core:
     dependencies:
       '@diskpush/schemas':
