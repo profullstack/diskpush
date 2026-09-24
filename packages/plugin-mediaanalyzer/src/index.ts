@@ -9,6 +9,7 @@
  *   desktop  right-click a local selection → Plugins; sign in under Plugins…
  */
 import { existsSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { readdir } from 'node:fs/promises'
 import { hostname } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -43,6 +44,10 @@ export type MediaAnalyzerOptions = {
   loginTimeoutMs?: number
 }
 
+
+// Read from this package's manifest (src/ and dist/ both sit one level below it),
+// so the version shown in `diskpush plugins list` moves with every release.
+const PACKAGE_VERSION: string = createRequire(import.meta.url)('../package.json').version
 const appliesToMedia = (entries: readonly EntryRef[]) =>
   entries.some((entry) => entry.isDirectory || mediaKind(entry.name) !== null)
 
@@ -133,7 +138,7 @@ export function createMediaAnalyzerPlugin(options: MediaAnalyzerOptions = {}): D
   return definePlugin({
     id: 'mediaanalyzer',
     name: 'MediaAnalyzer',
-    version: '0.11.0',
+    version: PACKAGE_VERSION,
     description: 'Describe photos and videos with mediaanalyzer.pro, and sort them into folders by what they show.',
     settings: [
       { key: 'server', label: 'Server', type: 'string', default: DEFAULT_SERVER, description: 'The MediaAnalyzer server.' },
