@@ -267,6 +267,50 @@ export type FleetRequest = {
   label: string
 }
 
+/** A setting a plugin declared, as its settings dialog draws it. */
+export type PluginSettingDef = {
+  key: string
+  label: string
+  description?: string
+  type: 'string' | 'enum' | 'boolean' | 'secret'
+  options?: string[]
+  default?: string | boolean
+}
+
+export type PluginSummary = {
+  id: string
+  name: string
+  version: string
+  description: string
+  source: 'builtin' | 'external'
+  enabled: boolean
+  settings: PluginSettingDef[]
+  tasks: { id: string; label: string; description: string }[]
+  actions: { id: string; label: string; description: string }[]
+}
+
+/** A plugin action that applies to the selection a menu was opened on. */
+export type PluginActionChoice = {
+  pluginId: string
+  pluginName: string
+  actionId: string
+  label: string
+  description: string
+}
+
+/** A plugin's settings as the main process reports them: secrets as set or not, never their values. */
+export type PluginSettingsState = {
+  status: string | null
+  values: Record<string, string | boolean>
+  secrets: Record<string, boolean>
+}
+
+export type PluginEvent =
+  | { type: 'start'; total: number | null }
+  | { type: 'update'; done?: number; total?: number; message?: string; currentFile?: string }
+  | { type: 'log'; level: 'info' | 'warn' | 'error'; message: string }
+  | { type: 'exit'; ok: boolean; message: string; changed: boolean; cancelled: boolean }
+
 type Api = {
   connections: {
     list(): Promise<IpcResult<Connection[]>>
@@ -334,11 +378,22 @@ type Api = {
     removeList(name: string): Promise<IpcResult<boolean>>
   }
   shell: { openExternal(url: string): Promise<IpcResult<boolean>> }
+  plugins: {
+    list(): Promise<IpcResult<{ plugins: PluginSummary[]; failures: { name: string; error: string }[] }>>
+    actionsFor(dir: string, names: string[]): Promise<IpcResult<PluginActionChoice[]>>
+    runAction(jobId: string, pluginId: string, actionId: string, dir: string, names: string[]): Promise<IpcResult<{ jobId: string }>>
+    runTask(jobId: string, pluginId: string, taskId: string): Promise<IpcResult<{ jobId: string }>>
+    cancel(jobId: string): Promise<IpcResult<boolean>>
+    getSettings(pluginId: string): Promise<IpcResult<PluginSettingsState>>
+    setSettings(pluginId: string, values: Record<string, string | boolean | null>): Promise<IpcResult<boolean>>
+    setEnabled(pluginId: string, enabled: boolean): Promise<IpcResult<boolean>>
+  }
   events: {
     onTransfer(listener: (payload: { jobId: string; event: TransferEvent }) => void): () => void
     onFleet(listener: (payload: { runId: string; event: FleetEvent }) => void): () => void
     onPreview(listener: (payload: { previewId: string; progress: PreviewProgress }) => void): () => void
     onOpenSeries(listener: (payload: { seriesId: string; event: SeriesEvent }) => void): () => void
+    onPluginProgress(listener: (payload: { jobId: string; event: PluginEvent }) => void): () => void
   }
 }
 

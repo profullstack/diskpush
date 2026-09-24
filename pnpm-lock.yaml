@@ -71,6 +71,12 @@ importers:
       '@diskpush/fleet-core':
         specifier: workspace:*
         version: link:../../packages/fleet-core
+      '@diskpush/plugin-api':
+        specifier: workspace:*
+        version: link:../../packages/plugin-api
+      '@diskpush/plugin-mediaanalyzer':
+        specifier: workspace:*
+        version: link:../../packages/plugin-mediaanalyzer
       '@diskpush/rsync-core':
         specifier: workspace:*
         version: link:../../packages/rsync-core

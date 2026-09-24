@@ -79,6 +79,19 @@ const api = {
   shell: {
     openExternal: (url: string) => call(IPC.shellOpenExternal, { url }),
   },
+  // Plugin code runs in the main process; these only name what to run.
+  plugins: {
+    list: () => call(IPC.pluginsList),
+    actionsFor: (dir: string, names: string[]) => call(IPC.pluginsActionsFor, { dir, names }),
+    runAction: (jobId: string, pluginId: string, actionId: string, dir: string, names: string[]) =>
+      call(IPC.pluginsRunAction, { jobId, pluginId, actionId, dir, names }),
+    runTask: (jobId: string, pluginId: string, taskId: string) => call(IPC.pluginsRunTask, { jobId, pluginId, taskId }),
+    cancel: (jobId: string) => call<boolean>(IPC.pluginsCancel, { jobId }),
+    getSettings: (pluginId: string) => call(IPC.pluginsGetSettings, { pluginId }),
+    setSettings: (pluginId: string, values: Record<string, string | boolean | null>) =>
+      call<boolean>(IPC.pluginsSetSettings, { pluginId, values }),
+    setEnabled: (pluginId: string, enabled: boolean) => call<boolean>(IPC.pluginsSetEnabled, { pluginId, enabled }),
+  },
   events: {
     /**
      * Returns an unsubscribe function. The listener is wrapped so the
@@ -99,6 +112,11 @@ const api = {
       const wrapped = (_event: unknown, payload: { seriesId: string; event: unknown }) => listener(payload)
       ipcRenderer.on(IPC.eventOpenSeries, wrapped)
       return () => ipcRenderer.off(IPC.eventOpenSeries, wrapped)
+    },
+    onPluginProgress(listener: (payload: { jobId: string; event: unknown }) => void): () => void {
+      const wrapped = (_event: unknown, payload: { jobId: string; event: unknown }) => listener(payload)
+      ipcRenderer.on(IPC.eventPlugin, wrapped)
+      return () => ipcRenderer.off(IPC.eventPlugin, wrapped)
     },
     onPreview(listener: (payload: { previewId: string; progress: unknown }) => void): () => void {
       const wrapped = (_event: unknown, payload: { previewId: string; progress: unknown }) => listener(payload)

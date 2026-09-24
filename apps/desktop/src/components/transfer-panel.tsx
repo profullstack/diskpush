@@ -21,6 +21,17 @@ export type ActiveJob = {
   finished: boolean
   resumable: boolean
   message: string
+  /**
+   * A plugin action rather than an rsync transfer. It has no bytes or rate
+   * to show; `files` counts files done out of `total`, and `ok` is how it
+   * ended.
+   */
+  kind?: 'transfer' | 'plugin'
+  title?: string
+  /** What a plugin job is working on, shown where a transfer shows its route. */
+  subject?: string
+  total?: number | null
+  ok?: boolean
 }
 
 /**
@@ -400,8 +411,9 @@ export function TransferBand({
     job.percent > 0 && job.percent < 100 && job.elapsedSeconds > 0
       ? (job.elapsedSeconds / job.percent) * (100 - job.percent)
       : null
-  const failed = job.finished && job.resumable
-  const done = job.finished && !job.resumable
+  const plugin = job.kind === 'plugin'
+  const failed = job.finished && (plugin ? job.ok === false : job.resumable)
+  const done = job.finished && !failed
 
   return (
     <div className="shrink-0 border-t border-line bg-chrome px-4 pb-3 pt-2.5">
@@ -421,14 +433,14 @@ export function TransferBand({
               <ArrowRight className="size-3" />
             )}
           </span>
-          {done ? 'Finished' : failed ? 'Interrupted' : 'Transferring'}
+          {done ? 'Finished' : failed ? (plugin ? 'Failed' : 'Interrupted') : plugin ? (job.title ?? 'Working') : 'Transferring'}
         </span>
         <span className="selectable numeric min-w-0 truncate text-[11.5px] text-muted-foreground">{route}</span>
 
         <div className="ml-auto flex shrink-0 items-center gap-4 text-[11.5px] text-muted-foreground">
-          <span className="numeric text-foreground">{formatBytes(job.bytesTransferred)}</span>
-          <span className="numeric text-foreground">{formatRate(job.bytesPerSecond)}</span>
-          {remaining !== null ? (
+          {plugin ? null : <span className="numeric text-foreground">{formatBytes(job.bytesTransferred)}</span>}
+          {plugin ? null : <span className="numeric text-foreground">{formatRate(job.bytesPerSecond)}</span>}
+          {remaining !== null && !plugin ? (
             <span>
               ETA <span className="numeric text-foreground">{formatDuration(remaining)}</span>
             </span>
@@ -468,7 +480,9 @@ export function TransferBand({
         <span className="selectable numeric min-w-0 truncate">
           {job.finished ? job.message : job.currentFile || 'scanning…'}
         </span>
-        <span className="numeric ml-auto shrink-0">{job.files.toLocaleString()} files</span>
+        <span className="numeric ml-auto shrink-0">
+          {plugin && job.total ? `${job.files.toLocaleString()} of ${job.total.toLocaleString()}` : job.files.toLocaleString()} files
+        </span>
       </div>
     </div>
   )

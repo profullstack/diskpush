@@ -19,6 +19,11 @@ import {
   JobIdSchema,
   OpenSeriesRequestSchema,
   OpenWithRequestSchema,
+  PluginActionRequestSchema,
+  PluginIdSchema,
+  PluginSelectionSchema,
+  PluginSettingsSetSchema,
+  PluginTaskRequestSchema,
   PreviewRequestSchema,
   PathSchema,
   RemotePathRequestSchema,
@@ -47,6 +52,16 @@ import { browserFor, dropSession, sessionFor } from './services/sessions.js'
 import { store } from './services/store.js'
 import { advanceSeries, handlersFor, openSeries, openWith, stopSeries } from './services/open-with.js'
 import { cancelPreview, cancelTransfer, previewTransfer, saveProfile, startTransfer } from './services/transfers.js'
+import {
+  cancelPlugin,
+  getPluginSettings,
+  listPlugins,
+  pluginActionsFor,
+  runPluginAction,
+  runPluginTask,
+  setPluginEnabled,
+  setPluginSettings,
+} from './services/plugins.js'
 
 /**
  * Every handler validates its input with Zod before doing anything, and every
@@ -383,6 +398,28 @@ export function registerIpc(): void {
 
   handle(IPC.fleetListRemove, z.object({ name: z.string().min(1).max(128) }), async ({ name }) =>
     removeFleetList(name),
+  )
+
+  // --- plugins -------------------------------------------------------------
+  // Plugin code runs here, in the main process. The renderer names a plugin
+  // and an action by id, and the files by a local directory and bare names.
+
+  handle(IPC.pluginsList, z.undefined(), async () => listPlugins())
+
+  handle(IPC.pluginsActionsFor, PluginSelectionSchema, async (input) => pluginActionsFor(input))
+
+  handle(IPC.pluginsRunAction, PluginActionRequestSchema, async (request, event) => runPluginAction(request, event.sender))
+
+  handle(IPC.pluginsRunTask, PluginTaskRequestSchema, async (request, event) => runPluginTask(request, event.sender))
+
+  handle(IPC.pluginsCancel, z.object({ jobId: JobIdSchema }), async ({ jobId }) => cancelPlugin(jobId))
+
+  handle(IPC.pluginsGetSettings, z.object({ pluginId: PluginIdSchema }), async ({ pluginId }) => getPluginSettings(pluginId))
+
+  handle(IPC.pluginsSetSettings, PluginSettingsSetSchema, async ({ pluginId, values }) => setPluginSettings(pluginId, values))
+
+  handle(IPC.pluginsSetEnabled, z.object({ pluginId: PluginIdSchema, enabled: z.boolean() }), async ({ pluginId, enabled }) =>
+    setPluginEnabled(pluginId, enabled),
   )
 
   // --- shell ---------------------------------------------------------------

@@ -14,13 +14,14 @@ import {
   FolderPlus,
   Link2,
   PenLine,
+  Puzzle,
   RefreshCw,
   Search,
   ServerCrash,
   SearchX,
   Trash2,
 } from 'lucide-react'
-import { api, unwrap, type Connection, type FileEntry } from '@/lib/api'
+import { api, unwrap, type Connection, type FileEntry, type PluginActionChoice } from '@/lib/api'
 import {
   DEFAULT_SORT,
   isNavigable,
@@ -272,6 +273,7 @@ export function Pane({
   onEndpointChange,
   onAddServer,
   onRefreshHosts,
+  onPluginAction,
 }: {
   role: 'Source' | 'Destination'
   state: PaneState
@@ -284,6 +286,8 @@ export function Pane({
   onEndpointChange: (endpoint: PaneEndpoint) => void
   onAddServer: () => void
   onRefreshHosts?: () => void
+  /** Runs a plugin action on these entries of this (local) directory. */
+  onPluginAction?: (choice: PluginActionChoice, dir: string, names: string[]) => void
 }) {
   const [filter, setFilter] = useState('')
   const [showHidden, setShowHidden] = useState(false)
@@ -323,6 +327,33 @@ export function Pane({
 
   const canOpenWith = openWithFiles.length > 0
   const [opError, setOpError] = useState<string | null>(null)
+
+  /*
+   * Plugin actions for what the menu was opened on: the selection when the
+   * row is part of it, else that row, exactly as Open with decides. Asked of
+   * the main process as the menu opens, because whether an action applies is
+   * the plugin's call and plugin code never runs in here. Local panes only:
+   * a plugin works on files this machine has.
+   */
+  const [pluginMenu, setPluginMenu] = useState<{ names: string[]; choices: PluginActionChoice[] } | null>(null)
+  const pluginRequest = useRef(0)
+  const askPlugins = useCallback(
+    (entry: FileEntry | null) => {
+      const ticket = ++pluginRequest.current
+      setPluginMenu(null)
+      if (!onPluginAction || state.endpoint.kind !== 'local' || !entry) return
+      const names =
+        state.selected.has(entry.name) && state.selected.size > 1 ? [...state.selected] : [entry.name]
+      void unwrap(api()?.plugins.actionsFor(state.path, names))
+        .then((choices) => {
+          if (pluginRequest.current === ticket) setPluginMenu({ names, choices })
+        })
+        .catch(() => {
+          // No plugin menu is a smaller problem than an error over a right-click.
+        })
+    },
+    [onPluginAction, state.endpoint.kind, state.path, state.selected],
+  )
 
   useEffect(() => {
     setFilter('')
@@ -434,11 +465,12 @@ export function Pane({
   const aimAt = useCallback(
     (entry: FileEntry | null, index: number) => {
       setTarget(entry)
+      askPlugins(entry)
       if (!entry) return
       setCursor(index)
       if (!state.selected.has(entry.name)) onChange({ selected: new Set([entry.name]) })
     },
-    [onChange, state.selected],
+    [askPlugins, onChange, state.selected],
   )
 
   /**
@@ -601,7 +633,10 @@ export function Pane({
                 // unconditionally left Rename and Delete greyed out on every
                 // row, which is exactly how it shipped in the first draft.
                 onContextMenu={(event: React.MouseEvent) => {
-                  if (!(event.target as HTMLElement).closest('[data-row]')) setTarget(null)
+                  if (!(event.target as HTMLElement).closest('[data-row]')) {
+                    setTarget(null)
+                    askPlugins(null)
+                  }
                 }}
                 className="focus-ring h-full outline-none"
               />
@@ -722,6 +757,24 @@ export function Pane({
               {/* Says how many, so a menu opened over a selection is not a guess. */}
               {openWithFiles.length > 1 ? `Open ${openWithFiles.length} files with…` : 'Open with…'}
             </ContextMenuItem>
+            {pluginMenu && pluginMenu.choices.length > 0 ? (
+              <>
+                <ContextMenuSeparator />
+                <div className="px-2 pb-0.5 pt-1 text-[10px] font-medium uppercase tracking-[0.08em] text-faint">
+                  Plugins
+                </div>
+                {pluginMenu.choices.map((choice) => (
+                  <ContextMenuItem
+                    key={`${choice.pluginId}:${choice.actionId}`}
+                    title={choice.description || undefined}
+                    onClick={() => onPluginAction?.(choice, state.path, pluginMenu.names)}
+                  >
+                    <Puzzle className="size-[14px] text-faint" />
+                    {pluginMenu.names.length > 1 ? `${choice.label} (${pluginMenu.names.length})` : choice.label}
+                  </ContextMenuItem>
+                ))}
+              </>
+            ) : null}
             <ContextMenuSeparator />
             <ContextMenuItem onClick={() => onNavigate(state.path)}>
               <RefreshCw className="size-[14px] text-faint" />

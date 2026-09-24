@@ -10,6 +10,7 @@ import {
   FileDown,
   MonitorOff,
   Plus,
+  Puzzle,
   Server,
   Settings,
   Users,
@@ -17,6 +18,7 @@ import {
 } from 'lucide-react'
 import { ConnectionDialog } from '@/components/connection-dialog'
 import { FleetView } from '@/components/fleet-view'
+import { PluginsDialog } from '@/components/plugins-dialog'
 import { ProfileBar } from '@/components/profile-bar'
 import { ServerManager } from '@/components/server-manager'
 import { endpointLabel, loadPane, Pane, type PaneEndpoint, type PaneState } from '@/components/pane'
@@ -28,6 +30,8 @@ import {
   api,
   unwrap,
   type Connection,
+  type PluginActionChoice,
+  type PluginEvent,
   type PreviewProgress,
   type PreviewResult,
   type SyncProfile,
@@ -127,6 +131,9 @@ export default function Workspace() {
   const [error, setError] = useState<string | null>(null)
   const [showConnection, setShowConnection] = useState(false)
   const [showServers, setShowServers] = useState(false)
+  const [showPlugins, setShowPlugins] = useState(false)
+  /** Which pane a plugin job is working in, so the pane is re-read when it changes files. */
+  const pluginSideRef = useRef<{ jobId: string; side: 'left' | 'right' } | null>(null)
   const [tab, setTab] = useState<'transfer' | 'fleet'>('transfer')
   const [profiles, setProfiles] = useState<SyncProfile[]>([])
   const [outsideShell, setOutsideShell] = useState(false)
@@ -217,6 +224,63 @@ export default function Workspace() {
     if (!bridge) return
     return bridge.events.onTransfer(({ jobId, event }) => setJob((current) => reduceJob(current, jobId, event)))
   }, [])
+
+  // The panes as of the last render, for an event handler that outlives it.
+  const panesRef = useRef({ left, right })
+  panesRef.current = { left, right }
+
+  useEffect(() => {
+    const bridge = api()
+    if (!bridge) return
+    return bridge.events.onPluginProgress(({ jobId, event }) => {
+      setJob((current) => reducePluginJob(current, jobId, event))
+      const running = pluginSideRef.current
+      if (event.type === 'exit' && running?.jobId === jobId) {
+        pluginSideRef.current = null
+        if (event.changed) {
+          const pane = panesRef.current[running.side]
+          void navigate(running.side, pane.endpoint, pane.path)
+        }
+      }
+    })
+  }, [navigate])
+
+  /**
+   * Runs a plugin action from a pane's right-click menu. The work happens in
+   * the main process; its progress comes back as events and takes the
+   * transfer band, the one place in the window that already shows a job.
+   */
+  const runPluginAction = useCallback(
+    async (side: 'left' | 'right', choice: PluginActionChoice, dir: string, names: string[]) => {
+      const jobId = crypto.randomUUID()
+      pluginSideRef.current = { jobId, side }
+      setError(null)
+      setJob({
+        jobId,
+        kind: 'plugin',
+        title: choice.label,
+        subject: `${names.length === 1 ? names[0] : `${names.length} items`} in ${dir}`,
+        total: null,
+        percent: 0,
+        bytesTransferred: 0,
+        bytesPerSecond: 0,
+        files: 0,
+        currentFile: '',
+        elapsedSeconds: 0,
+        finished: false,
+        resumable: false,
+        message: '',
+      })
+      try {
+        await unwrap(api()?.plugins.runAction(jobId, choice.pluginId, choice.actionId, dir, names))
+      } catch (caught) {
+        pluginSideRef.current = null
+        setJob(null)
+        setError(caught instanceof Error ? caught.message : String(caught))
+      }
+    },
+    [],
+  )
 
   useEffect(() => {
     const bridge = api()
@@ -550,6 +614,7 @@ export default function Workspace() {
                 onClick={() => void importSshConfig()}
                 label="Import from ~/.ssh/config"
               />
+              <MenuItem icon={<Puzzle className="size-3.5" />} onClick={() => setShowPlugins(true)} label="Plugins…" />
               <div className="my-1 h-px bg-line" />
               <MenuItem
                 icon={<ExternalLink className="size-3.5" />}
@@ -612,6 +677,7 @@ export default function Workspace() {
             onNavigate={(path) => void navigate('left', left.endpoint, path)}
             onEndpointChange={(endpoint) => setLeft(blankPane(endpoint, defaultPathFor(endpoint, allConnections)))}
             onAddServer={() => setShowConnection(true)}
+            onPluginAction={(choice, dir, names) => void runPluginAction('left', choice, dir, names)}
           />
 
           <TransferRail
@@ -638,15 +704,17 @@ export default function Workspace() {
             onNavigate={(path) => void navigate('right', right.endpoint, path)}
             onEndpointChange={(endpoint) => setRight(blankPane(endpoint, defaultPathFor(endpoint, allConnections)))}
             onAddServer={() => setShowConnection(true)}
+            onPluginAction={(choice, dir, names) => void runPluginAction('right', choice, dir, names)}
           />
         </div>
 
         <TransferBand
           job={job}
-          route={route}
+          route={job?.kind === 'plugin' ? (job.subject ?? route) : route}
           mirror={mirror}
           onCancel={() => {
-            if (job) void api()?.transfers.cancel(job.jobId)
+            if (job?.kind === 'plugin') void api()?.plugins.cancel(job.jobId)
+            else if (job) void api()?.transfers.cancel(job.jobId)
           }}
         />
 
@@ -686,6 +754,8 @@ export default function Workspace() {
         onChanged={() => void refreshConnections()}
       />
 
+      <PluginsDialog open={showPlugins} onClose={() => setShowPlugins(false)} />
+
       <ConnectionDialog open={showConnection} onClose={() => setShowConnection(false)} onSaved={() => void refreshConnections()} />
 
       <TransferPreviewDialog
@@ -722,6 +792,36 @@ function defaultPathFor(endpoint: PaneEndpoint, connections: readonly Connection
   if (endpoint.kind === 'local') return '/'
   const connection = connections.find((candidate) => candidate.id === endpoint.connectionId)
   return connection?.defaultRemotePath ?? '.'
+}
+
+/** A plugin job's progress, folded into the same shape the transfer band draws. */
+function reducePluginJob(current: ActiveJob | null, jobId: string, event: PluginEvent): ActiveJob | null {
+  if (!current || current.jobId !== jobId || current.kind !== 'plugin') return current
+  const withCount = (done: number, total: number | null | undefined) => ({
+    files: done,
+    total: total ?? null,
+    percent: total ? Math.min(100, Math.round((done / total) * 100)) : current.percent,
+  })
+  switch (event.type) {
+    case 'start':
+      return { ...current, ...withCount(0, event.total) }
+    case 'update':
+      return {
+        ...current,
+        ...withCount(event.done ?? current.files, event.total ?? current.total),
+        currentFile: event.currentFile ?? event.message ?? current.currentFile,
+      }
+    case 'exit':
+      return {
+        ...current,
+        finished: true,
+        ok: event.ok,
+        percent: event.ok ? 100 : current.percent,
+        message: event.message,
+      }
+    default:
+      return current
+  }
 }
 
 function reduceJob(current: ActiveJob | null, jobId: string, event: TransferEvent): ActiveJob | null {
