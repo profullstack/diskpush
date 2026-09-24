@@ -86,7 +86,7 @@ export async function runPlugins(parsed: ParsedArgv, store: DiskPushStore, outpu
         return failure(output, `${target} is built in; turn it off with: diskpush plugins disable ${target}`, EXIT.refused)
       }
       // By plugin id when it loaded, else by the package name it was added as.
-      const packageName = info?.location?.split('node_modules/').at(-1) ?? target
+      const packageName = info?.location?.split(/node_modules[\\/]/).at(-1)?.replaceAll('\\', '/') ?? target
       await removeExternalPlugin(pluginsDirectory(diskpushHome()), packageName)
       output.line(`Removed ${packageName}.`)
       return EXIT.ok
