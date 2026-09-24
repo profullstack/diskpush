@@ -6,7 +6,8 @@ import { PluginRegistry, memoryBackend, runAction, runTask, silentProgress, type
 import { FakeMediaAnalyzer, type FakeOptions } from './fake-server.fixture.js'
 import { MediaAnalyzerClient, chooseTier } from './client.js'
 import { SIGNATURE, batches, createMediaAnalyzerPlugin, loadState, sidecarText } from './index.js'
-import { mediaKind } from './media.js'
+import { bundledFfmpegPath, findFfmpeg, mediaKind, parseDuration, parseSize } from './media.js'
+import { execFileSync } from 'node:child_process'
 
 const servers: FakeMediaAnalyzer[] = []
 afterEach(async () => {
@@ -295,6 +296,48 @@ describe('sort and undo', () => {
     expect(undone.ok).toBe(false)
     expect(readFileSync(join(dir, 'home', 'cat.jpg'), 'utf8')).toBe('a new cat')
     expect(readFileSync(join(dir, 'Pets', 'cat.jpg'), 'utf8')).toBe('home cat')
+  })
+})
+
+describe('large files', () => {
+  it('reads sizes the way people write them; empty means no limit', () => {
+    expect(parseSize('')).toBe(null)
+    expect(parseSize(undefined)).toBe(null)
+    expect(parseSize('500MB')).toBe(500 * 1024 ** 2)
+    expect(parseSize('2GB')).toBe(2 * 1024 ** 3)
+    expect(parseSize('1.5 g')).toBe(Math.round(1.5 * 1024 ** 3))
+    expect(parseSize('750')).toBe(750 * 1024 ** 2)
+    expect(() => parseSize('big')).toThrow(/not a size/)
+  })
+
+  it('reads a duration from ffmpeg’s banner, so no ffprobe is needed', () => {
+    expect(parseDuration('  Duration: 01:02:03.50, start: 0.000000, bitrate: 1 kb/s')).toBe(3723.5)
+    expect(parseDuration('Duration: N/A')).toBe(null)
+  })
+
+  it('includes every size by default, and leaves out files over the limit when one is set', async () => {
+    const { fake, registry, host, logs } = await setup()
+    const dir = photos(2)
+    writeFileSync(join(dir, 'big.pdf'), Buffer.alloc(3 * 1024 * 1024))
+    await registry.settingsFor('mediaanalyzer').set('maxFileSize', '2MB')
+    const limited = await runAction(registry, 'mediaanalyzer', 'analyze', { ...host(), dir, names: readdirSync(dir) })
+    expect(limited.message).toMatch(/1 over the size limit left out/)
+    expect(logs.some((log) => /over 2 MB left out/.test(log.message))).toBe(true)
+    expect([...fake.scans.values()].flatMap((scan) => scan.files).some((file) => file.name === 'big.pdf')).toBe(false)
+  })
+
+  it('samples a video with the bundled ffmpeg by seeking, however long it is', async () => {
+    const bundled = bundledFfmpegPath()
+    if (!bundled) return // no network at install time; covered by the release build
+    const dir = mkdtempSync(join(tmpdir(), 'dp-ma-video-'))
+    const video = join(dir, 'long.mp4')
+    execFileSync(bundled, ['-v', 'error', '-f', 'lavfi', '-i', 'testsrc=duration=60:size=320x240:rate=5', '-pix_fmt', 'yuv420p', video])
+    const ffmpeg = (await findFfmpeg())!
+    const seconds = await ffmpeg.duration(video)
+    expect(seconds).toBeCloseTo(60, 0)
+    const sheet = await ffmpeg.contactSheet(video, seconds)
+    expect(sheet[0]).toBe(0xff)
+    expect(sheet[1]).toBe(0xd8)
   })
 })
 

@@ -4,7 +4,7 @@
  * optionally sort the files into folders by what they show.
  *
  * Surfaces:
- *   CLI      diskpush mediaanalyzer login | logout | whoami | analyze DIR [--sort] | undo DIR
+ *   CLI      diskpush mediaanalyzer login | logout | whoami | analyze DIR [--sort] [--max-size 2GB] | undo DIR
  *   TUI      `a` on a local file or folder
  *   desktop  right-click a local selection → Plugins; sign in under Plugins…
  */
@@ -26,7 +26,7 @@ import { analyze, type AnalyzeReport } from './analyze.js'
 import { undoLastSort } from './apply.js'
 import { ENV_KEY, MediaAnalyzerClient, NotSignedIn, clearTokens, saveTokens } from './client.js'
 import { STATE_DIR } from './library.js'
-import { mediaKind, type Ffmpeg } from './media.js'
+import { mediaKind, parseSize, type Ffmpeg } from './media.js'
 import { DEFAULT_SERVER, loopbackLogin, normalizeServer, pasteLogin, revokeToken, type Fetch } from './oauth.js'
 
 export { analyze, batches, MAX_FILES_PER_REQUEST } from './analyze.js'
@@ -102,6 +102,7 @@ export function createMediaAnalyzerPlugin(options: MediaAnalyzerOptions = {}): D
   const runAnalysis = async (
     ctx: BaseContext & { dir: string; entries: readonly EntryRef[] },
     sort: boolean,
+    maxBytes?: number | null,
   ): Promise<AnalyzeReport> => {
     const client = clientFor(ctx)
     if (!(await client.credential())) throw new NotSignedIn()
@@ -115,6 +116,7 @@ export function createMediaAnalyzerPlugin(options: MediaAnalyzerOptions = {}): D
       signal: ctx.signal,
       ...(options.ffmpeg !== undefined ? { ffmpeg: options.ffmpeg } : {}),
       ...(options.pollIntervalMs !== undefined ? { pollIntervalMs: options.pollIntervalMs } : {}),
+      ...(maxBytes !== undefined ? { maxBytes } : {}),
     })
   }
 
@@ -127,7 +129,7 @@ export function createMediaAnalyzerPlugin(options: MediaAnalyzerOptions = {}): D
     const at = args.indexOf(name)
     return at === -1 ? undefined : args[at + 1]
   }
-  const positional = (args: string[]) => args.filter((arg, index) => !arg.startsWith('-') && !['--server'].includes(args[index - 1] ?? ''))
+  const positional = (args: string[]) => args.filter((arg, index) => !arg.startsWith('-') && !['--server', '--max-size'].includes(args[index - 1] ?? ''))
 
   const fail = (ctx: CommandContext, message: string, code = 1) => {
     if (ctx.json) ctx.printJson({ ok: false, message })
@@ -152,6 +154,13 @@ export function createMediaAnalyzerPlugin(options: MediaAnalyzerOptions = {}): D
       },
       { key: 'providerId', label: 'Provider key id', type: 'string', default: '', description: 'For the byok tier. Empty uses your first key.' },
       { key: 'folders', label: 'Folders', type: 'string', default: '', description: 'Comma-separated categories to sort into. Empty uses the server defaults.' },
+      {
+        key: 'maxFileSize',
+        label: 'Skip files larger than',
+        type: 'string',
+        default: '',
+        description: 'Empty includes every size (videos of any size are sampled locally). Set e.g. 500MB or 2GB to leave larger files out.',
+      },
       { key: 'api_key', label: 'API key', type: 'secret', description: `An ma_key_… key, instead of signing in. ${ENV_KEY} overrides it.` },
     ],
     async status(ctx) {
@@ -282,15 +291,16 @@ export function createMediaAnalyzerPlugin(options: MediaAnalyzerOptions = {}): D
       },
       {
         name: 'analyze',
-        summary: 'describe every photo and video in DIR (recursively); --sort also files them into folders',
-        usage: 'analyze DIR [--sort]',
+        summary: 'describe every photo, video, song and document in DIR (recursively); --sort also files them into folders; --max-size 2GB leaves larger files out',
+        usage: 'analyze DIR [--sort] [--max-size 500MB|2GB]',
         async run(args, ctx) {
           const [target] = positional(args)
           if (!target) return fail(ctx, 'usage: diskpush mediaanalyzer analyze DIR [--sort]', 64)
           const dir = resolve(ctx.cwd, target)
           try {
             const entries = await wholeDirectory(dir)
-            const report = await runAnalysis({ ...ctx, dir, entries }, flag(args, '--sort'))
+            const limit = value(args, '--max-size')
+            const report = await runAnalysis({ ...ctx, dir, entries }, flag(args, '--sort'), limit === undefined ? undefined : parseSize(limit))
             if (ctx.json) ctx.printJson(report)
             else ctx.print(report.message)
             return report.ok ? 0 : 1

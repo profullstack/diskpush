@@ -7,6 +7,10 @@ allowBuilds:
   esbuild: true
   # electron's postinstall downloads the prebuilt binary for this platform.
   electron: true
+  # The MediaAnalyzer plugin's ffmpeg: its postinstall downloads the static
+  # binary for this platform, so video of any size is sampled locally with
+  # nothing for the user to install.
+  ffmpeg-static: true
   # ssh2's native crypto binding and cpu-features are optional speedups.
   # Declined so that installing DiskPush never needs a C++ toolchain; ssh2
   # falls back to its pure-JS implementation.

@@ -125,7 +125,8 @@
     "npmRebuild": false,
     "asarUnpack": [
       "**/*.node",
-      "**/node_modules/@libsql/**"
+      "**/node_modules/@libsql/**",
+      "**/node_modules/ffmpeg-static/**"
     ],
     "artifactName": "${productName}-${version}-${os}-${arch}.${ext}"
   },

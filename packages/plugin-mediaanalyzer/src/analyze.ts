@@ -13,7 +13,7 @@ import type { PluginSettings, ProgressSink } from '@diskpush/plugin-api'
 import { SIGNATURE, readOurSidecar, sortIntoFolders, writeSidecar, type SortItem, type SortReport } from './apply.js'
 import { chooseTier, type FileResult, type MediaAnalyzerClient, type UploadMeta } from './client.js'
 import { collectMedia, loadState, saveState, type MediaFile, type Result, type State } from './library.js'
-import { MAX_UPLOAD_BYTES, findFfmpeg, mimeType, type Ffmpeg } from './media.js'
+import { MAX_UPLOAD_BYTES, findFfmpeg, formatSize, mimeType, parseSize, type Ffmpeg } from './media.js'
 import { ApiError } from './oauth.js'
 import type { EntryRef } from '@diskpush/plugin-api'
 
@@ -33,6 +33,11 @@ export type AnalyzeOptions = {
   /** Undefined looks on PATH; null means "there is none". */
   ffmpeg?: Ffmpeg | null
   pollIntervalMs?: number
+  /**
+   * Skip files larger than this many bytes. Undefined reads the maxFileSize
+   * setting; null means no limit. Every size is included by default.
+   */
+  maxBytes?: number | null
 }
 
 export type AnalyzeReport = {
@@ -43,6 +48,8 @@ export type AnalyzeReport = {
   failed: number
   /** Never uploaded: no credit, too large, no ffmpeg. */
   notUploaded: number
+  /** Left out by the size limit the user set. */
+  excludedBySize: number
   sidecarsWritten: number
   sidecarsKept: number
   sort: SortReport | null
@@ -126,6 +133,7 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeReport> {
     described: 0,
     failed: 0,
     notUploaded: 0,
+    excludedBySize: 0,
     sidecarsWritten: 0,
     sidecarsKept: 0,
     sort: null,
@@ -134,7 +142,16 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeReport> {
   }
 
   progress.update({ message: 'Looking for photos, videos, audio and documents…' })
-  const files = await collectMedia(dir, options.entries, signal)
+  let files = await collectMedia(dir, options.entries, signal)
+  const maxBytes = options.maxBytes !== undefined ? options.maxBytes : parseSize(await options.settings.get('maxFileSize', ''))
+  if (maxBytes !== null) {
+    const kept = files.filter((file) => file.bytes <= maxBytes)
+    report.excludedBySize = files.length - kept.length
+    if (report.excludedBySize > 0) {
+      progress.log('info', `${report.excludedBySize} file${report.excludedBySize === 1 ? '' : 's'} over ${formatSize(maxBytes)} left out (your size limit).`)
+    }
+    files = kept
+  }
   report.files = files.length
   if (files.length === 0) {
     return { ...report, message: 'No photos, videos, audio or documents in that selection.' }
@@ -365,6 +382,7 @@ function summarize(report: AnalyzeReport): string {
   const parts = [`Described ${report.described} of ${report.files} file${report.files === 1 ? '' : 's'}`]
   if (report.failed > 0) parts.push(`${report.failed} failed`)
   if (report.notUploaded > 0) parts.push(`${report.notUploaded} skipped`)
+  if (report.excludedBySize > 0) parts.push(`${report.excludedBySize} over the size limit left out`)
   if (report.sort) parts.push(`${report.sort.moved} moved into folders`)
   if (report.chargedUsd !== null) parts.push(`$${report.chargedUsd.toFixed(2)} charged to this scan`)
   return `${parts.join(', ')}.`
