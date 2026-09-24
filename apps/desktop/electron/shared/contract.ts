@@ -61,6 +61,18 @@ export const IPC = {
 
   shellOpenExternal: 'shell:open-external',
 
+  pluginsList: 'plugins:list',
+  pluginsActionsFor: 'plugins:actions-for',
+  pluginsRunAction: 'plugins:run-action',
+  pluginsRunTask: 'plugins:run-task',
+  pluginsCancel: 'plugins:cancel',
+  pluginsGetSettings: 'plugins:get-settings',
+  pluginsSetSettings: 'plugins:set-settings',
+  pluginsSetEnabled: 'plugins:set-enabled',
+
+  /** Main -> renderer, progress and the outcome of a plugin action or task. */
+  eventPlugin: 'plugins:progress',
+
   /** Main -> renderer, one channel carrying every job event. */
   eventTransfer: 'event:transfer',
   /** Main -> renderer, progress through a one-at-a-time open. */
@@ -370,6 +382,56 @@ export const FleetListSaveSchema = z.object({
 export const FleetListRenameSchema = z.object({
   from: FleetListNameSchema,
   to: FleetListNameSchema,
+})
+
+/**
+ * Plugins.
+ *
+ * Plugin code runs in the main process, never here in the renderer's reach,
+ * so these requests name a plugin and an action by id and the files by a
+ * directory plus bare entry names -- the same rule every file operation
+ * follows. A renderer cannot hand a plugin `../`, an absolute path of its own
+ * choosing, or a remote path: the directory must be an absolute local one and
+ * each name a single entry inside it.
+ */
+export const PluginIdSchema = z.string().regex(/^[a-z][a-z0-9-]{0,39}$/, 'That is not a plugin id.')
+export const PluginPartIdSchema = z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/, 'That is not an action id.')
+
+/** An absolute local directory: `/home/me/photos`, `C:\\Users\\me`, or `~/photos`. */
+export const LocalDirectorySchema = PathSchema.refine(
+  (path) => path.startsWith('/') || path.startsWith('~') || /^[A-Za-z]:[\\/]/.test(path),
+  { message: 'A plugin works on an absolute local directory.' },
+).refine((path) => !path.includes('\0'), { message: 'A path cannot contain NUL.' })
+
+export const PluginSelectionSchema = z.object({
+  dir: LocalDirectorySchema,
+  names: z.array(EntryNameSchema).min(1).max(10000),
+})
+
+export const PluginActionRequestSchema = PluginSelectionSchema.extend({
+  /** Chosen by the renderer, like a preview's, so events are never ahead of the id they belong to. */
+  jobId: JobIdSchema,
+  pluginId: PluginIdSchema,
+  actionId: PluginPartIdSchema,
+})
+export type PluginActionRequest = z.infer<typeof PluginActionRequestSchema>
+
+export const PluginTaskRequestSchema = z.object({
+  jobId: JobIdSchema,
+  pluginId: PluginIdSchema,
+  taskId: PluginPartIdSchema,
+})
+
+/**
+ * Settings the renderer may write. Only keys the plugin declared are
+ * accepted (checked in the main process against the plugin's own list), and
+ * a secret is write-only: it can be set or cleared, never read back.
+ */
+export const PluginSettingsSetSchema = z.object({
+  pluginId: PluginIdSchema,
+  values: z
+    .record(z.string().regex(/^[A-Za-z][A-Za-z0-9_.-]{0,63}$/), z.union([z.string().max(4096), z.boolean(), z.null()]))
+    .refine((values) => Object.keys(values).length <= 64, { message: 'Too many settings at once.' }),
 })
 
 /** Only http(s) may be handed to the system browser. */

@@ -101,6 +101,10 @@ diskpush fleet upgrade --on tag:production --sudo
 
 # Or run anything, anywhere
 diskpush fleet run "systemctl reload nginx" --on 'web-*' --sudo
+
+# Describe a folder of photos, and sort them into folders by what they show
+diskpush mediaanalyzer login
+diskpush mediaanalyzer analyze ~/Pictures/2024 --sort
 ```
 
 ## Safety
@@ -120,8 +124,12 @@ to make that flag hard to trigger by accident.
   through verbatim.
 - **Host keys are verified.** A changed host key blocks the connection. There
   is no global setting to turn that off.
-- **No credentials on disk.** The local database holds no passwords or
-  passphrases.
+- **No SSH credentials on disk.** The local database holds no passwords or
+  passphrases. A plugin's sign-in (such as MediaAnalyzer's token) is kept in
+  it, which is why DiskPush keeps that file owner-only (`0600`).
+- **Plugins stay out of the renderer.** Plugin code runs in the CLI or the
+  desktop's main process, and the renderer can only name a plugin action and
+  entries inside a local directory. See [docs/plugins.md](docs/plugins.md).
 
 ## Documentation
 
@@ -136,6 +144,7 @@ to make that flag hard to trigger by accident.
 | [docs/file-browser.md](docs/file-browser.md) | Why browsing is SFTP and transfers are rsync |
 | [docs/profiles.md](docs/profiles.md) | Saved, repeatable directory pairs |
 | [docs/fleet.md](docs/fleet.md) | Running one command, or an upgrade, across many servers |
+| [docs/plugins.md](docs/plugins.md) | Plugins, MediaAnalyzer, writing one, and the security model |
 | [docs/security.md](docs/security.md) | Threat model and the decisions that follow from it |
 | [docs/architecture.md](docs/architecture.md) | Packages, processes and boundaries |
 | [docs/troubleshooting.md](docs/troubleshooting.md) | What the errors mean |
@@ -152,6 +161,8 @@ packages/rsync-core the transfer engine, with no Electron in it
 packages/ssh-core   SSH sessions, SFTP browsing, host keys, preflight
 packages/fleet-core one command across many servers, with no Electron in it
 packages/database   the local store shared by desktop and CLI
+packages/plugin-api the plugin contract, registry and external loader
+packages/plugin-mediaanalyzer  the built-in MediaAnalyzer plugin
 ```
 
 `rsync-core` deliberately has no dependency on Electron or on the CLI, so the

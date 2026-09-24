@@ -101,6 +101,8 @@ const KNOWN_COMMANDS = new Set([
   'desktop',
   'tui',
   'fleet',
+  'plugins',
+  'plugin',
   'help',
   'version',
 ])

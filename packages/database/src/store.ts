@@ -1,4 +1,4 @@
-import { mkdirSync } from 'node:fs'
+import { chmodSync, mkdirSync, statSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { createClient, type Client, type InValue } from '@libsql/client'
@@ -39,6 +39,7 @@ export class DiskPushStore {
     const client = createClient({ url: path === ':memory:' ? ':memory:' : `file:${path}` })
     const store = new DiskPushStore(client, path)
     await store.migrate()
+    if (path !== ':memory:') restrictToOwner(path)
     return store
   }
 
@@ -537,6 +538,20 @@ export class DiskPushStore {
             ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json, updated_at=excluded.updated_at`,
       args: [key, JSON.stringify(value), new Date().toISOString()],
     })
+  }
+}
+
+/**
+ * Owner-only, like ~/.ssh. The store holds no SSH secrets, but plugins keep
+ * their sign-ins in its settings table (a MediaAnalyzer refresh token, say),
+ * and the default umask leaves a new file readable by every local user.
+ * Best effort: a filesystem without POSIX modes keeps whatever it has.
+ */
+function restrictToOwner(path: string): void {
+  try {
+    if ((statSync(path).mode & 0o077) !== 0) chmodSync(path, 0o600)
+  } catch {
+    // Not fatal: the store still works, it is just not tightened.
   }
 }
 

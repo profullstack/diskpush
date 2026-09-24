@@ -10,7 +10,7 @@
  * shape is `model.ts`, and neither of those touches a terminal — so the whole
  * screen can be rendered and asserted on in a test with no pty.
  */
-import { join, posix } from 'node:path'
+import { dirname, join, posix, resolve } from 'node:path'
 import type { App, Container, KeyEvent, MouseEvent, Rect, Theme } from '@profullstack/hqtui'
 import { detectCapabilities } from '@profullstack/hqtui'
 import { knownHostsPath } from '@diskpush/database'
@@ -18,11 +18,13 @@ import { SftpBrowser, SshSession } from '@diskpush/ssh-core'
 import { defaultRsyncOptions, type Change, type Connection } from '@diskpush/schemas'
 import { parseEndpoint, planTransfer, runToCompletion } from '@diskpush/rsync-core'
 import {
+  type ActionsOverlay,
   type Document,
   type EndpointChoice,
   type Entry,
   type Overlay,
   type Pane,
+  type PluginJob,
   type Row,
   type Side,
   type SortKey,
@@ -31,6 +33,8 @@ import {
   DOCUMENT_LIMIT,
   IMAGE_LIMIT,
   blankDocument,
+  blankJob,
+  jobProgress,
   blankPane,
   clampIndex,
   endpointString,
@@ -52,6 +56,7 @@ import { type Action, type Tone, type ViewState, draw, filterChoices } from './v
 import { maxScroll, readsAsMarkdown } from './document.js'
 import { type Launch, type Launcher, type Target, editLaunch, openLaunch, systemLauncher } from './launch.js'
 import { type Protocol, chooseProtocol, deleteImage, encodeImage, placeAt, tmuxPassthrough } from './graphics.js'
+import type { ActionChoice, PluginHost } from '../plugins.js'
 
 export {
   blankPane,
@@ -72,6 +77,8 @@ export class Tui {
   /** Whatever is on screen instead of the panes, and owns the keyboard while it is. */
   private overlay: Overlay | null = null
   private transfer: Transfer | null = null
+  /** A plugin action in flight, or the last one that ran. Shares the transfer panel's rows. */
+  private job: PluginJob | null = null
   /** The file open under the panes, if any. */
   private document: Document | null = null
   /** What the last frame drew of it: its line count and the rows it had, so a scroll can be clamped. */
@@ -102,6 +109,8 @@ export class Tui {
     private readonly choices: readonly EndpointChoice[] = [],
     private readonly launcher: Launcher = systemLauncher(),
     protocol?: Protocol,
+    /** Plugin actions for `a`. Null when no plugins are loaded, and then `a` is not offered. */
+    private readonly plugins: PluginHost | null = null,
   ) {
     this.panes = { left, right }
     this.protocol = protocol ?? chooseProtocol(detectCapabilities({}, launcher.env).program)
@@ -135,6 +144,8 @@ export class Tui {
       status: this.status,
       choices: this.choices,
       now: new Date(),
+      job: this.job,
+      plugins: this.plugins !== null,
     }
   }
 
@@ -190,7 +201,21 @@ export class Tui {
       onDismissOverlay: () => {
         // The host-key question is not on this list on purpose: it is only
         // ever answered, never waved away.
-        if (this.overlay?.kind === 'picker' || this.overlay?.kind === 'help') this.overlay = null
+        if (this.overlay?.kind === 'picker' || this.overlay?.kind === 'help' || this.overlay?.kind === 'actions') {
+          this.overlay = null
+        }
+        this.invalidate()
+      },
+      onPickAction: (choice) => {
+        if (this.overlay?.kind !== 'actions') return
+        const overlay = this.overlay
+        this.overlay = null
+        void this.runPluginAction(overlay, choice)
+      },
+      onHoverAction: (index) => {
+        this.hoverSeen = true
+        if (this.overlay?.kind !== 'actions' || this.overlay.hover === index) return
+        this.overlay.hover = index
         this.invalidate()
       },
       onHostKeyDecide: (trust) => {
@@ -212,6 +237,10 @@ export class Tui {
    * rows, so nothing should stay lit.
    */
   onMouse(event: MouseEvent): void {
+    if (event.action === 'move' && !this.hoverSeen && this.overlay?.kind === 'actions' && this.overlay.hover !== null) {
+      this.overlay.hover = null
+      this.invalidate()
+    }
     if (event.action === 'move' && !this.hoverSeen) {
       if (this.panes.left.hover !== null || this.panes.right.hover !== null) {
         this.panes.left.hover = null
@@ -233,7 +262,9 @@ export class Tui {
       return
     }
     if (action === 'closeOverlay') {
-      if (this.overlay?.kind === 'picker' || this.overlay?.kind === 'help') this.overlay = null
+      if (this.overlay?.kind === 'picker' || this.overlay?.kind === 'help' || this.overlay?.kind === 'actions') {
+        this.overlay = null
+      }
       this.invalidate()
       return
     }
@@ -281,6 +312,9 @@ export class Tui {
         break
       case 'sort':
         if (!this.busy) this.cycleSort()
+        break
+      case 'actions':
+        if (!this.busy) await this.openActions()
         break
       default:
         break
@@ -426,6 +460,7 @@ export class Tui {
       return true
     }
     if (this.overlay?.kind === 'picker') return this.onPickerKey(key, this.overlay)
+    if (this.overlay?.kind === 'actions') return this.onActionsKey(key, this.overlay)
     if (this.filtering) return this.onFilterKey(key)
 
     // A message is about the last thing that happened; the next key starts
@@ -435,7 +470,7 @@ export class Tui {
     if (key.name === 'escape') {
       // Escape belongs to the transfer while there is one: cancelling a sync in
       // flight, or clearing the panel a finished one left behind.
-      if (this.transfer) {
+      if (this.transfer || this.job) {
         this.dismissTransfer()
         return true
       }
@@ -523,6 +558,9 @@ export class Tui {
         break
       case key.name === 's':
         await this.transferTo(false)
+        break
+      case key.char === 'a':
+        await this.openActions()
         break
       case key.name === '?':
         this.overlay = { kind: 'help' }
@@ -658,6 +696,7 @@ export class Tui {
     this.document = doc
     // A finished transfer's panel and the document want the same rows.
     if (this.transfer && !this.transfer.running) this.transfer = null
+    if (this.job && !this.job.running) this.job = null
     this.invalidate()
     // An image is handed to the terminal whole, so it is read whole.
     const limit = isImageName(row.entry.name) ? IMAGE_LIMIT : DOCUMENT_LIMIT
@@ -959,6 +998,17 @@ export class Tui {
   // -------------------------------------------------------------- transfers
 
   private dismissTransfer(): void {
+    // A plugin job and a transfer never run together (both hold `busy`), so
+    // whichever is on screen is the one escape means.
+    if (this.job) {
+      if (this.job.running) {
+        this.job.cancel()
+        this.say('Cancelling…', 'warn')
+        return
+      }
+      this.job = null
+      return
+    }
     if (!this.transfer) return
     if (this.transfer.running) {
       this.transfer.cancel()
@@ -990,8 +1040,9 @@ export class Tui {
       cancel: () => controller.abort(),
     }
     this.transfer = transfer
-    // The transfer panel takes the rows the document had.
+    // The transfer panel takes the rows the document had, and a finished job's.
     this.document = null
+    this.job = null
     this.busy = true
     this.invalidate()
     // rsync can be silent for a long time while it walks a tree; the clock in
@@ -1060,7 +1111,116 @@ export class Tui {
     }
   }
 
+  // ---------------------------------------------------------------- plugins
+
+  /**
+   * `a`: the plugin actions that apply to the row under the cursor.
+   *
+   * Local panes only. A plugin works on files this machine can open, and a
+   * row in a server pane is a path on the server.
+   */
+  private async openActions(): Promise<void> {
+    if (!this.plugins) {
+      this.say('No plugins are loaded. See: diskpush plugins', 'warn')
+      return
+    }
+    const pane = this.current
+    if (pane.connection) {
+      this.say(`Plugin actions work on local files; this pane is ${pane.label}.`, 'warn')
+      return
+    }
+    const row = selectedRow(pane)
+    if (!row) {
+      this.say('Nothing under the cursor.', 'warn')
+      return
+    }
+    const parent = dirname(row.rel)
+    const dir = resolve(pane.path, parent === '.' ? '' : parent)
+    const entries = [{ name: row.entry.name, isDirectory: row.entry.isDirectory, size: row.entry.size }]
+    let choices: ActionChoice[]
+    try {
+      choices = await this.plugins.actionsFor(dir, entries)
+    } catch (error) {
+      this.say(error instanceof Error ? error.message : String(error), 'error')
+      return
+    }
+    if (choices.length === 0) {
+      this.say(`No plugin action applies to ${row.entry.name}.`, 'warn')
+      return
+    }
+    this.overlay = { kind: 'actions', side: this.active, dir, names: [row.entry.name], what: row.rel, choices, index: 0, hover: null }
+  }
+
+  private async onActionsKey(key: KeyEvent, overlay: ActionsOverlay): Promise<boolean> {
+    if (key.name === 'q') return false
+    if (key.name === 'escape') {
+      this.overlay = null
+      return true
+    }
+    if (key.name === 'up' || key.char === 'k') {
+      overlay.index = Math.max(0, overlay.index - 1)
+      return true
+    }
+    if (key.name === 'down' || key.char === 'j') {
+      overlay.index = Math.min(overlay.choices.length - 1, overlay.index + 1)
+      return true
+    }
+    const choice =
+      key.name === 'enter'
+        ? overlay.choices[overlay.index]
+        : key.char && !key.ctrl && !key.alt
+          ? overlay.choices.find((candidate) => candidate.key === key.char)
+          : undefined
+    if (!choice) return true
+    this.overlay = null
+    // Not awaited: the action runs for as long as it runs, reporting into
+    // the job panel, and the keyboard stays live for escape.
+    void this.runPluginAction(overlay, choice)
+    return true
+  }
+
+  private async runPluginAction(overlay: ActionsOverlay, choice: ActionChoice): Promise<void> {
+    if (!this.plugins || this.busy) return
+    const controller = new AbortController()
+    const job = blankJob(choice.label, overlay.what, overlay.side, () => controller.abort())
+    this.job = job
+    // The job panel takes the rows the document and a finished transfer had.
+    this.document = null
+    if (this.transfer && !this.transfer.running) this.transfer = null
+    this.busy = true
+    this.invalidate()
+    const clock = setInterval(() => this.invalidate(), 1000)
+    try {
+      const result = await this.plugins.run(
+        choice,
+        overlay.dir,
+        overlay.names,
+        jobProgress(job, () => this.invalidate()),
+        controller.signal,
+      )
+      if (controller.signal.aborted) {
+        job.outcome = { ok: false, cancelled: true, message: `${choice.label} was cancelled. What finished before esc is kept.` }
+        this.say(`${choice.label} cancelled`, 'warn')
+      } else {
+        job.outcome = { ok: result.ok, message: result.message }
+        this.say(result.message, result.ok ? 'ok' : 'error')
+      }
+      if (result.changed) await this.refresh(overlay.side)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      job.outcome = { ok: false, message }
+      this.say(message, 'error')
+    } finally {
+      clearInterval(clock)
+      job.running = false
+      job.endedAt = Date.now()
+      this.busy = false
+      this.invalidate()
+    }
+  }
+
   close(): void {
+    this.job?.cancel()
     this.transfer?.cancel()
     for (const session of this.sessions.values()) session.close()
   }

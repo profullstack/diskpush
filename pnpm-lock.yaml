@@ -32,6 +32,12 @@ importers:
       '@diskpush/fleet-core':
         specifier: workspace:*
         version: link:../../packages/fleet-core
+      '@diskpush/plugin-api':
+        specifier: workspace:*
+        version: link:../../packages/plugin-api
+      '@diskpush/plugin-mediaanalyzer':
+        specifier: workspace:*
+        version: link:../../packages/plugin-mediaanalyzer
       '@diskpush/rsync-core':
         specifier: workspace:*
         version: link:../../packages/rsync-core
@@ -65,6 +71,12 @@ importers:
       '@diskpush/fleet-core':
         specifier: workspace:*
         version: link:../../packages/fleet-core
+      '@diskpush/plugin-api':
+        specifier: workspace:*
+        version: link:../../packages/plugin-api
+      '@diskpush/plugin-mediaanalyzer':
+        specifier: workspace:*
+        version: link:../../packages/plugin-mediaanalyzer
       '@diskpush/rsync-core':
         specifier: workspace:*
         version: link:../../packages/rsync-core
@@ -193,6 +205,14 @@ importers:
       zod:
         specifier: ^3.24.1
         version: 3.25.76
+
+  packages/plugin-api: {}
+
+  packages/plugin-mediaanalyzer:
+    dependencies:
+      '@diskpush/plugin-api':
+        specifier: workspace:*
+        version: link:../plugin-api
 
   packages/rsync-core:
     dependencies:

@@ -29,6 +29,8 @@ const MANIFESTS = [
   'packages/ssh-core/package.json',
   'packages/fleet-core/package.json',
   'packages/database/package.json',
+  'packages/plugin-api/package.json',
+  'packages/plugin-mediaanalyzer/package.json',
 ]
 const TAG_SOURCE = 'apps/cli/package.json'
 

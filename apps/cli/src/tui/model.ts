@@ -9,6 +9,8 @@ import { closeSync, fstatSync, openSync, readSync, readdirSync, statSync } from 
 import { homedir } from 'node:os'
 import { dirname, join, posix } from 'node:path'
 import type { Change, ChangeSummary, Connection, RsyncProgress } from '@diskpush/schemas'
+import type { LogLevel, ProgressSink } from '@diskpush/plugin-api'
+import type { ActionChoice } from '../plugins.js'
 
 export type Entry = {
   name: string
@@ -281,6 +283,94 @@ export type Overlay =
   | { kind: 'picker'; query: string; index: number }
   | { kind: 'help' }
   | { kind: 'hostKey'; host: string; fingerprint: string; keyType: string; decide: (trust: boolean) => void }
+  | ActionsOverlay
+
+/**
+ * The plugin actions that apply to the row under the cursor.
+ *
+ * `dir` and `names` are what the action will be handed: the absolute local
+ * directory holding the row, and the row's own name in it.
+ */
+export type ActionsOverlay = {
+  kind: 'actions'
+  side: Side
+  dir: string
+  names: string[]
+  /** The row, for a person: `photos/2024`. */
+  what: string
+  choices: ActionChoice[]
+  index: number
+  /** The choice under the mouse, or null. */
+  hover: number | null
+}
+
+/**
+ * A plugin action in flight, or the last one that ran. Drawn where a
+ * transfer's panel goes, and dismissed the same way.
+ */
+export type PluginJob = {
+  title: string
+  what: string
+  side: Side
+  running: boolean
+  startedAt: number
+  endedAt: number | null
+  done: number
+  total: number | null
+  message: string
+  currentFile: string
+  /** Most recent warnings and errors, newest last. Capped by `pushJobLog`. */
+  log: { level: LogLevel; message: string }[]
+  outcome: { ok: boolean; message: string; cancelled?: boolean } | null
+  cancel: () => void
+}
+
+export const JOB_LOG_LIMIT = 200
+
+export function blankJob(title: string, what: string, side: Side, cancel: () => void): PluginJob {
+  return {
+    title,
+    what,
+    side,
+    running: true,
+    startedAt: Date.now(),
+    endedAt: null,
+    done: 0,
+    total: null,
+    message: '',
+    currentFile: '',
+    log: [],
+    outcome: null,
+    cancel,
+  }
+}
+
+export function pushJobLog(job: PluginJob, level: LogLevel, message: string): void {
+  job.log.push({ level, message })
+  if (job.log.length > JOB_LOG_LIMIT) job.log.splice(0, job.log.length - JOB_LOG_LIMIT)
+}
+
+/** The progress sink a plugin reports into: it writes the job, and asks for a frame. */
+export function jobProgress(job: PluginJob, redraw: () => void): ProgressSink {
+  return {
+    start(total) {
+      job.total = total ?? null
+      job.done = 0
+      redraw()
+    },
+    update({ done, total, message, currentFile }) {
+      if (done !== undefined) job.done = done
+      if (total !== undefined) job.total = total
+      if (message !== undefined) job.message = message
+      if (currentFile !== undefined) job.currentFile = currentFile
+      redraw()
+    },
+    log(level, message) {
+      pushJobLog(job, level, message)
+      redraw()
+    },
+  }
+}
 
 /** A transfer in flight, or the last one that ran. */
 export type Transfer = {
