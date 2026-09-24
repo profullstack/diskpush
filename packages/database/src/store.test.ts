@@ -25,6 +25,21 @@ const connectionInput = {
   notes: '',
 }
 
+describe('the database file', () => {
+  it.skipIf(process.platform === 'win32')('is readable by its owner only, since plugins keep sign-ins in it', async () => {
+    const { chmodSync, mkdtempSync, statSync, writeFileSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const path = join(mkdtempSync(join(tmpdir(), 'dp-db-')), 'diskpush.db')
+    // An existing store from before this rule, left world-readable by the umask.
+    writeFileSync(path, '')
+    chmodSync(path, 0o644)
+    const db = await DiskPushStore.open({ path })
+    await db.close()
+    expect(statSync(path).mode & 0o777).toBe(0o600)
+  })
+})
+
 describe('paths', () => {
   it('honours DISKPUSH_HOME', () => {
     expect(diskpushHome({ DISKPUSH_HOME: '/tmp/dp' })).toBe('/tmp/dp')
