@@ -69,6 +69,14 @@ DiskPush gates on the version:
 - SSH agent authentication is preferred, and stores nothing at all.
 - Where a secret must persist, it belongs in OS-backed secure storage, not in
   the SQLite file that a backup would sweep up.
+- **Exception, for now: plugin sign-ins.** A plugin's token or API key (the
+  MediaAnalyzer refresh token, say) is kept in the settings table, because
+  that is the one store the CLI and the desktop app can both read, and a
+  sign-in made in one has to work in the other. It is scoped to that one
+  service, rotates on every use, is revoked by `logout`, and is never sent to
+  the desktop renderer. DiskPush keeps the database file owner-only (`0600`).
+  Moving it into OS secure storage both surfaces can reach is an open item in
+  [plugins.md](plugins.md#not-yet).
 - Credentials are never written to logs. "Copy command" redacts.
 
 ## Destructive operations
@@ -122,11 +130,17 @@ work, a dedicated restricted key on the source host is the better answer.
 - Every IPC input is validated with Zod in the main process. Renderer-supplied
   paths, flags and IDs are treated as untrusted input, because a renderer
   compromise should not become a shell.
+- Plugins run in the main process, never the renderer. The renderer names a
+  plugin action by id and its files as a local directory plus bare entry
+  names. A plugin itself runs with the user's full privileges; see
+  [plugins.md](plugins.md#security-model).
 - Strict CSP, no `eval`, no remote content, navigation restricted to app pages.
 
 ## What DiskPush does not do
 
-- It does not upload your files anywhere.
+- It does not upload your files anywhere. A plugin you run can, and says
+  so: MediaAnalyzer sends the photos you select (and contact sheets of
+  videos) to mediaanalyzer.pro, only when you run one of its actions.
 - It does not relay server-to-server payloads through the desktop or through
   any hosted service, and will not silently start.
 - It does not phone home. Analytics on the website never receives connection

@@ -175,6 +175,22 @@ There is no `diskpush cancel`. A CLI transfer runs in the foreground, where
 Ctrl+C stops it and leaves the partial data intact; cancelling someone else's
 job would need a background daemon, which does not exist yet.
 
+### Plugins
+
+```bash
+diskpush plugins [--json]              # installed plugins and their commands
+diskpush plugins enable|disable ID
+diskpush plugins add NPM-PACKAGE       # external; runs with your privileges
+diskpush plugins remove ID
+diskpush <plugin-id> COMMAND [ARGS]    # e.g. diskpush mediaanalyzer analyze ./photos --sort
+```
+
+A first word that is neither a command nor a path is looked up as a plugin id.
+Everything after the id is the plugin's own: DiskPush's flags are not parsed
+there, except `--json`, `--quiet` and `--no-progress`, which keep their usual
+meaning. Ctrl+C cancels a plugin command cleanly; a second Ctrl+C exits at
+once. A disabled plugin's commands exit 65. See [plugins.md](plugins.md).
+
 ## Options
 
 | Option | Effect |

@@ -8,6 +8,8 @@ packages/rsync-core   Argument builder, execution planner, parsers, runner.
 packages/ssh-core     SSH sessions, SFTP browsing, host keys, preflight.
 packages/fleet-core   One command across many servers: selection, guard, runner.
 packages/database     The local store, shared by every surface.
+packages/plugin-api   The plugin contract, registry and external-plugin loader.
+packages/plugin-mediaanalyzer  The built-in MediaAnalyzer plugin.
 apps/cli              The `diskpush` command.
 apps/desktop          Electron main, preload, and the renderer.
 apps/web              diskpush.com.
@@ -17,6 +19,10 @@ apps/web              diskpush.com.
 takes endpoints and options and produces a command and a stream of events.
 That boundary is what lets the same engine back a daemon, an HTTP API or an
 MCP tool later without being rewritten.
+
+Plugins are hosted by the CLI process and by the desktop's main process, never
+by the renderer; `plugin-api` depends on nothing else in the repository, so a
+plugin is written against the contract alone. See [plugins.md](plugins.md).
 
 `fleet-core` is the same idea one layer across: it takes connections and a
 script and produces a stream of per-host events. It knows how to open a
