@@ -30,7 +30,7 @@ export type UploadMeta = {
   client_ref: string
   name: string
   rel_path: string
-  kind: 'photo' | 'video'
+  kind: 'photo' | 'video' | 'audio' | 'document'
   bytes: number
   frames?: number
   duration_seconds?: number

@@ -6,6 +6,7 @@ import { PluginRegistry, memoryBackend, runAction, runTask, silentProgress, type
 import { FakeMediaAnalyzer, type FakeOptions } from './fake-server.fixture.js'
 import { MediaAnalyzerClient, chooseTier } from './client.js'
 import { SIGNATURE, batches, createMediaAnalyzerPlugin, loadState, sidecarText } from './index.js'
+import { mediaKind } from './media.js'
 
 const servers: FakeMediaAnalyzer[] = []
 afterEach(async () => {
@@ -200,13 +201,16 @@ describe('analyze', () => {
     expect(fake.uploadBatches).toEqual([1])
   })
 
-  it('skips videos when there is no ffmpeg, and sends a contact sheet when there is', async () => {
+  it('sends a small video whole without ffmpeg, skips a large one, and sends a contact sheet with ffmpeg', async () => {
     const { fake, registry, host, logs } = await setup()
     const dir = photos(1)
     writeFileSync(join(dir, 'clip.mp4'), 'not really a video')
-    const without = await runAction(registry, 'mediaanalyzer', 'analyze', { ...host(), dir, names: ['clip.mp4'] })
+    writeFileSync(join(dir, 'long.mkv'), Buffer.alloc(31 * 1024 * 1024))
+    const without = await runAction(registry, 'mediaanalyzer', 'analyze', { ...host(), dir, names: ['clip.mp4', 'long.mkv'] })
     expect(without.message).toMatch(/1 skipped/)
     expect(logs.some((log) => /ffmpeg/.test(log.message))).toBe(true)
+    const whole = [...fake.scans.values()].flatMap((scan) => scan.files).find((file) => file.name === 'clip.mp4')!
+    expect(whole).toMatchObject({ kind: 'video', partSize: 18 })
 
     const withFfmpeg = new PluginRegistry(memoryBackend())
     withFfmpeg.register(
@@ -216,8 +220,11 @@ describe('analyze', () => {
       }),
     )
     await withFfmpeg.settingsFor('mediaanalyzer').set('server', fake.url)
-    await runAction(withFfmpeg, 'mediaanalyzer', 'analyze', { ...host(), dir, names: ['clip.mp4'] })
-    const video = [...fake.scans.values()].flatMap((scan) => scan.files).find((file) => file.name === 'clip.mp4')!
+    // A separate folder: the first clip is already analyzed and must not be sent again.
+    const other = photos(1)
+    writeFileSync(join(other, 'sheet.mp4'), 'not really a video')
+    await runAction(withFfmpeg, 'mediaanalyzer', 'analyze', { ...host(), dir: other, names: ['sheet.mp4'] })
+    const video = [...fake.scans.values()].flatMap((scan) => scan.files).find((file) => file.name === 'sheet.mp4')!
     expect(video).toMatchObject({ kind: 'video', frames: 9, partSize: 5, bytes: 18 })
   })
 })
@@ -230,7 +237,7 @@ describe('sort and undo', () => {
     writeFileSync(join(dir, 'trip', 'cat.jpg'), 'trip cat')
     writeFileSync(join(dir, 'home', 'cat.jpg'), 'home cat')
     writeFileSync(join(dir, 'home', 'hill.png'), 'hill')
-    writeFileSync(join(dir, 'notes.txt'), 'not media')
+    writeFileSync(join(dir, 'setup.exe'), 'not media')
     // Already taken in the destination: the sort must go around it.
     mkdirSync(join(dir, 'Landscapes'))
     writeFileSync(join(dir, 'Landscapes', 'hill.png'), 'a different hill')
@@ -245,7 +252,7 @@ describe('sort and undo', () => {
     const result = await runAction(registry, 'mediaanalyzer', 'analyze-sort', {
       ...host(),
       dir,
-      names: ['home', 'notes.txt', 'trip'],
+      names: ['home', 'setup.exe', 'trip'],
     })
     expect(result.ok).toBe(true)
     expect(result.message).toMatch(/3 moved into folders/)
@@ -259,16 +266,16 @@ describe('sort and undo', () => {
       'Pets/cat (2).jpg.description.txt',
       'Pets/cat.jpg',
       'Pets/cat.jpg.description.txt',
-      'notes.txt',
+      'setup.exe',
     ])
     expect(sorted['Landscapes/hill.png']).toBe('a different hill')
     expect(sorted['Landscapes/hill (2).png']).toBe('hill')
 
     // Undo is offered here, because a sort ran here.
-    const offered = await registry.actionsFor([{ name: 'notes.txt', isDirectory: false, size: 9 }], dir)
+    const offered = await registry.actionsFor([{ name: 'setup.exe', isDirectory: false, size: 9 }], dir)
     expect(offered.map((match) => match.action.id)).toContain('undo-sort')
 
-    const undone = await runAction(registry, 'mediaanalyzer', 'undo-sort', { ...host(), dir, names: ['notes.txt'] })
+    const undone = await runAction(registry, 'mediaanalyzer', 'undo-sort', { ...host(), dir, names: ['setup.exe'] })
     expect(undone).toMatchObject({ ok: true, message: 'Put back 6 files.' })
 
     const restored = tree(dir, (rel) => rel.startsWith('.mediaanalyzer') || rel.endsWith('.description.txt'))
@@ -276,15 +283,15 @@ describe('sort and undo', () => {
     // The descriptions came back beside the files they describe.
     expect(readFileSync(join(dir, 'trip', 'cat.jpg.description.txt'), 'utf8')).toContain(SIGNATURE)
     // Pets/ was made by the sort and is empty again, so it is gone; Landscapes/ was the user's.
-    expect(readdirSync(dir).sort()).toEqual(['.mediaanalyzer', 'Landscapes', 'home', 'notes.txt', 'trip'])
+    expect(readdirSync(dir).sort()).toEqual(['.mediaanalyzer', 'Landscapes', 'home', 'setup.exe', 'trip'])
   })
 
   it('undo skips a file the user has since put something in place of', async () => {
     const { registry, host } = await setup()
     const dir = album()
-    await runAction(registry, 'mediaanalyzer', 'analyze-sort', { ...host(), dir, names: ['home', 'notes.txt', 'trip'] })
+    await runAction(registry, 'mediaanalyzer', 'analyze-sort', { ...host(), dir, names: ['home', 'setup.exe', 'trip'] })
     writeFileSync(join(dir, 'home', 'cat.jpg'), 'a new cat')
-    const undone = await runAction(registry, 'mediaanalyzer', 'undo-sort', { ...host(), dir, names: ['notes.txt'] })
+    const undone = await runAction(registry, 'mediaanalyzer', 'undo-sort', { ...host(), dir, names: ['setup.exe'] })
     expect(undone.ok).toBe(false)
     expect(readFileSync(join(dir, 'home', 'cat.jpg'), 'utf8')).toBe('a new cat')
     expect(readFileSync(join(dir, 'Pets', 'cat.jpg'), 'utf8')).toBe('home cat')
@@ -292,6 +299,15 @@ describe('sort and undo', () => {
 })
 
 describe('pieces', () => {
+  it('knows every family the server reads: pandoc, LibreOffice, PDF, ffmpeg, ImageMagick, RAW', () => {
+    const cases: Record<string, string | null> = {
+      'a.pdf': 'document', 'a.DOCX': 'document', 'a.xlsx': 'document', 'a.pptx': 'document', 'a.odt': 'document', 'a.epub': 'document',
+      'a.md': 'document', 'a.csv': 'document', 'a.mp3': 'audio', 'a.flac': 'audio', 'a.m4a': 'audio', 'a.mkv': 'video', 'a.mov': 'video',
+      'a.jpg': 'photo', 'a.psd': 'photo', 'a.CR2': 'photo', 'a.nef': 'photo', 'a.eps': 'photo', 'a.heic': 'photo', 'a.exe': null, 'noext': null,
+    }
+    for (const [name, kind] of Object.entries(cases)) expect(mediaKind(name), name).toBe(kind)
+  })
+
   it('batches by count and by bytes', () => {
     const item = (bytes: number) => ({ meta: { bytes }, blob: new Blob([new Uint8Array(bytes)]) })
     expect(batches(Array.from({ length: 101 }, () => item(1))).map((batch) => batch.length)).toEqual([50, 50, 1])

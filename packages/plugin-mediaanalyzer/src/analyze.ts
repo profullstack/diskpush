@@ -79,11 +79,11 @@ type Prepared = { file: MediaFile; blob: Blob; meta: UploadMeta }
 
 async function prepare(file: MediaFile, ffmpeg: Ffmpeg | null, signal: AbortSignal): Promise<Prepared | string> {
   const meta: UploadMeta = { client_ref: file.ref, name: file.name, rel_path: file.rel, kind: file.kind, bytes: file.bytes }
-  if (file.kind === 'photo') {
-    if (file.bytes > MAX_UPLOAD_BYTES) return 'larger than 30 MB'
+  // Everything but a video with ffmpeg at hand goes up whole; the server converts it and discards it.
+  if (file.kind !== 'video' || !ffmpeg) {
+    if (file.bytes > MAX_UPLOAD_BYTES) return file.kind === 'video' ? 'larger than 30 MB (install ffmpeg to send a frame grid instead)' : 'larger than 30 MB'
     return { file, meta, blob: await openAsBlob(file.abs, { type: mimeType(file.name) }) }
   }
-  if (!ffmpeg) return 'videos need ffmpeg and ffprobe on PATH'
   try {
     const duration = await ffmpeg.duration(file.abs, signal)
     const sheet = await ffmpeg.contactSheet(file.abs, duration, signal)
@@ -133,11 +133,11 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeReport> {
     changed: false,
   }
 
-  progress.update({ message: 'Looking for photos and videos…' })
+  progress.update({ message: 'Looking for photos, videos, audio and documents…' })
   const files = await collectMedia(dir, options.entries, signal)
   report.files = files.length
   if (files.length === 0) {
-    return { ...report, message: 'No photos or videos in that selection.' }
+    return { ...report, message: 'No photos, videos, audio or documents in that selection.' }
   }
   progress.start(files.length)
 

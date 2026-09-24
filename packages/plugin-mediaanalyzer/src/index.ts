@@ -1,5 +1,5 @@
 /**
- * MediaAnalyzer for DiskPush: describe photos and videos with
+ * MediaAnalyzer for DiskPush: describe photos, videos, audio and documents with
  * https://mediaanalyzer.pro, write the descriptions next to the files, and
  * optionally sort the files into folders by what they show.
  *
@@ -139,7 +139,7 @@ export function createMediaAnalyzerPlugin(options: MediaAnalyzerOptions = {}): D
     id: 'mediaanalyzer',
     name: 'MediaAnalyzer',
     version: PACKAGE_VERSION,
-    description: 'Describe photos and videos with mediaanalyzer.pro, and sort them into folders by what they show.',
+    description: 'Describe photos, videos, audio and documents with mediaanalyzer.pro, and sort them into folders by what they show.',
     settings: [
       { key: 'server', label: 'Server', type: 'string', default: DEFAULT_SERVER, description: 'The MediaAnalyzer server.' },
       {
