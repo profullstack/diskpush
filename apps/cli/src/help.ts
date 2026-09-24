@@ -60,6 +60,14 @@ COMMANDS
   uninstall               remove DiskPush, keeping your connections and profiles
                           [alias: remove]
 
+  plugins                 installed plugins and their commands
+  plugins enable|disable ID
+  plugins add NPM-PACKAGE install an external plugin (it runs with your
+                          privileges; see docs/plugins.md)
+  plugins remove ID
+  <plugin-id> COMMAND     run a plugin's command, e.g.
+                          diskpush mediaanalyzer analyze ./photos --sort
+
 DEFAULTS
   Every transfer runs with archive metadata, resumable partial files,
   incremental skipping of unchanged files, and no destination deletes:
@@ -140,3 +148,16 @@ EXAMPLES
   diskpush fleet run "systemctl reload nginx" --on web-* --sudo
   diskpush fleet script ./rotate-keys.sh --on all '!db-01'
 `
+
+/** The plugin commands, appended to the help text. */
+export function pluginHelp(plugins: readonly { id: string; commands?: readonly { usage: string; summary: string }[] }[]): string {
+  const rows = plugins.flatMap((plugin) =>
+    (plugin.commands ?? []).map((command) => [`${plugin.id} ${command.usage}`, command.summary] as const),
+  )
+  if (rows.length === 0) return ''
+  const width = Math.min(34, Math.max(...rows.map(([usage]) => usage.length)))
+  const lines = rows.map(([usage, summary]) =>
+    usage.length > width ? `  ${usage}\n  ${''.padEnd(width)}  ${summary}` : `  ${usage.padEnd(width)}  ${summary}`,
+  )
+  return `\nPLUGIN COMMANDS\n${lines.join('\n')}\n`
+}

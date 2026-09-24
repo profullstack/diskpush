@@ -14,11 +14,51 @@ import { runTransfer, TRANSFER_ALIASES } from './commands/transfer.js'
 import { EXIT } from './exit-codes.js'
 import { HELP, VERSION } from './help.js'
 import { Output } from './output.js'
-import { ArgvError, hasFlag, looksLikeEndpoint, parseArgv } from './parse-argv.js'
+import { ArgvError, hasFlag, isKnownCommand, looksLikeEndpoint, parseArgv } from './parse-argv.js'
 import { autoUpdate, reexec } from './self-update.js'
+import { findPluginCall, runPluginCommand, runPlugins } from './commands/plugins.js'
+import { pluginHelp } from './help.js'
+import { loadPlugins } from './plugins.js'
+import { PluginError } from '@diskpush/plugin-api'
 import { existsSync } from 'node:fs'
 
+/** A first word that is neither a command nor a path might be a plugin: `diskpush mediaanalyzer login`. */
+function mightBePlugin(argv: readonly string[]): boolean {
+  const head = argv.find((token) => !token.startsWith('-'))
+  return head !== undefined && /^[a-z][a-z0-9-]*$/.test(head) && !isKnownCommand(head) && !looksLikeEndpoint(head, existsSync)
+}
+
+async function runPlugin(argv: readonly string[]): Promise<number | null> {
+  const store = await DiskPushStore.open()
+  try {
+    const { registry, failures } = await loadPlugins(store)
+    const call = findPluginCall(argv, registry)
+    if (!call) return null
+    const output = new Output({
+      json: argv.includes('--json'),
+      quiet: argv.includes('--quiet') || argv.includes('-q'),
+      progress: !argv.includes('--no-progress'),
+    })
+    for (const { name, error } of failures) output.warn(`plugin ${name} did not load: ${error}`)
+    if (await autoUpdate(call.pluginId, output) === 'updated') reexec()
+    return await runPluginCommand(registry, call.pluginId, call.args, output)
+  } catch (error) {
+    if (error instanceof PluginError) {
+      process.stderr.write(`${error.message}\n`)
+      return EXIT.configuration
+    }
+    throw error
+  } finally {
+    await store.close()
+  }
+}
+
 async function main(argv: readonly string[]): Promise<number> {
+  if (mightBePlugin(argv)) {
+    const code = await runPlugin(argv)
+    if (code !== null) return code
+  }
+
   let parsed
   try {
     parsed = parseArgv(argv)
@@ -34,7 +74,7 @@ async function main(argv: readonly string[]): Promise<number> {
   })
 
   if (hasFlag(parsed, '--help') || parsed.command === 'help') {
-    process.stdout.write(HELP)
+    process.stdout.write(HELP + pluginHelp((await loadPlugins(null)).registry.all()))
     return EXIT.ok
   }
   if (hasFlag(parsed, '--version') || parsed.command === 'version') {
@@ -99,6 +139,9 @@ async function main(argv: readonly string[]): Promise<number> {
         return await runFleetCommand(parsed, store, output)
       case 'ls':
         return await runLs(parsed, store, output)
+      case 'plugins':
+      case 'plugin':
+        return await runPlugins(parsed, store, output)
       default:
         output.error(`Unknown command ${JSON.stringify(command)}. Run \`diskpush --help\`.`)
         return EXIT.usage
@@ -111,6 +154,7 @@ async function main(argv: readonly string[]): Promise<number> {
 function describeError(error: unknown): { message: string; code: number } {
   if (error instanceof ArgvError) return { message: error.message, code: EXIT.usage }
   if (error instanceof EndpointParseError) return { message: error.message, code: EXIT.usage }
+  if (error instanceof PluginError) return { message: error.message, code: EXIT.configuration }
   if (error instanceof ZodError) {
     const first = error.issues[0]
     return {

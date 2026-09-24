@@ -9,10 +9,12 @@ import type { Color, Container, Rect, Theme } from '@profullstack/hqtui'
 import { stringWidth, truncate, widgets } from '@profullstack/hqtui'
 import type { Change } from '@diskpush/schemas'
 import {
+  type ActionsOverlay,
   type Document,
   type EndpointChoice,
   type Overlay,
   type Pane,
+  type PluginJob,
   type Row,
   type Side,
   type Transfer,
@@ -27,6 +29,7 @@ import {
   visibleEntries,
 } from './model.js'
 import { documentLines, maxScroll } from './document.js'
+import type { ActionChoice } from '../plugins.js'
 
 /** What hqtui's tree draws: the model's `Row`, spelled the widget's way. */
 type TreeNode = {
@@ -51,6 +54,10 @@ export type ViewState = {
   status: { text: string; tone: Tone } | null
   choices: readonly EndpointChoice[]
   now: Date
+  /** A plugin action in flight, or the last one that ran. */
+  job?: PluginJob | null
+  /** Whether any plugin is loaded, so `a` is only offered when it can do something. */
+  plugins?: boolean
 }
 
 /**
@@ -75,6 +82,7 @@ export type Action =
   | 'cancelTransfer'
   | 'dismissTransfer'
   | 'closeOverlay'
+  | 'actions'
 
 /**
  * Mouse wiring. Optional so a test can render a frame without any.
@@ -114,6 +122,10 @@ export type ViewHandlers = {
    * out, because an image is not a cell and no framebuffer can hold it.
    */
   onImageRect?: (rect: Rect) => void
+  /** A click on a plugin action in the actions menu: run it. One click, no confirm step. */
+  onPickAction?: (choice: ActionChoice) => void
+  /** The pointer is over an action (its index), or left the list (null). */
+  onHoverAction?: (index: number | null) => void
 }
 
 /** Rows the transfer panel takes when one is on screen. */
@@ -206,12 +218,14 @@ export function draw(
   // A short terminal gives its rows to the panes; the transfer is still
   // readable from the status line, and half a panel is worse than none.
   else if (state.transfer && height >= TRANSFER_HEIGHT + 8) drawTransfer(ui, theme, state, state.transfer, handlers)
+  else if (state.job && height >= TRANSFER_HEIGHT + 8) drawJob(ui, theme, state, state.job, handlers)
 
   drawFooter(ui, theme, state, width, handlers)
 
   if (state.overlay?.kind === 'picker') drawPicker(ui, theme, state, state.overlay, height, handlers)
   if (state.overlay?.kind === 'help') drawHelp(ui, theme, handlers)
   if (state.overlay?.kind === 'hostKey') drawHostKey(ui, theme, state.overlay, width, handlers)
+  if (state.overlay?.kind === 'actions') drawActions(ui, theme, state.overlay, width, height, handlers)
 }
 
 function drawHeader(ui: Container, theme: Theme, state: ViewState, handlers: ViewHandlers): void {
@@ -648,7 +662,13 @@ function drawFooter(ui: Container, theme: Theme, state: ViewState, width: number
           ]
         : overlay === 'help'
           ? [{ key: 'esc', label: 'close' }]
-          : state.transfer?.running
+          : overlay === 'actions'
+            ? [
+                { key: '↑↓', label: 'move' },
+                { key: '⏎', label: 'run' },
+                { key: 'esc', label: 'cancel' },
+              ]
+          : state.transfer?.running || state.job?.running
             ? [
                 // Every other key is ignored while a transfer runs, so the bar
                 // says so instead of listing keys that would do nothing.
@@ -680,6 +700,9 @@ function drawFooter(ui: Container, theme: Theme, state: ViewState, width: number
                 { key: '/', label: 'filter', onPress: act('filter') },
                 { key: 'o', label: 'sort', onPress: act('sort') },
                 { key: 'q', label: 'quit', onPress: act('quit') },
+                // Last, so a narrow terminal loses it before it loses quit;
+                // `?` lists it whatever the width.
+                ...(state.plugins ? [{ key: 'a', label: 'actions', onPress: act('actions') }] : []),
               ]
 
   ui.statusBar({ height: 1, keyStyle: 'caps', items })
@@ -744,7 +767,7 @@ function drawHelp(ui: Container, theme: Theme, handlers: ViewHandlers): void {
     {
       title: ' Keys ',
       width: 66,
-      height: 28,
+      height: 29,
       buttons: [{ label: 'esc  close', variant: 'ghost', onPress: close }],
       onDismiss: close,
     },
@@ -769,6 +792,7 @@ function drawHelp(ui: Container, theme: Theme, handlers: ViewHandlers): void {
           { label: 'r', value: 'reload' },
           { label: 'p', value: 'preview syncing this to the other pane' },
           { label: 's', value: 'sync it, into the same place over there' },
+          { label: 'a', value: 'plugin actions for a local file or folder' },
           { label: 'esc', value: 'cancel a transfer, close a file or this' },
           { label: 'q', value: 'quit' },
         ],
@@ -807,6 +831,126 @@ function drawHostKey(
       modal.text(overlay.fingerprint, { fg: theme.warning, bold: true, wrap: true })
       modal.spacer(1)
       modal.text('Compare it with the server before trusting it.', { fg: theme.muted, wrap: true })
+    },
+  )
+}
+
+/**
+ * The plugin actions for the row under the cursor.
+ *
+ * A menu, so one click runs the action under it and the pointer lights the
+ * row it is over; the keyboard moves and presses enter, or presses the
+ * action's own letter. The line under the list says what the highlighted
+ * action will do, because "Analyze and sort into folders" moves files and
+ * that should be read before it is clicked, not after.
+ */
+function drawActions(
+  ui: Container,
+  theme: Theme,
+  overlay: ActionsOverlay,
+  width: number,
+  height: number,
+  handlers: ViewHandlers,
+): void {
+  const rows = overlay.choices.map((choice) => ({
+    key: choice.key ?? ' ',
+    label: choice.label,
+    plugin: choice.pluginName,
+  }))
+  const focus = overlay.choices[overlay.hover ?? overlay.index]
+  const listRows = Math.max(1, Math.min(rows.length, height - 12))
+  let first = 0
+  ui.modal(
+    {
+      title: ` Actions: ${truncatePath(overlay.what, Math.max(12, Math.min(60, width - 30)))} `,
+      width: Math.min(72, Math.max(44, width - 8)),
+      height: listRows + 7,
+      onDismiss: () => handlers.onDismissOverlay?.(),
+    },
+    (modal) => {
+      modal.table({
+        rows,
+        selected: overlay.index,
+        ...(overlay.hover !== null ? { hovered: overlay.hover } : {}),
+        followSelection: true,
+        header: false,
+        height: listRows,
+        onSelectRow: (visibleRow) => {
+          const choice = overlay.choices[first + visibleRow]
+          if (choice) handlers.onPickAction?.(choice)
+        },
+        onHoverRow: (visibleRow) => handlers.onHoverAction?.(visibleRow === null ? null : first + visibleRow),
+        onRow: (_row, index, y) => {
+          first = index - y
+        },
+        columns: [
+          { key: 'key', width: 3, color: theme.accent },
+          { key: 'label', width: '1fr', color: theme.foreground },
+          { key: 'plugin', align: 'right', color: theme.muted },
+        ],
+      })
+      modal.divider({ height: 1, color: theme.border })
+      modal.text(focus?.description || ' ', { fg: theme.muted, wrap: true, height: 'fill' })
+    },
+  )
+}
+
+const JOB_LEVEL: Record<'info' | 'warn' | 'error', string> = { info: 'INFO', warn: 'WARN', error: 'ERR' }
+
+/** A plugin action's progress, in the transfer panel's place. */
+function drawJob(ui: Container, theme: Theme, state: ViewState, job: PluginJob, handlers: ViewHandlers): void {
+  const cancelled = job.outcome?.cancelled === true
+  const failed = job.outcome !== null && !job.outcome.ok && !cancelled
+  const elapsed = Math.max(0, ((job.endedAt ?? state.now.getTime()) - job.startedAt) / 1000)
+  const title = job.running
+    ? ` ${job.title} `
+    : cancelled
+      ? ' Cancelled '
+      : job.outcome?.ok
+        ? ` ${job.title}: done `
+        : ` ${job.title}: failed `
+  const titleColor = job.running || cancelled ? theme.warning : job.outcome?.ok ? theme.success : theme.danger
+  const value = job.outcome?.ok ? 1 : job.total ? job.done / job.total : 0
+
+  ui.panel(
+    {
+      height: TRANSFER_HEIGHT,
+      title,
+      titleColor,
+      subtitle: truncatePath(job.what, 60),
+      subtitleColor: theme.muted,
+      borderColor: titleColor,
+      footer: job.running ? ' esc  cancel ' : ' esc  dismiss ',
+      // Same rule as a transfer: a click dismisses a finished job, never
+      // cancels a running one.
+      ...(job.running ? {} : { onClick: () => handlers.onAction?.('dismissTransfer') }),
+    },
+    (panel) => {
+      panel.meter({
+        height: 1,
+        value: Math.max(0, Math.min(1, value)),
+        label: 'files',
+        text: job.total ? `${job.outcome?.ok ? job.total : job.done}/${job.total}` : job.running ? 'working…' : '',
+        heat: false,
+        color: failed ? theme.danger : cancelled ? theme.warning : theme.primary,
+      })
+      panel.row({ height: 1, gap: 1 }, (row) => {
+        row.text(`  ${truncate(job.currentFile || job.message || '', 70)}`, { fg: theme.muted })
+        row.text(`${formatDuration(elapsed)}  `, { fg: theme.muted, align: 'right' })
+      })
+      if (job.outcome) {
+        panel.text(job.outcome.message, {
+          fg: failed ? theme.danger : cancelled ? theme.warning : theme.success,
+          wrap: true,
+          height: 2,
+        })
+      }
+      panel.log({
+        height: 'fill',
+        follow: true,
+        entries: job.log.map((entry) => ({ level: JOB_LEVEL[entry.level], message: entry.message, meta: '' })),
+        levelColors: { INFO: theme.muted, WARN: theme.warning, ERR: theme.danger },
+      })
     },
   )
 }
