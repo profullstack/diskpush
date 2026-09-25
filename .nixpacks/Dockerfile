@@ -17,12 +17,12 @@ ENV CI=$CI NIXPACKS_METADATA=$NIXPACKS_METADATA NODE_ENV=$NODE_ENV NPM_CONFIG_PR
 # install phase
 ENV NIXPACKS_PATH=/app/node_modules/.bin:$NIXPACKS_PATH
 COPY . /app/.
-RUN --mount=type=cache,id=5FvX7i4RXM-/root/local/share/pnpm/store/v3,target=/root/.local/share/pnpm/store/v3 npm install -g corepack@0.24.1 && corepack enable
-RUN --mount=type=cache,id=5FvX7i4RXM-/root/local/share/pnpm/store/v3,target=/root/.local/share/pnpm/store/v3 pnpm install --frozen-lockfile --prod=false --filter @diskpush/web...
+RUN --mount=type=cache,id=8nFwAs26cBU-/root/local/share/pnpm/store/v3,target=/root/.local/share/pnpm/store/v3 npm install -g corepack@0.36.0 && corepack enable
+RUN --mount=type=cache,id=8nFwAs26cBU-/root/local/share/pnpm/store/v3,target=/root/.local/share/pnpm/store/v3 pnpm install --frozen-lockfile --prod=false --filter @diskpush/web...
 
 # build phase
 COPY . /app/.
-RUN --mount=type=cache,id=5FvX7i4RXM-apps/desktop/next/cache,target=/app/apps/desktop/.next/cache --mount=type=cache,id=5FvX7i4RXM-apps/web/next/cache,target=/app/apps/web/.next/cache --mount=type=cache,id=5FvX7i4RXM-node_modules/cache,target=/app/node_modules/.cache pnpm --filter @diskpush/web build
+RUN --mount=type=cache,id=8nFwAs26cBU-apps/desktop/next/cache,target=/app/apps/desktop/.next/cache --mount=type=cache,id=8nFwAs26cBU-apps/web/next/cache,target=/app/apps/web/.next/cache --mount=type=cache,id=8nFwAs26cBU-node_modules/cache,target=/app/node_modules/.cache pnpm --filter @diskpush/web build
 
 
 RUN printf '\nPATH=/app/node_modules/.bin:$PATH' >> /root/.profile
