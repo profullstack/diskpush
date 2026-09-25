@@ -1,0 +1,16 @@
+# How the diskpush.com web app is built and started when the builder is nixpacks
+# (dev2, and anywhere else that is not Railway). Railway held the same three
+# commands in its RAILPACK_INSTALL_CMD / RAILPACK_BUILD_CMD / RAILPACK_START_CMD
+# service variables, which no other builder can see. The root package.json has
+# no start script on purpose: the web app is one workspace of several.
+[phases.install]
+cmds = [
+  "npm install -g corepack@0.24.1 && corepack enable",
+  "pnpm install --frozen-lockfile --prod=false --filter @diskpush/web...",
+]
+
+[phases.build]
+cmds = ["pnpm --filter @diskpush/web build"]
+
+[start]
+cmd = "pnpm --filter @diskpush/web start"
