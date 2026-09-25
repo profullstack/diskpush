@@ -5,7 +5,9 @@
 # no start script on purpose: the web app is one workspace of several.
 [phases.install]
 cmds = [
-  "npm install -g corepack@0.24.1 && corepack enable",
+  # corepack 0.24.1 (nixpacks' default) cannot launch pnpm 10+ on Node 24:
+  # ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING. 0.36 can.
+  "npm install -g corepack@0.36.0 && corepack enable",
   "pnpm install --frozen-lockfile --prod=false --filter @diskpush/web...",
 ]
 
