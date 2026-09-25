@@ -1,0 +1,1 @@
+docker build /home/anthony/src/profullstack/diskpush/.claude/worktrees/dev2-diskpush.com-a7rjo7_9 -f /home/anthony/src/profullstack/diskpush/.claude/worktrees/dev2-diskpush.com-a7rjo7_9/.nixpacks/Dockerfile -t 6bf6585c-e5b4-4253-b31a-c25429c61444 --build-arg CI=true --build-arg NIXPACKS_METADATA=node --build-arg NODE_ENV=production --build-arg NPM_CONFIG_PRODUCTION=false
