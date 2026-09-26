@@ -59,6 +59,10 @@ export const IPC = {
   fleetListRemove: 'fleet:list-remove',
   fleetRunDetail: 'fleet:run-detail',
 
+  /** Sync one path from a source host to many fleet hosts at once. */
+  fleetSync: 'fleet:sync',
+  fleetSyncCancel: 'fleet:sync-cancel',
+
   shellOpenExternal: 'shell:open-external',
 
   pluginsList: 'plugins:list',
@@ -79,6 +83,8 @@ export const IPC = {
   eventOpenSeries: 'event:open-series',
   /** Main -> renderer, one channel carrying every fleet event. */
   eventFleet: 'event:fleet',
+  /** Main -> renderer, per-destination progress for a fleet sync. */
+  eventFleetSync: 'event:fleet-sync',
   /**
    * Main -> renderer, live progress for a dry run that has not finished yet.
    *
@@ -383,6 +389,30 @@ export const FleetListRenameSchema = z.object({
   from: FleetListNameSchema,
   to: FleetListNameSchema,
 })
+
+/**
+ * Sync one source path out to many fleet hosts at once.
+ *
+ * The renderer names the source (a saved connection + a path, or the local
+ * machine) and the destination connections by id; the main process resolves
+ * them, builds one server-to-server (or local-to-remote) transfer per
+ * destination, and runs them with bounded concurrency. As with a normal
+ * transfer, the renderer supplies a subset of options and never a raw rsync
+ * command, a remote shell, or an rsync binary path — those come from the saved
+ * connections. `delete` is intentionally NOT exposed here: a mirror that prunes
+ * the destination is a per-host, previewed decision, not a fan-out default.
+ */
+export const FleetSyncRequestSchema = z.object({
+  source: EndpointRefSchema,
+  destinationConnectionIds: z.array(ConnectionIdSchema).min(1).max(500),
+  /** Where it lands on each destination; defaults to the source path. */
+  destinationPath: PathSchema,
+  options: TransferOptionsSchema,
+  concurrency: z.number().int().min(1).max(64).default(4),
+})
+export type FleetSyncRequest = z.infer<typeof FleetSyncRequestSchema>
+
+export const FleetSyncIdSchema = z.string().min(1).max(128)
 
 /**
  * Plugins.

@@ -150,6 +150,13 @@ export type TransferEvent =
   | { type: 'stderr' | 'stdout'; line: string }
   | { type: 'exit'; code: number; resumable: boolean; message: string }
 
+/** Per-destination events for a fleet sync: rsync events plus the orchestrator's own. */
+export type FleetSyncEvent =
+  | TransferEvent
+  | { type: 'begin' }
+  | { type: 'error'; message: string }
+  | { type: 'done' }
+
 export type FleetHostState =
   | 'pending'
   | 'connecting'
@@ -368,6 +375,8 @@ type Api = {
     start(request: FleetRequest): Promise<IpcResult<{ runId: string; hosts: { connectionId: string }[] }>>
     cancel(runId: string): Promise<IpcResult<boolean>>
     check(connectionIds: string[], concurrency?: number, timeoutSeconds?: number): Promise<IpcResult<HostUpdateReport[]>>
+    sync(request: unknown): Promise<IpcResult<{ syncId: string; destinations: string[] }>>
+    cancelSync(syncId: string): Promise<IpcResult<boolean>>
     runs(limit?: number): Promise<IpcResult<unknown[]>>
     runDetail(runId: string): Promise<IpcResult<{ run: unknown; hosts: FleetHostResult[] } | null>>
     saveCommand(input: FleetCommandSave): Promise<IpcResult<FleetCommand>>
@@ -391,6 +400,7 @@ type Api = {
   events: {
     onTransfer(listener: (payload: { jobId: string; event: TransferEvent }) => void): () => void
     onFleet(listener: (payload: { runId: string; event: FleetEvent }) => void): () => void
+    onFleetSync(listener: (payload: { syncId: string; connectionId: string | null; event: FleetSyncEvent }) => void): () => void
     onPreview(listener: (payload: { previewId: string; progress: PreviewProgress }) => void): () => void
     onOpenSeries(listener: (payload: { seriesId: string; event: SeriesEvent }) => void): () => void
     onPluginProgress(listener: (payload: { jobId: string; event: PluginEvent }) => void): () => void
