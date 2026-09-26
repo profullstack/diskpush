@@ -135,7 +135,7 @@ async function writeSelectionList(
 
 type BuiltPlan = { plan: ExecutionPlan; cleanup: () => Promise<void> }
 
-async function buildPlan(request: TransferRequest, overrides: Partial<RsyncOptions> = {}): Promise<BuiltPlan> {
+export async function buildPlan(request: TransferRequest, overrides: Partial<RsyncOptions> = {}): Promise<BuiltPlan> {
   const source = await resolveEndpoint(request.source)
   const destination = await resolveEndpoint(request.destination)
   const capabilities = await capabilitiesFor([source.connectionId, destination.connectionId])

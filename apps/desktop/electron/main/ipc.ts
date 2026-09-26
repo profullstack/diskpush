@@ -10,6 +10,8 @@ import {
   DeleteEntryRequestSchema,
   ExternalUrlSchema,
   FleetCheckRequestSchema,
+  FleetSyncRequestSchema,
+  FleetSyncIdSchema,
   FleetCommandSaveSchema,
   FleetListRenameSchema,
   FleetListSaveSchema,
@@ -48,6 +50,7 @@ import {
   previewFleet,
   startFleet,
 } from './services/fleet.js'
+import { startFleetSync, cancelFleetSync } from './services/fleet-sync.js'
 import { browserFor, dropSession, sessionFor } from './services/sessions.js'
 import { store } from './services/store.js'
 import { advanceSeries, handlersFor, openSeries, openWith, stopSeries } from './services/open-with.js'
@@ -377,6 +380,10 @@ export function registerIpc(): void {
   handle(IPC.fleetCancel, z.object({ runId: FleetRunIdSchema }), async ({ runId }) => cancelFleet(runId))
 
   handle(IPC.fleetCheck, FleetCheckRequestSchema, async (input) => checkFleetServers(input))
+
+  handle(IPC.fleetSync, FleetSyncRequestSchema, async (request, event) => startFleetSync(request, event.sender))
+
+  handle(IPC.fleetSyncCancel, z.object({ syncId: FleetSyncIdSchema }), async ({ syncId }) => cancelFleetSync(syncId))
 
   handle(IPC.fleetRuns, z.object({ limit: z.number().int().min(1).max(200).default(25) }), async ({ limit }) =>
     (await store()).listFleetRuns(limit),

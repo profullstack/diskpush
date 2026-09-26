@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Image from 'next/image'
 import {
   ArrowLeftRight,
+  HardDriveDownload,
   CircleAlert,
   CircleCheck,
   ExternalLink,
@@ -18,6 +19,7 @@ import {
 } from 'lucide-react'
 import { ConnectionDialog } from '@/components/connection-dialog'
 import { FleetView } from '@/components/fleet-view'
+import { FleetSyncPanel } from '@/components/fleet-sync-panel'
 import { PluginsDialog } from '@/components/plugins-dialog'
 import { ProfileBar } from '@/components/profile-bar'
 import { ServerManager } from '@/components/server-manager'
@@ -134,7 +136,7 @@ export default function Workspace() {
   const [showPlugins, setShowPlugins] = useState(false)
   /** Which pane a plugin job is working in, so the pane is re-read when it changes files. */
   const pluginSideRef = useRef<{ jobId: string; side: 'left' | 'right' } | null>(null)
-  const [tab, setTab] = useState<'transfer' | 'fleet'>('transfer')
+  const [tab, setTab] = useState<'transfer' | 'fleet' | 'sync'>('transfer')
   const [profiles, setProfiles] = useState<SyncProfile[]>([])
   const [outsideShell, setOutsideShell] = useState(false)
 
@@ -573,6 +575,10 @@ export default function Workspace() {
             <Server className="size-3.5" />
             Fleet
           </TabButton>
+          <TabButton active={tab === 'sync'} onClick={() => setTab('sync')}>
+            <HardDriveDownload className="size-3.5" />
+            Fleet Sync
+          </TabButton>
         </nav>
 
         <div className="ml-auto flex items-center gap-2">
@@ -746,6 +752,10 @@ export default function Workspace() {
 
       <div className={`flex min-h-0 flex-1 flex-col ${tab === 'fleet' ? '' : 'hidden'}`}>
         <FleetView onAddServer={() => setShowServers(true)} />
+      </div>
+
+      <div className={`flex min-h-0 flex-1 flex-col ${tab === 'sync' ? '' : 'hidden'}`}>
+        <FleetSyncPanel />
       </div>
 
       <ServerManager

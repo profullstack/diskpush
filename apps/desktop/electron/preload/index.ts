@@ -66,6 +66,8 @@ const api = {
     cancel: (runId: string) => call<boolean>(IPC.fleetCancel, { runId }),
     check: (connectionIds: string[], concurrency = 4, timeoutSeconds = 180) =>
       call(IPC.fleetCheck, { connectionIds, concurrency, timeoutSeconds }),
+    sync: (request: unknown) => call(IPC.fleetSync, request),
+    cancelSync: (syncId: string) => call<boolean>(IPC.fleetSyncCancel, { syncId }),
     runs: (limit = 25) => call(IPC.fleetRuns, { limit }),
     saveCommand: (input: unknown) => call(IPC.fleetCommandSave, input),
     removeCommand: (name: string) => call<boolean>(IPC.fleetCommandRemove, { name }),
@@ -107,6 +109,12 @@ const api = {
       const wrapped = (_event: unknown, payload: { runId: string; event: unknown }) => listener(payload)
       ipcRenderer.on(IPC.eventFleet, wrapped)
       return () => ipcRenderer.off(IPC.eventFleet, wrapped)
+    },
+    onFleetSync(listener: (payload: { syncId: string; connectionId: string | null; event: unknown }) => void): () => void {
+      const wrapped = (_event: unknown, payload: { syncId: string; connectionId: string | null; event: unknown }) =>
+        listener(payload)
+      ipcRenderer.on(IPC.eventFleetSync, wrapped)
+      return () => ipcRenderer.off(IPC.eventFleetSync, wrapped)
     },
     onOpenSeries(listener: (payload: { seriesId: string; event: unknown }) => void): () => void {
       const wrapped = (_event: unknown, payload: { seriesId: string; event: unknown }) => listener(payload)
