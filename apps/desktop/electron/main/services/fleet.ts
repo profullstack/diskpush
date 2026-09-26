@@ -9,10 +9,50 @@ import {
   type SudoMode,
 } from '@diskpush/fleet-core'
 import type { Connection, FleetCommand, FleetHostResult, FleetList, HostUpdateReport } from '@diskpush/schemas'
-import { sshConfigConnections } from '@diskpush/ssh-core'
+import { sshConfigConnections, type SshSession } from '@diskpush/ssh-core'
+import { userInfo } from 'node:os'
 import { IPC, type FleetRequest } from '../../shared/contract.js'
 import { dropSession, sessionFor } from './sessions.js'
+import { LOCAL_CONNECTION_ID, isLocalConnectionId, localSession } from './local-session.js'
 import { store } from './store.js'
+
+/**
+ * The synthetic "this machine" target.
+ *
+ * It appears in the fleet server list like any other server, so the user can
+ * tick it and run a command/script LOCALLY — including one that fans out to the
+ * fleet itself (an ssh loop, an rsync push). Everything else about a fleet run
+ * (interpreter, hazard check, streaming, history) is identical; only the
+ * transport differs, which is decided in connectFleet().
+ */
+function localhostConnection(): Connection {
+  const now = new Date().toISOString()
+  return {
+    id: LOCAL_CONNECTION_ID,
+    name: 'localhost (this machine)',
+    host: 'localhost',
+    port: 22,
+    username: userInfo().username,
+    authType: 'agent',
+    keyPath: null,
+    defaultLocalPath: null,
+    defaultRemotePath: null,
+    jumpHost: null,
+    rsyncPath: null,
+    connectTimeoutSeconds: 15,
+    keepaliveSeconds: 30,
+    forwardAgent: false,
+    tags: ['local'],
+    notes: 'Runs on this machine, not over SSH.',
+    createdAt: now,
+    updatedAt: now,
+  }
+}
+
+/** Local host runs in-process; every other host is a pooled SSH session. */
+function connectFleet(connection: Connection): Promise<SshSession> {
+  return isLocalConnectionId(connection.id) ? Promise.resolve(localSession()) : sessionFor(connection)
+}
 
 /**
  * Fleet operations for the desktop.
@@ -30,7 +70,12 @@ const running = new Map<string, RunningFleet>()
 export async function fleetServers(): Promise<Connection[]> {
   const saved = await (await store()).listConnections()
   const savedNames = new Set(saved.map((connection) => connection.name))
-  return [...saved, ...sshConfigConnections().filter((host) => !savedNames.has(host.name))]
+  // localhost first, then saved connections, then ~/.ssh/config hosts.
+  return [
+    localhostConnection(),
+    ...saved,
+    ...sshConfigConnections().filter((host) => !savedNames.has(host.name)),
+  ]
 }
 
 export async function fleetCommands(): Promise<FleetCommand[]> {
@@ -133,7 +178,7 @@ export async function startFleet(request: FleetRequest, sender: WebContents): Pr
         onFailure: request.onFailure,
         runId,
         signal: controller.signal,
-        connect: (connection) => sessionFor(connection),
+        connect: (connection) => connectFleet(connection),
         // No release: the desktop pools sessions across browsing and
         // transfers, so closing one here would shut a file pane's connection
         // out from under it.
@@ -163,7 +208,11 @@ export async function startFleet(request: FleetRequest, sender: WebContents): Pr
       // A command that changed sshd, the login shell or a key would leave a
       // pooled session pointing at a server that no longer works the way the
       // session assumes. Cheaper to reconnect than to debug that later.
-      if (request.sudo) for (const connection of connections) dropSession(connection.id)
+      if (request.sudo) {
+        for (const connection of connections) {
+          if (!isLocalConnectionId(connection.id)) dropSession(connection.id)
+        }
+      }
     }
   })()
 
@@ -258,7 +307,7 @@ export async function checkFleetServers(input: {
     connections,
     concurrency: input.concurrency,
     timeoutSeconds: input.timeoutSeconds,
-    connect: (connection) => sessionFor(connection),
+    connect: (connection) => connectFleet(connection),
   })
   return reports
 }
