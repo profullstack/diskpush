@@ -1,0 +1,14 @@
+# .git stays IN the context on purpose: app/sitemap.ts reads each page's
+# lastmod from `git log` at build time.
+node_modules
+apps/*/node_modules
+packages/*/node_modules
+apps/*/.next
+apps/desktop/out
+apps/desktop/dist-electron
+packages/*/dist
+apps/cli/dist
+release
+.shots
+.env*
+**/.env*

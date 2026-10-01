@@ -49,6 +49,57 @@ jobs:
       - name: Desktop starts
         run: pnpm smoke:desktop
 
+  # diskpush.com runs on dev2 as Next's standalone server under Bun (see
+  # .nixpacks/Dockerfile). Build it the way the image does (Node + pnpm, web
+  # only), then boot it under Bun and read the pages that come off disk at
+  # request time or go through the crawl-gateway middleware.
+  web-bun:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # app/sitemap.ts dates each page from `git log`.
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+
+      - run: pnpm install --frozen-lockfile --prod=false --filter @diskpush/web...
+      - run: pnpm --filter @diskpush/web build
+
+      - name: Boot the standalone server under Bun
+        run: |
+          s=apps/web/.next/standalone
+          cp -r apps/web/public "$s/apps/web/public"
+          cp -r apps/web/.next/static "$s/apps/web/.next/static"
+          test -f "$s/docs/install.md" && test -f "$s/scripts/install.sh"
+          (cd "$s" && PORT=3999 HOSTNAME=127.0.0.1 bun apps/web/server.js > /tmp/web.log 2>&1 &)
+          for i in $(seq 1 30); do
+            curl -sf -o /dev/null http://127.0.0.1:3999/ && break
+            sleep 1
+          done
+          for p in / /docs /docs/install /docs/cli /security /privacy /install.sh /llms.txt /robots.txt /sitemap.xml /.well-known/security.txt /manifest.json; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:3999$p")
+            echo "$p $code"
+            [ "$code" = 200 ] || { cat /tmp/web.log; exit 1; }
+          done
+          # An unknown slug is read from docs/ at request time: 404, not 500.
+          code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3999/docs/no-such-doc)
+          echo "/docs/no-such-doc $code"; [ "$code" = 404 ]
+          grep -q 'SITE=' <(curl -s http://127.0.0.1:3999/install.sh)
+          # The crawl gateway in middleware answers AI training crawlers 402.
+          code=$(curl -s -o /dev/null -w '%{http_code}' -A GPTBot http://127.0.0.1:3999/)
+          echo "GPTBot $code"; [ "$code" = 402 ]
+          cat /tmp/web.log
+
   integration:
     runs-on: ubuntu-latest
     steps:

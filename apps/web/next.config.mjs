@@ -37,6 +37,12 @@ const securityHeaders = [
 
 const nextConfig = {
   reactStrictMode: true,
+  // The dev2 image runs .next/standalone under Bun (see .nixpacks/Dockerfile).
+  // The tracing root is the repository root, so the server lands at
+  // .next/standalone/apps/web/server.js and the docs/ and scripts/ includes
+  // below land at the same ../../ path the pages read them from.
+  output: 'standalone',
+  outputFileTracingRoot: new URL('../../', import.meta.url).pathname,
   // The docs pages read Markdown from the repository at build time, so the
   // site and the repo can never disagree about what DiskPush does.
   outputFileTracingIncludes: {
