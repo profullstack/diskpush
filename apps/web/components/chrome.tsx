@@ -43,6 +43,23 @@ export function Footer() {
         <a href={SITE.releases} className="hover:text-text" rel="noreferrer" target="_blank">Releases</a>
         <Link href="/security" className="hover:text-text">Security</Link>
         <Link href="/privacy" className="hover:text-text">Privacy</Link>
+        <nav className="webring flex gap-x-2" aria-label="Profullstack webring">
+          <a
+            href="https://rssamplifier.com/ring/profullstack/previous?from=https%3A%2F%2Fdiskpush.com%2F"
+            className="hover:text-text"
+            rel="prev"
+          >
+            {'<<'}
+          </a>
+          <a href="https://rssamplifier.com/ring/profullstack" className="hover:text-text">Profullstack</a>
+          <a
+            href="https://rssamplifier.com/ring/profullstack/next?from=https%3A%2F%2Fdiskpush.com%2F"
+            className="hover:text-text"
+            rel="next"
+          >
+            {'>>'}
+          </a>
+        </nav>
         <span className="ml-auto">MIT licensed</span>
       </div>
     </footer>
