@@ -4,6 +4,12 @@ import { SITE } from '@/lib/site'
 import './globals.css'
 import Script from "next/script";
 
+/**
+ * ISR for every prerendered page: re-rendered at most hourly, so a new
+ * @profullstack/footer template release reaches them without a redeploy.
+ */
+export const revalidate = 3600
+
 export const metadata: Metadata = {
   metadataBase: new URL(SITE.url),
   title: {
