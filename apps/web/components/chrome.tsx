@@ -48,6 +48,7 @@ export function Footer() {
             href="https://rssamplifier.com/ring/profullstack/previous?from=https%3A%2F%2Fdiskpush.com%2F"
             className="hover:text-text"
             rel="prev"
+            title="Previous site"
           >
             {'<<'}
           </a>
@@ -56,8 +57,17 @@ export function Footer() {
             href="https://rssamplifier.com/ring/profullstack/next?from=https%3A%2F%2Fdiskpush.com%2F"
             className="hover:text-text"
             rel="next"
+            title="Next site"
           >
             {'>>'}
+          </a>
+          <a
+            href="https://rssamplifier.com/ring/profullstack/random?from=https%3A%2F%2Fdiskpush.com%2F"
+            className="hover:text-text"
+            title="Random site"
+            aria-label="Random site"
+          >
+            {'⚄'}
           </a>
         </nav>
         <span className="ml-auto">MIT licensed</span>
