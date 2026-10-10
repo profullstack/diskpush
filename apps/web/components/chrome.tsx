@@ -1,4 +1,5 @@
 import Link from 'next/link'
+import { Footer as PfsFooter } from '@profullstack/footer/react'
 import { CopyButton } from '@/components/copy-button'
 import { NAV, SITE } from '@/lib/site'
 
@@ -33,46 +34,25 @@ export function Header() {
   )
 }
 
+/**
+ * @profullstack/footer: the same links, copyright and webring every Profullstack
+ * site renders, from the package's @latest template (async server component).
+ */
 export function Footer() {
   return (
-    <footer className="border-t border-line">
-      <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-x-6 gap-y-2 px-5 py-8 text-sm text-muted">
-        <span className="font-medium text-text">{SITE.name}</span>
-        <Link href="/docs" className="hover:text-text">Docs</Link>
-        <a href={SITE.repo} className="hover:text-text" rel="noreferrer" target="_blank">GitHub</a>
-        <a href={SITE.releases} className="hover:text-text" rel="noreferrer" target="_blank">Releases</a>
-        <Link href="/security" className="hover:text-text">Security</Link>
-        <Link href="/privacy" className="hover:text-text">Privacy</Link>
-        <nav className="webring flex gap-x-2" aria-label="Profullstack webring">
-          <a
-            href="https://rssamplifier.com/ring/profullstack/previous?from=https%3A%2F%2Fdiskpush.com%2F"
-            className="hover:text-text"
-            rel="prev"
-            title="Previous site"
-          >
-            {'<<'}
-          </a>
-          <a href="https://rssamplifier.com/ring/profullstack" className="hover:text-text">Profullstack</a>
-          <a
-            href="https://rssamplifier.com/ring/profullstack/next?from=https%3A%2F%2Fdiskpush.com%2F"
-            className="hover:text-text"
-            rel="next"
-            title="Next site"
-          >
-            {'>>'}
-          </a>
-          <a
-            href="https://rssamplifier.com/ring/profullstack/random?from=https%3A%2F%2Fdiskpush.com%2F"
-            className="hover:text-text"
-            title="Random site"
-            aria-label="Random site"
-          >
-            {'⚄'}
-          </a>
-        </nav>
-        <span className="ml-auto">MIT licensed</span>
-      </div>
-    </footer>
+    <div className="mt-8 text-text">
+      <PfsFooter
+        site="https://diskpush.com/"
+        tagline="MIT licensed"
+        links={[
+          { label: 'Docs', href: '/docs' },
+          { label: 'GitHub', href: SITE.repo, rel: 'noreferrer' },
+          { label: 'Releases', href: SITE.releases, rel: 'noreferrer' },
+          { label: 'Security', href: '/security' },
+          { label: 'Privacy', href: '/privacy' },
+        ]}
+      />
+    </div>
   )
 }
 
