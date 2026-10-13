@@ -68,6 +68,10 @@
         "to": "icon.png"
       },
       {
+        "from": "resources/icons",
+        "to": "icons"
+      },
+      {
         "from": "resources/launch.sh",
         "to": "launch.sh"
       }
@@ -81,12 +85,10 @@
         "deb",
         "tar.gz"
       ],
-      "icon": "resources/icon.png",
+      "icon": "resources/icons",
       "desktop": {
-        "entry": {
-          "Keywords": "rsync;sftp;ssh;sync;transfer;backup;",
-          "StartupWMClass": "DiskPush"
-        }
+        "Keywords": "rsync;sftp;ssh;sync;transfer;backup;",
+        "StartupWMClass": "DiskPush"
       },
       "artifactName": "${productName}-${version}-linux-${arch}.${ext}"
     },

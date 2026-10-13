@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { resolveIconPath, WM_CLASS } from './icon-path.js'
@@ -39,6 +39,49 @@ describe('StartupWMClass', () => {
 
   it('is what electron-builder writes into the packaged entry', () => {
     const manifest = JSON.parse(readFileSync(join(root, 'apps', 'desktop', 'package.json'), 'utf8'))
-    expect(manifest.build.linux.desktop.entry.StartupWMClass).toBe(WM_CLASS)
+    expect(manifest.build.linux.desktop.StartupWMClass).toBe(WM_CLASS)
+  })
+
+  it('is a flat map, which is the only shape electron-builder 25 reads', () => {
+    // `desktop: { entry: {...} }` is electron-builder 26 syntax. 25 stringifies
+    // the nested object, so the deb shipped `entry=[object Object]` and lost
+    // its Keywords without a warning.
+    const manifest = JSON.parse(readFileSync(join(root, 'apps', 'desktop', 'package.json'), 'utf8'))
+    for (const value of Object.values(manifest.build.linux.desktop)) {
+      expect(typeof value).toBe('string')
+    }
+  })
+})
+
+describe('Linux icon set', () => {
+  /**
+   * An icon theme is searched only in the directories its index.theme lists.
+   * Given one PNG, electron-builder files it under its pixel size, and the
+   * 1254px source landed in hicolor/1254x1254/, which no desktop looks in, so
+   * Plasma drew a generic icon. The set has to be standard sizes, each file
+   * really that size.
+   */
+  const root = join(import.meta.dirname, '..', '..', '..', '..')
+  const desktop = join(root, 'apps', 'desktop')
+  const HICOLOR = [16, 22, 24, 32, 48, 64, 96, 128, 192, 256, 512]
+
+  it('is the directory both electron-builder and the tarball use', () => {
+    const manifest = JSON.parse(readFileSync(join(desktop, 'package.json'), 'utf8'))
+    expect(manifest.build.linux.icon).toBe('resources/icons')
+    expect(manifest.build.extraResources).toContainEqual({ from: 'resources/icons', to: 'icons' })
+  })
+
+  it('holds only hicolor sizes, each file the size its name says', () => {
+    const files = readdirSync(join(desktop, 'resources', 'icons'))
+    expect(files).toContain('512x512.png')
+    for (const file of files) {
+      const match = /^(\d+)x(\d+)\.png$/.exec(file)
+      expect(match, file).not.toBeNull()
+      const size = Number(match![1])
+      expect(HICOLOR, file).toContain(size)
+      // A PNG's IHDR puts width and height at bytes 16 and 20.
+      const png = readFileSync(join(desktop, 'resources', 'icons', file))
+      expect([png.readUInt32BE(16), png.readUInt32BE(20)], file).toEqual([size, size])
+    }
   })
 })

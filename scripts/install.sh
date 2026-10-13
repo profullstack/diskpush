@@ -151,9 +151,29 @@ FALLBACK
 
     # A launcher, an icon, and a menu entry. This is what a .deb would give
     # you; done by hand because doing it by hand needs no root.
-    mkdir -p "$PREFIX/share/applications" "$PREFIX/share/icons/hicolor/512x512/apps"
-    [ -f "$SHARE/app/resources/icon.png" ] &&
-      cp "$SHARE/app/resources/icon.png" "$PREFIX/share/icons/hicolor/512x512/apps/diskpush.png"
+    #
+    # Icons go in one file per hicolor size. An icon theme is only searched in
+    # the directories its index.theme lists, so the size directory has to be a
+    # real one: the source PNG is 1254px, and a 1254x1254/ directory (what the
+    # deb used to get) is simply never looked in. Bundles before 0.12.6 carry
+    # only that one PNG; it still goes under 512x512, which Plasma scales.
+    mkdir -p "$PREFIX/share/applications"
+    ICONS="$PREFIX/share/icons/hicolor"
+    if [ -d "$SHARE/app/resources/icons" ]; then
+      for png in "$SHARE/app/resources/icons"/*x*.png; do
+        [ -f "$png" ] || continue
+        size="$(basename "$png" .png)"
+        mkdir -p "$ICONS/$size/apps"
+        cp "$png" "$ICONS/$size/apps/diskpush.png"
+        PATHS="$PATHS
+$ICONS/$size/apps/diskpush.png"
+      done
+    elif [ -f "$SHARE/app/resources/icon.png" ]; then
+      mkdir -p "$ICONS/512x512/apps"
+      cp "$SHARE/app/resources/icon.png" "$ICONS/512x512/apps/diskpush.png"
+      PATHS="$PATHS
+$ICONS/512x512/apps/diskpush.png"
+    fi
 
     cat > "$PREFIX/share/applications/diskpush.desktop" <<DESKTOP
 [Desktop Entry]
@@ -173,8 +193,7 @@ DESKTOP
       update-desktop-database "$PREFIX/share/applications" >/dev/null 2>&1 || true
 
     PATHS="$PATHS
-$PREFIX/share/applications/diskpush.desktop
-$PREFIX/share/icons/hicolor/512x512/apps/diskpush.png"
+$PREFIX/share/applications/diskpush.desktop"
 
   else
     ASSET="DiskPush-$VERSION-mac-$ARCH.zip"
