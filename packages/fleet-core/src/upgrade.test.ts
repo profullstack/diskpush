@@ -80,6 +80,14 @@ describe('upgradeCommandFor', () => {
     expect(upgradeCommandFor('apt')).toContain('DEBIAN_FRONTEND=noninteractive')
   })
 
+  it('waits for apt-daily or unattended-upgrades instead of failing on the apt lock', () => {
+    const apt = upgradeCommandFor('apt')!
+    expect(apt).toMatch(/pgrep -x 'apt\|apt-get\|dpkg'/)
+    for (const line of apt.split('\n').filter((l) => l.startsWith('apt-get'))) {
+      expect(line).toContain('DPkg::Lock::Timeout=600')
+    }
+  })
+
   it('does not remove packages: upgrade, never dist-upgrade or autoremove', () => {
     for (const manager of ['apt', 'dnf', 'yum', 'zypper', 'apk', 'pkg'] as const) {
       expect(upgradeCommandFor(manager), manager).not.toMatch(/autoremove|dist-upgrade/)

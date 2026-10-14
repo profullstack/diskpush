@@ -133,10 +133,23 @@ echo "dp_reboot=$reboot"
 export function upgradeCommandFor(manager: PackageManager): string | null {
   switch (manager) {
     case 'apt':
+      // apt-daily and unattended-upgrades run apt on their own timers, and a
+      // fleet run that lands during one fails with "Could not get lock" even
+      // though the same command works by hand a minute later. So wait for
+      // them: first until no apt or dpkg process is left (unattended-upgr is
+      // not on the list because its shutdown helper idles forever), then let
+      // apt itself wait on the lock for whatever race remains. Both give up
+      // after ten minutes rather than hanging the run.
       return [
         'export DEBIAN_FRONTEND=noninteractive',
-        'apt-get update -qq',
-        'apt-get -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold upgrade',
+        'dp_waited=0',
+        "while command -v pgrep >/dev/null 2>&1 && pgrep -x 'apt|apt-get|dpkg' >/dev/null 2>&1 && [ $dp_waited -lt 600 ]; do",
+        '  [ $dp_waited -eq 0 ] && echo "diskpush: another apt/dpkg run is in progress, waiting for it to finish."',
+        '  sleep 5',
+        '  dp_waited=$((dp_waited + 5))',
+        'done',
+        'apt-get -o DPkg::Lock::Timeout=600 update -qq',
+        'apt-get -y -o DPkg::Lock::Timeout=600 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold upgrade',
       ].join('\n')
     case 'dnf':
       return 'dnf -y --refresh upgrade'
