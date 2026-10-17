@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { WebContents } from 'electron'
 import {
@@ -44,8 +44,19 @@ type ResolvedEndpoint = {
  * endpoint or an S3 one is decided by the saved connection, and so is the
  * bucket.
  */
+/**
+ * `~` and `~/x` mean this user's home, as they do in a shell. rsync is spawned
+ * without one, so nothing else would expand them: `~/site` would be a folder
+ * literally named `~`. A trailing slash is kept, because it changes what rsync copies.
+ */
+export function expandHome(path: string, home = homedir()): string {
+  if (path === '~') return home
+  if (path.startsWith('~/')) return home.replace(/\/+$/, '') + path.slice(1)
+  return path
+}
+
 export async function resolveEndpoint(ref: EndpointRef): Promise<ResolvedEndpoint> {
-  if (ref.type === 'local') return { endpoint: { type: 'local', path: ref.path }, connectionId: null }
+  if (ref.type === 'local') return { endpoint: { type: 'local', path: expandHome(ref.path) }, connectionId: null }
 
   const connection = await requireConnection(ref.connectionId)
 
