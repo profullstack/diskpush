@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process'
+import { pickFetcher } from './fetcher.js'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { VERSION } from './help.js'
@@ -96,7 +97,14 @@ export async function autoUpdate(command: string | null, output: Output, force =
 
   output.warn(`DiskPush ${latest} is available (you have ${VERSION}). Updating...`)
 
-  const script = spawnSync('sh', ['-c', `curl -fsSL ${manifest.installer} || wget -qO- ${manifest.installer}`], {
+  // An argument array, not `sh -c "curl $url || wget $url"`: the installer URL
+  // comes from a file on disk and must never be parsed by a shell.
+  const fetcher = pickFetcher()
+  if (!fetcher) {
+    output.warn('Update skipped: curl or wget is required; continuing on the current version.')
+    return 'failed'
+  }
+  const script = spawnSync(fetcher.binary, [...fetcher.args, manifest.installer], {
     encoding: 'utf8',
     maxBuffer: 16 * 1024 * 1024,
   })
