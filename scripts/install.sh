@@ -51,7 +51,9 @@ esac
 
 if command -v curl >/dev/null 2>&1; then
   fetch()   { curl -fsSL "$1"; }
-  download(){ curl -fsSL --progress-bar -o "$2" "$1"; }
+  # Not -s: curl's --silent also hides --progress-bar, and a 190 MB desktop download
+  # with no output looks hung (people Ctrl+C it). -S still prints errors.
+  download(){ curl -fSL --progress-bar -o "$2" "$1"; }
 elif command -v wget >/dev/null 2>&1; then
   fetch()   { wget -qO- "$1"; }
   download(){ wget -q --show-progress -O "$2" "$1"; }
