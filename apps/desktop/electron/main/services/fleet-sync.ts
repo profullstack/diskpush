@@ -47,7 +47,9 @@ export async function startFleetSync(request: FleetSyncRequest, sender: WebConte
       // A bucket is not a fleet host: refuse it on its own row.
       const target = await resolveConnection(destId)
       if (isS3Connection(target)) throw new Error(`${target.name} is an S3 bucket; Fleet Sync pushes to servers.`)
-      const built = await buildPlan(req)
+      // The same path rarely exists on every host already: create it (--mkpath,
+      // dropped with a warning by the planner when either rsync is older than 3.2.3).
+      const built = await buildPlan(req, { mkpath: true })
       cleanup = built.cleanup
       const handle = runPlan(built.plan)
       cancels.set(destId, handle.cancel)
