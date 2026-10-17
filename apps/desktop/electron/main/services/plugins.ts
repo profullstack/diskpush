@@ -26,12 +26,13 @@ import {
   type ProgressSink,
   type SettingDef,
 } from '@diskpush/plugin-api'
+import { dbBackupPlugin } from '@diskpush/plugin-dbbackup'
 import { mediaAnalyzerPlugin } from '@diskpush/plugin-mediaanalyzer'
 import { ExternalUrlSchema, IPC, type PluginActionRequest } from '../../shared/contract.js'
 import { store } from './store.js'
 
 /** The same built-in list as the CLI's (apps/cli/src/plugins.ts). */
-const BUILTIN_PLUGINS = [mediaAnalyzerPlugin]
+const BUILTIN_PLUGINS = [mediaAnalyzerPlugin, dbBackupPlugin]
 
 let loaded: Promise<{ registry: PluginRegistry; failures: LoadFailure[] }> | null = null
 

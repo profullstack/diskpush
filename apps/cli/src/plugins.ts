@@ -20,10 +20,11 @@ import {
   type ProgressSink,
   type SettingsBackend,
 } from '@diskpush/plugin-api'
+import { dbBackupPlugin } from '@diskpush/plugin-dbbackup'
 import { mediaAnalyzerPlugin } from '@diskpush/plugin-mediaanalyzer'
 
 /** Plugins that ship with DiskPush. */
-export const BUILTIN_PLUGINS = [mediaAnalyzerPlugin]
+export const BUILTIN_PLUGINS = [mediaAnalyzerPlugin, dbBackupPlugin]
 
 export type LoadedRegistry = { registry: PluginRegistry; failures: LoadFailure[] }
 

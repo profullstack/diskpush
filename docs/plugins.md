@@ -2,8 +2,10 @@
 
 A plugin adds things DiskPush does to files: a command in the CLI, an entry
 in the TUI's `a` menu and in the desktop app's right-click menu, and settings
-of its own. The first one is **MediaAnalyzer**, which describes photos and
-videos and can sort them into folders by what they show.
+of its own. Two ship built in: **MediaAnalyzer**, which describes photos and
+videos and can sort them into folders by what they show, and **Database
+backups** (`dbbackup`), which dumps Postgres, Supabase, MySQL and SQLite to
+tagged, verified files, prunes them, pushes them with rsync and restores them.
 
 ```bash
 diskpush plugins                                # what is installed, and its commands
@@ -94,6 +96,86 @@ and asks for the code the page displays.
 **Credit.** When the account runs out mid-run, what was accepted is still
 described, the rest is left for the next run, and the result says how many
 were skipped and where to add credit.
+
+## Database backups
+
+`dbbackup` dumps **Postgres, Supabase, MySQL/MariaDB and SQLite** to gzipped
+files whose names carry the database, the time and your tags, keeps a
+retention policy, pushes each backup anywhere rsync reaches, and restores
+them. It is the "dump, push, prune, pull" loop people script around a bucket
+tool, with the dump half built in.
+
+```bash
+diskpush dbbackup doctor                                   # which dump tools this machine has
+diskpush dbbackup add shop --kind postgres --tags prod     # asks for the URL; kept with your secrets
+diskpush dbbackup add app --kind supabase --url-env SUPABASE_DB_URL
+diskpush dbbackup add crm --url-env CRM_MYSQL_URL --push backup@nas:/srv/db
+diskpush dbbackup add notes --path ~/notes.sqlite
+diskpush dbbackup run --tags nightly                       # back up everything, prune, push
+diskpush dbbackup backups --tag prod --not test            # list, newest first
+diskpush dbbackup verify shop                              # read the newest end to end
+diskpush dbbackup restore shop --to-env STAGING_URL        # asks before it writes
+diskpush dbbackup cron --at "15 3 * * *"                   # a crontab line to paste
+```
+
+**File names are the catalogue.** `shop--20261017T031500Z--nightly+prod.sql.gz`
+is database `shop`, taken at that UTC time, tagged `nightly` and `prod`. Each
+database gets its own folder under the backup folder (`~/Backups/diskpush`
+unless the `backupDir` setting says otherwise), so a plain directory listing,
+local or on a server, is the whole index and nothing can drift out of step.
+`backups` filters with `--tag` (all of), `--any` (one of) and `--not`.
+
+| Kind | Made with | Notes |
+| --- | --- | --- |
+| `postgres` | `pg_dump --format=plain` | owners and privileges kept. The newest `pg_dump` installed is used (`/usr/lib/postgresql/<n>/bin` is searched), because `pg_dump` refuses a server newer than itself |
+| `supabase` | `pg_dump --no-owner --no-privileges` | Supabase's platform schemas (`realtime`, `vault`, `pgsodium`, `graphql`, `supabase_functions`, `extensions`, …) are left out; `auth`, `storage`, `public` and your own schemas are in. Use the **session pooler** or direct connection string from the dashboard's Connect panel, not the transaction pooler |
+| `mysql` | `mysqldump` or `mariadb-dump` | `--single-transaction --routines --triggers --events --hex-blob`, one database, no `CREATE DATABASE`, so it restores into a database of any name. `?ssl-mode=REQUIRED` on the URL becomes `--ssl-mode=REQUIRED` |
+| `sqlite` | SQLite's online backup | `node:sqlite` where Node has it, else `sqlite3 .backup`; never a file copy, so a live WAL database is copied consistently. The copy must pass `PRAGMA quick_check` |
+
+**A backup that exists is a whole one.** The dump streams through gzip into a
+hidden `.partial` file and is renamed into place only if the tool exited 0 and
+the stream ended with the tool's own completion line (`-- PostgreSQL database
+dump complete`, `-- Dump completed`). A dump cut short by a dropped connection
+or a full disk is discarded and the run fails. `verify` checks the same thing
+later, and `restore` verifies before it touches anything.
+
+**Passwords stay out of argv.** URLs are asked for at the prompt rather than
+taken from the command line, stored with the plugin's secrets (not its
+settings), shown redacted, and handed to the tools as `PGPASSWORD` /
+`MYSQL_PWD`. `--url-env VAR` stores nothing: the URL is read from the
+environment on every run, which is the way to keep it in a vault.
+
+**Retention.** Each database and tag set is its own series, so a `monthly` run
+never prunes `nightly` backups. A series keeps its newest `keepLast` (default
+7), plus anything younger than `keepDays` (default off), and **always keeps its
+newest backup**, whatever the policy says. Set them per database with
+`add --keep-last 14 --keep-days 30d`, or globally in settings. `prune
+--dry-run` shows what would go. Files the plugin did not name are never
+touched.
+
+**Pushing.** With `--push DEST` (or the global `push` setting) every run
+copies the database's folder to `DEST/<name>/` with
+`rsync --archive --partial --mkpath --delete`, over `ssh -o BatchMode=yes` so a
+cron job never hangs on a prompt. `--delete` makes the destination follow
+local pruning, and a protect filter limits it to files named `<name>--*`: a
+mistyped destination can only ever lose backups this plugin made. `DEST` is
+anything rsync takes: `user@host:/path`, a mounted disk, a NAS.
+
+**Restoring.** SQL dumps go through `psql` (with `ON_ERROR_STOP=1`; pass
+`--continue-on-error` to load what it can) or `mysql`, into the URL in
+`--to-env VAR` (or `--to URL`). A SQLite backup is written to `--to PATH`
+through a temporary name, and refuses to replace an existing file without
+`--force`. Without `--yes` it asks first. Restoring into an existing database
+does not drop it first; restore into a fresh one.
+
+**From the file browser.** In the TUI (`a`) and the desktop (right-click →
+Plugins): *Back up SQLite database* on a `.sqlite`/`.db` file (refused unless
+the file really is SQLite), and *Verify backup* on a backup. *Back up every
+database now* is under Plugins… in the desktop.
+
+**Settings:** `backupDir`, `keepLast`, `keepDays`, `push`, `rsh` (the ssh
+command for pushes), and `pg_dumpPath` / `mysqldumpPath` / `psqlPath` /
+`mysqlPath` / `sqlite3Path` to pin a tool.
 
 ## Writing a plugin
 

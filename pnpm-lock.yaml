@@ -35,6 +35,9 @@ importers:
       '@diskpush/plugin-api':
         specifier: workspace:*
         version: link:../../packages/plugin-api
+      '@diskpush/plugin-dbbackup':
+        specifier: workspace:*
+        version: link:../../packages/plugin-dbbackup
       '@diskpush/plugin-mediaanalyzer':
         specifier: workspace:*
         version: link:../../packages/plugin-mediaanalyzer
@@ -74,6 +77,9 @@ importers:
       '@diskpush/plugin-api':
         specifier: workspace:*
         version: link:../../packages/plugin-api
+      '@diskpush/plugin-dbbackup':
+        specifier: workspace:*
+        version: link:../../packages/plugin-dbbackup
       '@diskpush/plugin-mediaanalyzer':
         specifier: workspace:*
         version: link:../../packages/plugin-mediaanalyzer
@@ -149,7 +155,7 @@ importers:
     dependencies:
       '@profullstack/footer':
         specifier: latest
-        version: 0.2.1(react@19.2.8)
+        version: 0.2.4(react@19.2.8)
       '@profullstack/x402-gateway':
         specifier: ^0.7.0
         version: 0.7.0
@@ -210,6 +216,12 @@ importers:
         version: 3.25.76
 
   packages/plugin-api: {}
+
+  packages/plugin-dbbackup:
+    dependencies:
+      '@diskpush/plugin-api':
+        specifier: workspace:*
+        version: link:../plugin-api
 
   packages/plugin-mediaanalyzer:
     dependencies:
@@ -1152,8 +1164,8 @@ packages:
     resolution: {integrity: sha512-+1VkjdD0QBLPodGrJUeqarH8VAIvQODIbwh9XpP5Syisf7YoQgsJKPNFoqqLQlu+VQ/tVSshMR6loPMn8U+dPg==}
     engines: {node: '>=14'}
 
-  '@profullstack/footer@0.2.1':
-    resolution: {integrity: sha512-KHmKVwrlzCBrSAAJ4zobNFCxTg8VF0gvNMeAut00dX3+gbWCtk6eOwIR2AaqEC7smj6Aio6cIexzt/dUnv1McA==}
+  '@profullstack/footer@0.2.4':
+    resolution: {integrity: sha512-2ErIzHJCDA2baP8aK6f7rCHohW4EX+wnp7D1mrVMQTUxRcyZwKzmho96hhEFJndXRBGgxT3H/78BHOeBfLxTzg==}
     engines: {node: '>=18'}
     hasBin: true
     peerDependencies:
@@ -5095,7 +5107,7 @@ snapshots:
   '@pkgjs/parseargs@0.11.0':
     optional: true
 
-  '@profullstack/footer@0.2.1(react@19.2.8)':
+  '@profullstack/footer@0.2.4(react@19.2.8)':
     optionalDependencies:
       react: 19.2.8
 

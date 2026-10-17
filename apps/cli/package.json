@@ -19,6 +19,7 @@
     "@diskpush/database": "workspace:*",
     "@diskpush/fleet-core": "workspace:*",
     "@diskpush/plugin-api": "workspace:*",
+    "@diskpush/plugin-dbbackup": "workspace:*",
     "@diskpush/plugin-mediaanalyzer": "workspace:*",
     "@diskpush/rsync-core": "workspace:*",
     "@diskpush/schemas": "workspace:*",

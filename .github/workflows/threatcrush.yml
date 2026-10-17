@@ -1,0 +1,42 @@
+name: ThreatCrush
+
+# Keeps the "ThreatCrush: verified" badge in the README honest: the badge
+# claims what these two gates enforce, and docs/threatcrush-scan.md lists every
+# finding below them and why it is not a vulnerability.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      # --ignore-scripts: the scanner does not need better-sqlite3, which only
+      # the ThreatCrush daemon uses and which would otherwise compile here.
+      - name: Install ThreatCrush
+        run: npm install -g --ignore-scripts @profullstack/threatcrush@0.13.32
+
+      # The database-backup plugin handles connection strings and runs dump
+      # tools, so it is held to the stricter bar: nothing at medium or above,
+      # including advisories against its dependencies (--deps, via OSV.dev).
+      - name: Scan the dbbackup plugin
+        run: threatcrush scan packages/plugin-dbbackup --deps --fail-on critical,high,medium
+
+      - name: Scan the repository
+        run: |
+          threatcrush scan . --format json --output threatcrush.json
+          threatcrush scan . --fail-on critical
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: threatcrush-report
+          path: threatcrush.json

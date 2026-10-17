@@ -10,6 +10,7 @@ packages/fleet-core   One command across many servers: selection, guard, runner.
 packages/database     The local store, shared by every surface.
 packages/plugin-api   The plugin contract, registry and external-plugin loader.
 packages/plugin-mediaanalyzer  The built-in MediaAnalyzer plugin.
+packages/plugin-dbbackup       The built-in database backup plugin.
 apps/cli              The `diskpush` command.
 apps/desktop          Electron main, preload, and the renderer.
 apps/web              diskpush.com.
