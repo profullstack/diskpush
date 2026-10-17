@@ -1,4 +1,5 @@
-import { execFileSync, spawnSync } from 'node:child_process'
+import { spawnSync } from 'node:child_process'
+import { pickFetcher } from '../fetcher.js'
 import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -222,19 +223,4 @@ function probe(binary: string, args: string[]): string | null {
   if (result.error) return null
   const combined = `${result.stdout ?? ''}${result.stderr ?? ''}`.trim()
   return combined === '' ? null : combined
-}
-
-function pickFetcher(): { binary: string; args: string[] } | null {
-  for (const candidate of [
-    { binary: 'curl', args: ['-fsSL'] },
-    { binary: 'wget', args: ['-qO-'] },
-  ]) {
-    try {
-      execFileSync('command', ['-v', candidate.binary], { stdio: 'ignore', shell: '/bin/sh' })
-      return candidate
-    } catch {
-      // try the next one
-    }
-  }
-  return null
 }
