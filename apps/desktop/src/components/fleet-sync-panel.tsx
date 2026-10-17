@@ -5,7 +5,8 @@ import { CircleAlert, CircleCheck, CircleDashed, Copy, HardDriveDownload, Loader
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { PathInput, type PathSource } from '@/components/path-input'
-import { destinationFor, errorReport } from '@/lib/fleet-sync'
+import { destinationFor, errorReport, formatPercent, progressDetail, recordFile, type FileRow } from '@/lib/fleet-sync'
+import { formatBytes } from '@/lib/format'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { api, unwrap, type Connection, type FleetSyncEvent } from '@/lib/api'
 
@@ -29,6 +30,12 @@ type DestView = {
   message: string
   /** rsync's own stderr, kept so a failure shows its real cause, not just the summary. */
   log: string[]
+  /** "0.2% · 570 MB of ~300 GB · 4.1 MB/s · ~20 h left" while it runs. */
+  detail: string
+  /** Files sent (or being sent), newest first; the first one is in flight while it runs. */
+  files: FileRow[]
+  /** How many files this destination has been sent in all, past the list's cap. */
+  fileCount: number
 }
 
 const LOG_LINES = 30
@@ -73,7 +80,12 @@ export function FleetSyncPanel() {
         if (e.type === 'begin') next.state = 'running'
         else if (e.type === 'progress') {
           next.state = 'running'
-          next.percent = Math.max(0, Math.min(100, Math.round(e.progress.percent)))
+          next.percent = Math.max(0, Math.min(100, e.progress.percent))
+          next.detail = progressDetail(e.progress)
+        } else if (e.type === 'change') {
+          const before = cur.files.length
+          next.files = recordFile(cur.files, e.change)
+          if (next.files.length !== before || next.files[0]?.path !== cur.files[0]?.path) next.fileCount = cur.fileCount + 1
         } else if (e.type === 'stderr') {
           next.message = e.line
           next.log = [...cur.log, e.line].slice(-LOG_LINES)
@@ -116,7 +128,7 @@ export function FleetSyncPanel() {
     const initial: Record<string, DestView> = {}
     for (const id of ids) {
       const s = servers.find((x) => x.id === id)
-      initial[id] = { id, name: s?.name ?? id, host: s?.host ?? '', state: 'pending', percent: 0, message: '', log: [] }
+      initial[id] = { id, name: s?.name ?? id, host: s?.host ?? '', state: 'pending', percent: 0, message: '', log: [], detail: '', files: [], fileCount: 0 }
     }
     setDests(initial)
 
@@ -240,9 +252,32 @@ export function FleetSyncPanel() {
                     style={{ width: `${d.percent}%` }}
                   />
                 </div>
-                <span className="w-10 text-right text-faint">{d.percent}%</span>
-                {d.message && d.state !== 'error' ? <span className="max-w-[40%] truncate text-faint">{d.message}</span> : null}
+                <span className="w-12 text-right text-faint tabular-nums">{formatPercent(d.percent)}</span>
+                {d.state === 'running' && d.detail ? (
+                  <span className="max-w-[45%] truncate text-faint tabular-nums" title={d.detail}>
+                    {d.detail.split(' · ').slice(1).join(' · ')}
+                  </span>
+                ) : d.message && d.state !== 'error' ? (
+                  <span className="max-w-[40%] truncate text-faint">{d.message}</span>
+                ) : null}
               </div>
+              {d.files.length ? (
+                <details className="mx-2 mb-2 rounded-md border border-line text-[12px]" open={d.state === 'running'}>
+                  <summary className="cursor-pointer px-2 py-1 text-faint select-none">
+                    {d.state === 'running' ? 'Sending' : 'Sent'} {d.fileCount.toLocaleString()} file{d.fileCount === 1 ? '' : 's'}
+                    {d.state === 'running' && d.files[0] ? <span className="ml-2 font-mono text-foreground">{d.files[0].path}</span> : null}
+                  </summary>
+                  <ul className="max-h-40 overflow-auto px-2 pb-1 font-mono text-[11px] selectable">
+                    {d.files.map((f, i) => (
+                      <li key={f.path} className={`flex gap-2 ${i === 0 && d.state === 'running' ? 'text-foreground' : 'text-faint'}`}>
+                        <span className="w-12 shrink-0">{f.action === 'delete' ? 'delete' : i === 0 && d.state === 'running' ? 'now' : f.action === 'update' ? 'update' : 'new'}</span>
+                        <span className="flex-1 truncate" title={f.path}>{f.path}</span>
+                        <span className="shrink-0 tabular-nums">{f.size === null ? '' : formatBytes(f.size)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              ) : null}
               {d.state === 'error' ? (
                 <div className="mx-2 mb-2 rounded-md border border-destructive/40 bg-destructive/5 p-2 text-[12px]" role="alert">
                   <div className="flex items-start gap-2">
