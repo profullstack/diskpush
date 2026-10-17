@@ -118,6 +118,55 @@ diskpush dbbackup restore shop --to-env STAGING_URL        # asks before it writ
 diskpush dbbackup cron --at "15 3 * * *"                   # a crontab line to paste
 ```
 
+### Every database on every server: `discover`
+
+You do not have to list your databases. `discover` looks on every server
+DiskPush already knows (saved connections and `~/.ssh/config` hosts, the same
+list as `diskpush fleet servers`) over the ssh keys and agent you already use,
+and lists what it finds; `--save` keeps them for backup.
+
+```bash
+diskpush dbbackup discover                          # look everywhere, change nothing
+diskpush dbbackup discover dev2 vienna              # just these
+diskpush dbbackup discover --save --tags nightly --keep-last 14 --push backup@nas:/srv/db
+diskpush dbbackup run --tags nightly                # back them all up
+```
+
+On each server one read-only shell script, sent in a single ssh call, finds:
+
+| What | How it is found | How it is backed up |
+| --- | --- | --- |
+| Postgres / Supabase in Docker | `docker ps` (images `postgres`, `postgis`, `supabase/postgres`, `timescale`, `pgvector`…; a compose project ending `-supabase` makes it Supabase), then each container's databases with `psql` inside it, signing in the way the image allows (`POSTGRES_USER`, `postgres`, `supabase_admin`, over the socket or `127.0.0.1`) | `docker exec <container> pg_dump …` on the server |
+| MySQL / MariaDB in Docker | `docker ps`, then `mysql -uroot` inside the container with the container's own `MYSQL_ROOT_PASSWORD` | `docker exec <container> mysqldump …`, with that same password from the container's environment |
+| Native Postgres | every online cluster (`pg_lsclusters`), as the `postgres` OS user | `sudo -n -u postgres pg_dump -p <port> …` |
+| Native MySQL / MariaDB | root over the local socket | `mysqldump` as root |
+| SQLite | files under `/srv`, `/opt`, `/var/www`, `/root`, `/home` (setting `sqliteRoots`) whose first bytes are SQLite's header, skipping dependency, cache, source-checkout, worktree, `backups` and `tmp` folders, hidden folders and files, `*.bak*`/replica copies and `opencode.db`; files over 4 GB are listed as skipped (`--max-sqlite-mb`) | SQLite's online backup on the server, `PRAGMA quick_check`, then the file itself comes back |
+
+**The dump runs on the server; only its bytes come back over ssh.** No
+database port is opened to this machine, no `pg_dump` of the right version is
+needed here, and **no database password is copied anywhere**: a container is
+entered with `docker exec`, a native install through its socket. A database
+that discovery lists is one that it reached exactly the way the backup will.
+The same completion-line rule applies, so a dump cut short by a dropped
+connection is still thrown away.
+
+Each database is named after its server and what a person would call it
+(`dev2-crawlproof`, `dev2-nichedb-supabase`, `bbs-agentbbs-bbs`), and app
+env files (`~/www/*/app.env`, `*/.env`) that point at it are shown beside it,
+passwords masked on the server before they are read. Running `discover` again
+adds only what is new, and names anything saved that a reachable server no
+longer has.
+
+Git forges (`github.com`, `gitlab.com`, …) and second aliases of the same
+`user@host:port` are not looked on, and two aliases that turn out to reach the
+same machine (same `/etc/machine-id`) are listed once, under the one with the
+most access. A server that cannot be reached is reported and the rest carry on.
+Probing uses `ssh -o BatchMode=yes`: an unknown host key fails rather than
+asks, unless you pass `--accept-new`. The login needs to be root, in the
+`docker` group, or have passwordless `sudo` for what it should see; the report
+says when it cannot get in somewhere. In the desktop, *Find databases on every
+server* under Plugins… does the same and saves what it finds.
+
 **File names are the catalogue.** `shop--20261017T031500Z--nightly+prod.sql.gz`
 is database `shop`, taken at that UTC time, tagged `nightly` and `prod`. Each
 database gets its own folder under the backup folder (`~/Backups/diskpush`
@@ -174,7 +223,7 @@ the file really is SQLite), and *Verify backup* on a backup. *Back up every
 database now* is under Plugins… in the desktop.
 
 **Settings:** `backupDir`, `keepLast`, `keepDays`, `push`, `rsh` (the ssh
-command for pushes), and `pg_dumpPath` / `mysqldumpPath` / `psqlPath` /
+command for pushes), `sqliteRoots` (where discovery looks for SQLite files), and `pg_dumpPath` / `mysqldumpPath` / `psqlPath` /
 `mysqlPath` / `sqlite3Path` to pin a tool.
 
 ## Writing a plugin
@@ -237,6 +286,7 @@ it (`ctx.surface` says which: `cli`, `tui` or `desktop`).
 | `openUrl(url)` | the user's browser; http and https only |
 | `signal` | aborted on Ctrl+C, esc, or Cancel. Stop, save what you have, return |
 | `env` | environment variables |
+| `servers` | optional: the user's servers (`list()` → name, host, port, username, keyPath, jumpHost, sshConfigAlias, passwordAuth; never a password), plus `knownHostsFiles` and `sshConfigFile` to hand to `ssh`. Absent where a host has none to offer |
 | `print`, `warn`, `printJson`, `json`, `prompt`, `cwd` | commands only |
 
 An action returns `{ ok, message, changed? }`. `changed: true` makes the file

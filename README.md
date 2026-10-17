@@ -112,6 +112,7 @@ diskpush mediaanalyzer login
 diskpush mediaanalyzer analyze ~/Pictures/2024 --sort
 
 # Back up Postgres, Supabase, MySQL and SQLite: tagged, verified, pruned, pushed
+diskpush dbbackup discover --save            # every database on every server you have, over ssh
 diskpush dbbackup add shop --kind postgres --push backup@nas:/srv/db
 diskpush dbbackup run --tags nightly
 diskpush dbbackup restore shop --to-env STAGING_DATABASE_URL

@@ -10,7 +10,7 @@
 import { homedir } from 'node:os'
 import { isAbsolute, join, resolve } from 'node:path'
 import { shell, type WebContents } from 'electron'
-import { diskpushHome } from '@diskpush/database'
+import { diskpushHome, knownHostsPath } from '@diskpush/database'
 import {
   PluginError,
   PluginRegistry,
@@ -24,11 +24,15 @@ import {
   type LoadFailure,
   type LogLevel,
   type ProgressSink,
+  type ServerDirectory,
   type SettingDef,
 } from '@diskpush/plugin-api'
+import { toServerRef } from '@diskpush/ssh-core'
 import { dbBackupPlugin } from '@diskpush/plugin-dbbackup'
 import { mediaAnalyzerPlugin } from '@diskpush/plugin-mediaanalyzer'
 import { ExternalUrlSchema, IPC, type PluginActionRequest } from '../../shared/contract.js'
+import { fleetServers } from './fleet.js'
+import { isLocalConnectionId } from './local-session.js'
 import { store } from './store.js'
 
 /** The same built-in list as the CLI's (apps/cli/src/plugins.ts). */
@@ -125,13 +129,22 @@ async function openUrl(url: string): Promise<void> {
   await shell.openExternal(ExternalUrlSchema.parse(url))
 }
 
+/** The Fleet tab's servers, without its synthetic localhost: a plugin runs here already. */
+const servers: ServerDirectory = {
+  async list() {
+    return (await fleetServers()).filter((connection) => !isLocalConnectionId(connection.id)).map(toServerRef)
+  },
+  knownHostsFiles: [join(homedir(), '.ssh', 'known_hosts'), knownHostsPath()],
+  sshConfigFile: process.env.DISKPUSH_SSH_CONFIG ?? null,
+}
+
 /** Starts `work` under a fresh AbortController, reports its outcome, and returns at once. */
 function launch(jobId: string, sender: WebContents, work: (host: HostContext) => Promise<ActionResult>): { jobId: string } {
   if (running.has(jobId)) throw new PluginError('That job id is already running.')
   const controller = new AbortController()
   running.set(jobId, controller)
   const progress = sink(jobId, sender)
-  const host: HostContext = { progress, openUrl, signal: controller.signal, surface: 'desktop', env: process.env }
+  const host: HostContext = { progress, openUrl, signal: controller.signal, surface: 'desktop', env: process.env, servers }
   void (async () => {
     let result: ActionResult
     try {

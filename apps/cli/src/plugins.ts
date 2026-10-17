@@ -7,7 +7,9 @@
  * the user's privileges, exactly like the CLI itself.
  */
 import { spawn } from 'node:child_process'
-import { diskpushHome } from '@diskpush/database'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
+import { diskpushHome, knownHostsPath, type DiskPushStore } from '@diskpush/database'
 import {
   PluginRegistry,
   loadExternalPlugins,
@@ -18,10 +20,13 @@ import {
   type EntryRef,
   type LoadFailure,
   type ProgressSink,
+  type ServerDirectory,
   type SettingsBackend,
 } from '@diskpush/plugin-api'
+import { toServerRef } from '@diskpush/ssh-core'
 import { dbBackupPlugin } from '@diskpush/plugin-dbbackup'
 import { mediaAnalyzerPlugin } from '@diskpush/plugin-mediaanalyzer'
+import { sshConfigHosts } from './resolve.js'
 
 /** Plugins that ship with DiskPush. */
 export const BUILTIN_PLUGINS = [mediaAnalyzerPlugin, dbBackupPlugin]
@@ -41,6 +46,23 @@ export async function loadPlugins(
   const failures =
     options.external === false ? [] : await loadExternalPlugins(registry, pluginsDirectory(diskpushHome(options.env)))
   return { registry, failures }
+}
+
+/**
+ * The servers a plugin may work on: the same list `diskpush fleet servers`
+ * shows (saved SSH connections, then ~/.ssh/config hosts, saved names
+ * winning), and the known_hosts files DiskPush and OpenSSH keep.
+ */
+export function serverDirectory(store: DiskPushStore, env: NodeJS.ProcessEnv = process.env): ServerDirectory {
+  return {
+    async list() {
+      const saved = (await store.listConnections()).filter((connection) => connection.kind !== 's3')
+      const savedNames = new Set(saved.map((connection) => connection.name))
+      return [...saved, ...sshConfigHosts(env).filter((host) => !savedNames.has(host.name))].map(toServerRef)
+    },
+    knownHostsFiles: [join(homedir(), '.ssh', 'known_hosts'), knownHostsPath(env)],
+    sshConfigFile: env.DISKPUSH_SSH_CONFIG ?? null,
+  }
 }
 
 /**
