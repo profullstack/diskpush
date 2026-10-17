@@ -1,0 +1,28 @@
+{
+  "name": "@diskpush/plugin-dbbackup",
+  "version": "0.12.7",
+  "description": "DiskPush plugin: dump Postgres, Supabase, MySQL/MariaDB and SQLite databases to tagged, verified, gzipped files, prune them, push them anywhere rsync reaches, and restore them.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "diskpush": {
+    "plugin": "dbbackup"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@diskpush/plugin-api": "workspace:*"
+  }
+}

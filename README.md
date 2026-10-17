@@ -1,5 +1,7 @@
 # DiskPush
 
+[![ThreatCrush: verified safe](https://img.shields.io/badge/ThreatCrush-verified%20safe-brightgreen)](docs/threatcrush-scan.md) [![CI](https://github.com/profullstack/diskpush/actions/workflows/ci.yml/badge.svg)](https://github.com/profullstack/diskpush/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+
 **Push files fast. Sync only what changed.**
 
 DiskPush is a desktop app and CLI for rsync. Browse servers like FileZilla, and
@@ -105,6 +107,11 @@ diskpush fleet run "systemctl reload nginx" --on 'web-*' --sudo
 # Describe a folder of photos, and sort them into folders by what they show
 diskpush mediaanalyzer login
 diskpush mediaanalyzer analyze ~/Pictures/2024 --sort
+
+# Back up Postgres, Supabase, MySQL and SQLite: tagged, verified, pruned, pushed
+diskpush dbbackup add shop --kind postgres --push backup@nas:/srv/db
+diskpush dbbackup run --tags nightly
+diskpush dbbackup restore shop --to-env STAGING_DATABASE_URL
 ```
 
 ## Safety
@@ -144,7 +151,8 @@ to make that flag hard to trigger by accident.
 | [docs/file-browser.md](docs/file-browser.md) | Why browsing is SFTP and transfers are rsync |
 | [docs/profiles.md](docs/profiles.md) | Saved, repeatable directory pairs |
 | [docs/fleet.md](docs/fleet.md) | Running one command, or an upgrade, across many servers |
-| [docs/plugins.md](docs/plugins.md) | Plugins, MediaAnalyzer, writing one, and the security model |
+| [docs/plugins.md](docs/plugins.md) | Plugins, MediaAnalyzer, database backups, writing one, and the security model |
+| [docs/threatcrush-scan.md](docs/threatcrush-scan.md) | What the ThreatCrush badge enforces, and every finding below it |
 | [docs/security.md](docs/security.md) | Threat model and the decisions that follow from it |
 | [docs/architecture.md](docs/architecture.md) | Packages, processes and boundaries |
 | [docs/troubleshooting.md](docs/troubleshooting.md) | What the errors mean |
@@ -163,6 +171,7 @@ packages/fleet-core one command across many servers, with no Electron in it
 packages/database   the local store shared by desktop and CLI
 packages/plugin-api the plugin contract, registry and external loader
 packages/plugin-mediaanalyzer  the built-in MediaAnalyzer plugin
+packages/plugin-dbbackup       the built-in database backup plugin (Postgres, Supabase, MySQL, SQLite)
 ```
 
 `rsync-core` deliberately has no dependency on Electron or on the CLI, so the

@@ -31,6 +31,7 @@ const MANIFESTS = [
   'packages/database/package.json',
   'packages/plugin-api/package.json',
   'packages/plugin-mediaanalyzer/package.json',
+  'packages/plugin-dbbackup/package.json',
 ]
 const TAG_SOURCE = 'apps/cli/package.json'
 
