@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { CircleAlert, CircleCheck, CircleDashed, HardDriveDownload, Loader2, Play, Square } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
-import { Input } from '@/components/ui/input'
+import { PathInput, type PathSource } from '@/components/path-input'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { api, unwrap, type Connection, type FleetSyncEvent } from '@/lib/api'
 
@@ -78,6 +78,12 @@ export function FleetSyncPanel() {
   }, [])
 
   const destServers = useMemo(() => servers.filter((s) => s.id !== sourceId), [servers, sourceId])
+  // Completion for the two path boxes: the source path against the source, the
+  // destination path against the first ticked destination (the source until one is).
+  const asSource = (id: string): PathSource | null => (!id ? null : id === 'local' ? { kind: 'local' } : { kind: 'remote', connectionId: id })
+  const sourceListing = asSource(sourceId)
+  const destListing = asSource([...selected].find((id) => id !== sourceId) ?? sourceId)
+
   const canRun = Boolean(sourceId) && sourcePath.trim().length > 0 && selected.size > 0 && !active
 
   const toggle = (id: string) =>
@@ -140,22 +146,26 @@ export function FleetSyncPanel() {
             </option>
           ))}
         </select>
-        <Input
+        <PathInput
           value={sourcePath}
-          onChange={(e) => setSourcePath(e.target.value)}
-          placeholder="/path/on/source"
-          className="h-[var(--control)] min-w-[240px] flex-1 text-[12px]"
+          onChange={setSourcePath}
+          source={sourceListing}
+          placeholder="~/ or /path/on/source (Tab completes)"
+          aria-label="Source path"
+          className="h-[var(--control)] font-mono text-[12px]"
         />
       </div>
 
       {/* Destination path */}
       <div className="flex flex-wrap items-center gap-2">
         <label className="text-[11px] text-faint">Dest path</label>
-        <Input
+        <PathInput
           value={destPath}
-          onChange={(e) => setDestPath(e.target.value)}
+          onChange={setDestPath}
+          source={destListing}
           placeholder="defaults to the source path"
-          className="h-[var(--control)] min-w-[240px] flex-1 text-[12px]"
+          aria-label="Destination path"
+          className="h-[var(--control)] font-mono text-[12px]"
         />
       </div>
 
