@@ -27,6 +27,15 @@ jobs:
       - name: rsync version
         run: rsync --version | head -1
 
+      # A real S3 server for packages/s3-core's live suite: rclone's `serve s3`
+      # implements SigV4 independently of DiskPush's client, which the
+      # in-process fake cannot. Pinned; the suite skips itself without it.
+      - name: rclone (S3 server for tests)
+        run: |
+          curl -fsSL -o /tmp/rclone.zip https://downloads.rclone.org/v1.75.2/rclone-v1.75.2-linux-amd64.zip
+          unzip -q -j /tmp/rclone.zip '*/rclone' -d "$RUNNER_TEMP"
+          echo "DISKPUSH_TEST_RCLONE=$RUNNER_TEMP/rclone" >> "$GITHUB_ENV"
+
       - run: pnpm install --frozen-lockfile
 
       # The engine and the CLI first: the app builds and the typechecks below

@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { CircleAlert, Copy, FileDown, Plus, Search, Server, ShieldCheck, Trash2 } from 'lucide-react'
+import { CircleAlert, Copy, Database, FileDown, Plus, Search, Server, ShieldCheck, Trash2 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -10,6 +10,8 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { api, unwrap, type Connection } from '@/lib/api'
+import { KindSwitch, S3Fields, SELECT_CLASS } from '@/components/s3-fields'
+import { BLANK_S3, connectionDetail, isS3, s3DraftFrom, s3Payload, s3Problem, type S3Draft } from '@/lib/s3-form'
 
 /**
  * The server manager: browse everything you have saved, and edit any of it.
@@ -29,6 +31,9 @@ import { api, unwrap, type Connection } from '@/lib/api'
 
 type Draft = {
   id: string | null
+  kind: 'ssh' | 's3'
+  /** The bucket settings; only used when `kind` is s3. */
+  s3: S3Draft
   name: string
   host: string
   port: string
@@ -45,6 +50,8 @@ type Draft = {
 
 const BLANK: Draft = {
   id: null,
+  kind: 'ssh',
+  s3: BLANK_S3,
   name: '',
   host: '',
   port: '22',
@@ -62,6 +69,8 @@ const BLANK: Draft = {
 function toDraft(connection: Connection): Draft {
   return {
     id: connection.id,
+    kind: isS3(connection) ? 's3' : 'ssh',
+    s3: s3DraftFrom(connection),
     name: connection.name,
     host: connection.host,
     port: String(connection.port),
@@ -142,27 +151,44 @@ export function ServerManager({ open, onClose, onChanged }: { open: boolean; onC
     setBusy(true)
     setError(null)
     try {
+      const tags = draft.tags
+        .split(',')
+        .map((tag) => tag.trim())
+        .filter(Boolean)
       const saved = await unwrap(
-        api()?.connections.save({
-          // Present when editing, absent when creating. The store upserts on
-          // it, so an edit never leaves a second copy behind.
-          ...(draft.id ? { id: draft.id } : {}),
-          name: draft.name.trim(),
-          host: draft.host.trim(),
-          username: draft.username.trim(),
-          port: Number(draft.port) || 22,
-          authType: draft.authType,
-          keyPath: draft.authType === 'key' ? draft.keyPath.trim() || null : null,
-          defaultRemotePath: draft.defaultRemotePath.trim() || null,
-          jumpHost: draft.jumpHost.trim() || null,
-          rsyncPath: draft.rsyncPath.trim() || null,
-          forwardAgent: draft.forwardAgent,
-          tags: draft.tags
-            .split(',')
-            .map((tag) => tag.trim())
-            .filter(Boolean),
-          notes: draft.notes,
-        }),
+        api()?.connections.save(
+          draft.kind === 's3'
+            ? {
+                ...(draft.id ? { id: draft.id } : {}),
+                // host, username and port are derived from the endpoint and
+                // bucket in the main process; the secret, if typed, is
+                // write-only and never comes back.
+                kind: 's3',
+                name: draft.name.trim(),
+                ...s3Payload(draft.s3),
+                defaultRemotePath: draft.defaultRemotePath.trim() || null,
+                tags,
+                notes: draft.notes,
+              }
+            : {
+                // Present when editing, absent when creating. The store upserts on
+                // it, so an edit never leaves a second copy behind.
+                ...(draft.id ? { id: draft.id } : {}),
+                kind: 'ssh',
+                name: draft.name.trim(),
+                host: draft.host.trim(),
+                username: draft.username.trim(),
+                port: Number(draft.port) || 22,
+                authType: draft.authType,
+                keyPath: draft.authType === 'key' ? draft.keyPath.trim() || null : null,
+                defaultRemotePath: draft.defaultRemotePath.trim() || null,
+                jumpHost: draft.jumpHost.trim() || null,
+                rsyncPath: draft.rsyncPath.trim() || null,
+                forwardAgent: draft.forwardAgent,
+                tags,
+                notes: draft.notes,
+              },
+        ),
       )
       setDraft(toDraft(saved))
       setReadOnly(false)
@@ -198,14 +224,19 @@ export function ServerManager({ open, onClose, onChanged }: { open: boolean; onC
     setProbe(null)
     try {
       const report = (await unwrap(api()?.connections.test(draft.id))) as {
+        kind?: 's3'
+        message?: string
         sftp?: boolean
         rsync?: boolean
         rsyncVersion?: string | null
       }
       setProbe(
-        `SSH ok · SFTP ${report.sftp ? 'ok' : 'unavailable'} · rsync ${
-          report.rsync ? (report.rsyncVersion ?? 'ok') : 'not found'
-        }`,
+        // A bucket answers with its own message; there is no SSH, SFTP or rsync to report.
+        report.kind === 's3'
+          ? (report.message ?? 'S3 bucket reachable')
+          : `SSH ok · SFTP ${report.sftp ? 'ok' : 'unavailable'} · rsync ${
+              report.rsync ? (report.rsyncVersion ?? 'ok') : 'not found'
+            }`,
       )
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught))
@@ -215,7 +246,11 @@ export function ServerManager({ open, onClose, onChanged }: { open: boolean; onC
   }, [draft.id])
 
   const set = <K extends keyof Draft>(key: K, value: Draft[K]) => setDraft((current) => ({ ...current, [key]: value }))
-  const canSave = draft.name.trim() !== '' && draft.host.trim() !== '' && draft.username.trim() !== '' && !busy
+  const s3Issue = draft.kind === 's3' ? s3Problem(draft.s3) : null
+  const canSave =
+    draft.name.trim() !== '' &&
+    (draft.kind === 's3' ? s3Issue === null : draft.host.trim() !== '' && draft.username.trim() !== '') &&
+    !busy
 
   return (
     <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
@@ -225,7 +260,7 @@ export function ServerManager({ open, onClose, onChanged }: { open: boolean; onC
           <div>
             <h2 className="text-[13px] font-medium">Servers</h2>
             <p className="text-[11px] text-muted-foreground">
-              Used by both the transfer panes and Fleet.
+              Servers and S3 buckets for the transfer panes. Fleet uses the servers.
             </p>
           </div>
         </header>
@@ -304,9 +339,15 @@ export function ServerManager({ open, onClose, onChanged }: { open: boolean; onC
                 variant="outline"
                 size="sm"
                 title="Copy this server's settings into a new one"
-                disabled={!draft.host}
+                disabled={!draft.name}
                 onClick={() => {
-                  setDraft((current) => ({ ...current, id: null, name: `${current.name}-copy` }))
+                  // A copy never inherits a stored secret: it has to be typed again.
+                  setDraft((current) => ({
+                    ...current,
+                    id: null,
+                    name: `${current.name}-copy`,
+                    s3: { ...current.s3, hasSecret: false, clearSecret: false },
+                  }))
                   setReadOnly(false)
                   setProbe(null)
                 }}
@@ -350,6 +391,37 @@ export function ServerManager({ open, onClose, onChanged }: { open: boolean; onC
                   </p>
                 ) : null}
 
+                <KindSwitch
+                  value={draft.kind}
+                  onChange={(kind) => {
+                    set('kind', kind)
+                    setProbe(null)
+                  }}
+                  disabled={readOnly}
+                />
+
+                {draft.kind === 's3' ? (
+                  <>
+                    <div className="grid grid-cols-2 gap-3">
+                      <Field label="Name">
+                        <Input value={draft.name} onChange={(e) => set('name', e.target.value)} className="h-8 text-[12.5px]" />
+                      </Field>
+                      <Field label="Tags" hint="Comma separated.">
+                        <Input value={draft.tags} onChange={(e) => set('tags', e.target.value)} placeholder="backups" className="h-8 text-[12.5px]" />
+                      </Field>
+                    </div>
+                    <S3Fields value={draft.s3} onChange={(next) => set('s3', next)} />
+                    <div className="grid grid-cols-2 gap-3">
+                      <Field label="Default path in the bucket" hint="Where a pane opens. Empty is the bucket root." className="col-span-2">
+                        <Input value={draft.defaultRemotePath} onChange={(e) => set('defaultRemotePath', e.target.value)} placeholder="/" className="h-8 text-[12.5px]" />
+                      </Field>
+                      <Field label="Notes" className="col-span-2">
+                        <Input value={draft.notes} onChange={(e) => set('notes', e.target.value)} className="h-8 text-[12.5px]" />
+                      </Field>
+                    </div>
+                  </>
+                ) : (
+                <>
                 <div className="grid grid-cols-2 gap-3">
                   <Field label="Name">
                     <Input value={draft.name} onChange={(e) => set('name', e.target.value)} disabled={readOnly} className="h-8 text-[12.5px]" />
@@ -371,7 +443,7 @@ export function ServerManager({ open, onClose, onChanged }: { open: boolean; onC
                       value={draft.authType}
                       onChange={(e) => set('authType', e.target.value as 'agent' | 'key')}
                       disabled={readOnly}
-                      className="focus-ring h-8 w-full rounded-md border border-input bg-background px-2 text-[12.5px]"
+                      className={SELECT_CLASS}
                     >
                       <option value="agent">SSH agent</option>
                       <option value="key">Key file</option>
@@ -409,23 +481,29 @@ export function ServerManager({ open, onClose, onChanged }: { open: boolean; onC
                     </span>
                   </span>
                 </label>
-
-                {probe ? (
-                  <p className="flex items-center gap-1.5 rounded-md border border-line bg-secondary px-2.5 py-1.5 text-[11.5px] text-ok">
-                    <ShieldCheck className="size-3.5" />
-                    {probe}
-                  </p>
-                ) : null}
+                </>
+                )}
               </div>
             </ScrollArea>
 
             <footer className="flex shrink-0 items-center gap-2 border-t border-line bg-chrome px-4 py-2.5">
               <Button onClick={() => void save()} disabled={!canSave} className="text-[12px]">
-                {readOnly ? 'Save a copy' : draft.id ? 'Save changes' : 'Create server'}
+                {readOnly ? 'Save a copy' : draft.id ? 'Save changes' : draft.kind === 's3' ? 'Create bucket connection' : 'Create server'}
               </Button>
               <Button variant="outline" onClick={() => void test()} disabled={!draft.id || readOnly || busy} className="text-[12px]">
                 Test
               </Button>
+              {/*
+                Beside the button that produced it. At the bottom of the
+                scrolling form it landed below the fold on a small window, so
+                pressing Test appeared to do nothing.
+              */}
+              {probe ? (
+                <span role="status" title={probe} className="flex min-w-0 items-center gap-1.5 text-[11.5px] text-ok">
+                  <ShieldCheck className="size-3.5 shrink-0" />
+                  <span className="truncate">{probe}</span>
+                </span>
+              ) : null}
               {draft.id && !readOnly ? (
                 <Button variant="destructive" onClick={() => void remove()} disabled={busy} className="ml-auto gap-1.5 text-[12px]">
                   <Trash2 className="size-3.5" />
@@ -460,9 +538,9 @@ function Row({
       }`}
     >
       <span className={`w-full truncate text-[12.5px] ${muted ? 'text-muted-foreground' : ''}`}>{connection.name}</span>
-      <span className="w-full truncate text-[10.5px] text-faint">
-        {connection.username}@{connection.host}
-        {connection.port !== 22 ? `:${connection.port}` : ''}
+      <span className="flex w-full items-center gap-1 truncate text-[10.5px] text-faint">
+        {isS3(connection) ? <Database className="size-3 shrink-0" /> : null}
+        <span className="truncate">{connectionDetail(connection)}</span>
       </span>
       {(connection.tags ?? []).length > 0 ? (
         <span className="mt-0.5 flex flex-wrap gap-1">

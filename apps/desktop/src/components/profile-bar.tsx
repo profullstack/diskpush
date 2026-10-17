@@ -140,5 +140,6 @@ export function ProfileBar({
 
 function describe(endpoint: SyncProfile['source']): string {
   if (endpoint.type === 'local') return endpoint.path
+  if (endpoint.type === 's3') return `s3://${endpoint.bucket}/${endpoint.path.replace(/^\/+/, '')}`
   return `${endpoint.host}:${endpoint.path}`
 }

@@ -14,12 +14,12 @@ import {
   type ExecutionPlan,
 } from './transfer-helpers.js'
 import type { Change, RsyncOptions } from '@diskpush/schemas'
-import { summarizeChanges, topologyOf } from '@diskpush/schemas'
+import { involvesS3, summarizeChanges, topologyOf } from '@diskpush/schemas'
 import { EXIT } from '../exit-codes.js'
 import { estimateRemaining, formatBytes, formatDuration, formatRate, pluralize, table } from '../format.js'
 import { failure, type Output } from '../output.js'
 import { flagValue, flagValues, hasFlag, type ParsedArgv } from '../parse-argv.js'
-import { detectLocalCapabilities, optionsFromFlags, resolveEndpoint } from '../resolve.js'
+import { detectLocalCapabilities, optionsFromFlags, renderStoredEndpoint, resolveEndpoint, s3ClientForEndpoint } from '../resolve.js'
 import type { RsyncCapabilities } from '@diskpush/rsync-core'
 
 /** Commands that are the same safe engine with a different intent and preset. */
@@ -101,14 +101,26 @@ export async function runTransfer(
   const destination = await resolveEndpoint(store, destinationInput)
   const topology = topologyOf(source.endpoint, destination.endpoint)
 
-  const capabilities = await effectiveCapabilities(store, source, destination)
+  const s3 = involvesS3(source.endpoint, destination.endpoint)
+  let s3Client
+  if (s3) {
+    try {
+      s3Client = await s3ClientForEndpoint(store, source.endpoint.type === 's3' ? source : destination)
+    } catch (error) {
+      return failure(output, (error as Error).message, EXIT.configuration)
+    }
+  }
+  // rsync capabilities mean nothing to the S3 engine, and probing for a local
+  // rsync it will not use would only produce a misleading warning.
+  const capabilities = s3 ? undefined : await effectiveCapabilities(store, source, destination)
 
   const planInput = {
     source: source.endpoint,
     destination: destination.endpoint,
     options,
-    capabilities,
-    ...transportFor(source, destination, topology),
+    ...(capabilities ? { capabilities } : {}),
+    ...(s3Client ? { s3Client } : {}),
+    ...(s3 ? {} : transportFor(source, destination, topology)),
   }
 
   // --- print-args -----------------------------------------------------------
@@ -444,11 +456,7 @@ async function effectiveCapabilities(
   return capabilities
 }
 
-function renderStored(endpoint: import('@diskpush/schemas').Endpoint): string {
-  if (endpoint.type === 'local') return endpoint.path
-  const prefix = endpoint.user ? `${endpoint.user}@${endpoint.host}` : endpoint.host
-  return `${prefix}:${endpoint.path}`
-}
+const renderStored = renderStoredEndpoint
 
 function describe(input: string): string {
   const colon = input.indexOf(':')

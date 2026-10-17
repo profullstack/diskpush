@@ -144,6 +144,58 @@ describe('ConnectionInputSchema', () => {
   it('defaults agent forwarding to off', () => {
     expect(ConnectionInputSchema.parse({ name: 'x', host: 'h', username: 'u' }).forwardAgent).toBe(false)
   })
+
+  it('defaults to an SSH connection, which still needs a host and a user', () => {
+    expect(ConnectionInputSchema.parse({ name: 'x', host: 'h', username: 'u' }).kind).toBe('ssh')
+    expect(ConnectionInputSchema.safeParse({ name: 'x', username: 'u' }).success).toBe(false)
+    expect(ConnectionInputSchema.safeParse({ name: 'x', host: 'h' }).success).toBe(false)
+  })
+})
+
+describe('ConnectionInputSchema for an S3 bucket', () => {
+  const bucket = { name: 'backups', kind: 's3' as const, s3: { bucket: 'my-backups' } }
+
+  it('needs no host or user: the main process derives them', () => {
+    const parsed = ConnectionInputSchema.parse(bucket)
+    expect(parsed.s3).toEqual({ endpoint: null, region: 'us-east-1', bucket: 'my-backups', pathStyle: null, accessKeyId: null })
+    expect(parsed.host).toBeUndefined()
+  })
+
+  it('needs the S3 settings', () => {
+    expect(ConnectionInputSchema.safeParse({ name: 'b', kind: 's3' }).success).toBe(false)
+    expect(ConnectionInputSchema.safeParse({ name: 'b', kind: 's3', s3: {} }).success).toBe(false)
+  })
+
+  it('accepts R2 and MinIO endpoints', () => {
+    const r2 = { ...bucket, s3: { bucket: 'b', endpoint: 'https://abc123.r2.cloudflarestorage.com', region: 'auto' } }
+    const minio = { ...bucket, s3: { bucket: 'b', endpoint: 'http://localhost:9000', pathStyle: true } }
+    expect(ConnectionInputSchema.safeParse(r2).success).toBe(true)
+    expect(ConnectionInputSchema.safeParse(minio).success).toBe(true)
+  })
+
+  it('only sends signed requests to http(s)', () => {
+    for (const endpoint of ['file:///etc/passwd', 'ftp://example.com', 'javascript:alert(1)', 'not a url']) {
+      expect(ConnectionInputSchema.safeParse({ ...bucket, s3: { bucket: 'b', endpoint } }).success, endpoint).toBe(false)
+    }
+  })
+
+  it('refuses bucket names and regions that could smuggle a path or a host', () => {
+    expect(ConnectionInputSchema.safeParse({ ...bucket, s3: { bucket: 'a/b' } }).success).toBe(false)
+    expect(ConnectionInputSchema.safeParse({ ...bucket, s3: { bucket: 'a b' } }).success).toBe(false)
+    expect(ConnectionInputSchema.safeParse({ ...bucket, s3: { bucket: 'b', region: 'us-east-1.evil.com/' } }).success).toBe(false)
+    expect(ConnectionInputSchema.safeParse({ ...bucket, s3: { bucket: 'x'.repeat(256) } }).success).toBe(false)
+  })
+
+  it('carries the secret as write-only input: a value, an explicit null to clear, or nothing to keep', () => {
+    expect(ConnectionInputSchema.parse({ ...bucket, s3SecretAccessKey: 'shh' }).s3SecretAccessKey).toBe('shh')
+    expect(ConnectionInputSchema.parse({ ...bucket, s3SecretAccessKey: null }).s3SecretAccessKey).toBeNull()
+    expect('s3SecretAccessKey' in ConnectionInputSchema.parse(bucket)).toBe(false)
+    expect(ConnectionInputSchema.safeParse({ ...bucket, s3SecretAccessKey: 'x'.repeat(1025) }).success).toBe(false)
+  })
+
+  it('refuses S3 settings on an SSH connection', () => {
+    expect(ConnectionInputSchema.safeParse({ name: 'x', host: 'h', username: 'u', s3: { bucket: 'b' } }).success).toBe(false)
+  })
 })
 
 describe('EntryNameSchema', () => {

@@ -1,6 +1,7 @@
 import type { DiskPushStore } from '@diskpush/database'
 import { JobStateSchema } from '@diskpush/schemas'
 import { EXIT } from '../exit-codes.js'
+import { renderStoredEndpoint } from '../resolve.js'
 import { formatBytes, table } from '../format.js'
 import { failure, type Output } from '../output.js'
 import { flagValue, numberFlag, type ParsedArgv } from '../parse-argv.js'
@@ -58,10 +59,7 @@ export async function runJob(parsed: ParsedArgv, store: DiskPushStore, output: O
   return EXIT.ok
 }
 
-function render(endpoint: import('@diskpush/schemas').Endpoint): string {
-  if (endpoint.type === 'local') return endpoint.path
-  return `${endpoint.host}:${endpoint.path}`
-}
+const render = renderStoredEndpoint
 
 /**
  * Re-runs a recorded job. Nothing special happens here: rsync's partial file

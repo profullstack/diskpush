@@ -77,6 +77,13 @@ DiskPush gates on the version:
   the desktop renderer. DiskPush keeps the database file owner-only (`0600`).
   Moving it into OS secure storage both surfaces can reach is an open item in
   [plugins.md](plugins.md#not-yet).
+- **The same exception: S3 secret access keys.** An S3 connection's secret is
+  stored in that settings table (`connection-secret:<id>:…`), never in
+  `connections`, for the same reason: the CLI and the desktop app must share
+  it. It is write-only from the desktop renderer, which only learns whether
+  one is saved, and `connections remove` deletes it. Saving the connection
+  with `--no-secret` and supplying `AWS_ACCESS_KEY_ID` /
+  `AWS_SECRET_ACCESS_KEY` at run time stores nothing. See [s3.md](s3.md).
 - Credentials are never written to logs. "Copy command" redacts.
 
 ## Destructive operations

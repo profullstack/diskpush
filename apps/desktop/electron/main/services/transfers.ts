@@ -12,11 +12,13 @@ import {
   type ExecutionPlan,
   type RsyncCapabilities,
 } from '@diskpush/rsync-core'
-import { defaultRsyncOptions, summarizeChanges, type Endpoint, type RsyncOptions } from '@diskpush/schemas'
+import type { S3Client } from '@diskpush/s3-core'
+import { defaultRsyncOptions, isS3Connection, summarizeChanges, type Endpoint, type RsyncOptions } from '@diskpush/schemas'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { IPC, type EndpointRef, type TransferOptions, type TransferRequest } from '../../shared/contract.js'
 import { requireConnection, resolveConnection } from './connections.js'
+import { bucketPath, s3ClientForConnection } from './s3.js'
 import { store } from './store.js'
 
 const execFileAsync = promisify(execFile)
@@ -24,16 +26,42 @@ const execFileAsync = promisify(execFile)
 export type RunningJob = { id: string; cancel: () => void }
 const running = new Map<string, RunningJob>()
 
+type ResolvedEndpoint = {
+  endpoint: Endpoint
+  /** The saved connection behind a remote side; null for a local one. */
+  connectionId: string | null
+  /** Set for a bucket: the client the S3 engine will use. Never stored or sent anywhere. */
+  s3Client?: S3Client
+}
+
 /**
  * Turns the renderer's endpoint reference into a real endpoint.
  *
  * The renderer names a saved connection by id; the host, user, port, key and
  * jump host are looked up here. A renderer cannot invent a host to connect to.
+ *
+ * A remote ref names a connection, not a kind: whether it becomes an SSH
+ * endpoint or an S3 one is decided by the saved connection, and so is the
+ * bucket.
  */
-async function resolveEndpoint(ref: EndpointRef): Promise<{ endpoint: Endpoint; connectionId: string | null }> {
+export async function resolveEndpoint(ref: EndpointRef): Promise<ResolvedEndpoint> {
   if (ref.type === 'local') return { endpoint: { type: 'local', path: ref.path }, connectionId: null }
 
   const connection = await requireConnection(ref.connectionId)
+
+  if (isS3Connection(connection)) {
+    return {
+      endpoint: {
+        type: 's3',
+        connectionId: connection.id,
+        name: connection.name,
+        bucket: connection.s3.bucket,
+        path: bucketPath(ref.path),
+      },
+      connectionId: connection.id,
+      s3Client: await s3ClientForConnection(connection),
+    }
+  }
 
   return {
     endpoint: {
@@ -138,7 +166,10 @@ type BuiltPlan = { plan: ExecutionPlan; cleanup: () => Promise<void> }
 export async function buildPlan(request: TransferRequest, overrides: Partial<RsyncOptions> = {}): Promise<BuiltPlan> {
   const source = await resolveEndpoint(request.source)
   const destination = await resolveEndpoint(request.destination)
-  const capabilities = await capabilitiesFor([source.connectionId, destination.connectionId])
+  // Only an SSH side has an rsync to ask about; a bucket's side is DiskPush's own engine.
+  const capabilities = await capabilitiesFor(
+    [source, destination].map((side) => (side.endpoint.type === 'ssh' ? side.connectionId : null)),
+  )
 
   /*
    * A selection narrows the transfer to what the user picked. Without this the
@@ -158,6 +189,9 @@ export async function buildPlan(request: TransferRequest, overrides: Partial<Rsy
   }
 
   const isServerToServer = source.endpoint.type === 'ssh' && destination.endpoint.type === 'ssh'
+  // Local <-> bucket runs on the S3 engine, which needs a client and no shell.
+  // A server <-> bucket pair is refused by planTransfer with what to do instead.
+  const s3Client = source.s3Client ?? destination.s3Client
   const sourceConnection = source.connectionId ? await resolveConnection(source.connectionId) : null
 
   try {
@@ -167,15 +201,17 @@ export async function buildPlan(request: TransferRequest, overrides: Partial<Rsy
       options,
       capabilities,
       deletesConfirmed: request.deletesConfirmed,
-      ...(isServerToServer
-        ? {
-            sourceShell: await shellOptionsFor(source.connectionId),
-            destinationShell: await shellOptionsFor(destination.connectionId),
-            sourceRsyncPath: sourceConnection?.rsyncPath ?? null,
-          }
-        : {
-            remoteShell: await shellOptionsFor(source.connectionId ?? destination.connectionId),
-          }),
+      ...(s3Client
+        ? { s3Client }
+        : isServerToServer
+          ? {
+              sourceShell: await shellOptionsFor(source.connectionId),
+              destinationShell: await shellOptionsFor(destination.connectionId),
+              sourceRsyncPath: sourceConnection?.rsyncPath ?? null,
+            }
+          : {
+              remoteShell: await shellOptionsFor(source.connectionId ?? destination.connectionId),
+            }),
     })
     return { plan, cleanup }
   } catch (error) {

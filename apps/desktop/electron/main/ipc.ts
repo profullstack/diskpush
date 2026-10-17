@@ -2,7 +2,8 @@ import { lstat, mkdir, open, readdir, readFile, rename, rm, stat, unlink } from 
 import { homedir } from 'node:os'
 import { isAbsolute, join, posix, resolve } from 'node:path'
 import { ipcMain, shell, type IpcMainInvokeEvent } from 'electron'
-import { expandTilde, probeConnection, parseSshConfig, sshConfigConnections, type SftpBrowser } from '@diskpush/ssh-core'
+import { expandTilde, probeConnection, parseSshConfig, sshConfigConnections } from '@diskpush/ssh-core'
+import { isS3Connection, type S3Connection } from '@diskpush/schemas'
 import { z } from 'zod'
 import {
   ConnectionInputSchema,
@@ -34,7 +35,8 @@ import {
   TransferRequestSchema,
   type IpcResult,
 } from '../shared/contract.js'
-import { requireConnection } from './services/connections.js'
+import { forRenderer, requireConnection, saveConnectionInput } from './services/connections.js'
+import { bucketPath, s3ClientForConnection } from './services/s3.js'
 import {
   cancelFleet,
   checkFleetServers,
@@ -51,7 +53,7 @@ import {
   startFleet,
 } from './services/fleet.js'
 import { startFleetSync, cancelFleetSync } from './services/fleet-sync.js'
-import { browserFor, dropSession, sessionFor } from './services/sessions.js'
+import { browserFor, dropSession, sessionFor, type RemoteBrowser } from './services/sessions.js'
 import { store } from './services/store.js'
 import { advanceSeries, handlersFor, openSeries, openWith, stopSeries } from './services/open-with.js'
 import { cancelPreview, cancelTransfer, previewTransfer, saveProfile, startTransfer } from './services/transfers.js'
@@ -112,7 +114,7 @@ async function exists(path: string): Promise<boolean> {
  * Every remote mutation had its own copy of this, and a `finally` that is
  * written six times is a `finally` that eventually is not.
  */
-async function withBrowser<T>(connectionId: string | undefined, fn: (browser: SftpBrowser) => Promise<T>): Promise<T> {
+async function withBrowser<T>(connectionId: string | undefined, fn: (browser: RemoteBrowser) => Promise<T>): Promise<T> {
   if (!connectionId) throw new Error('That operation needs a server.')
   const browser = await browserFor(await requireConnection(connectionId))
   try {
@@ -122,16 +124,45 @@ async function withBrowser<T>(connectionId: string | undefined, fn: (browser: Sf
   }
 }
 
+/** What connections:test returns for a bucket. The renderer tells it from an SSH probe by `kind`. */
+export type S3TestReport = { kind: 's3'; ok: true; bucket: string; endpoint: string; message: string }
+
+async function testS3Connection(connection: S3Connection): Promise<S3TestReport> {
+  const client = await s3ClientForConnection(connection)
+  const endpoint = connection.s3.endpoint ?? `AWS S3 (${connection.s3.region})`
+  const seconds = connection.connectTimeoutSeconds
+  try {
+    await client.checkBucket(AbortSignal.timeout(seconds * 1000))
+  } catch (error) {
+    if (error instanceof Error && error.name === 'TimeoutError') {
+      throw new Error(`No answer from ${endpoint} within ${seconds}s.`)
+    }
+    // An S3Error's message is already the service's own explanation
+    // (NoSuchBucket, AccessDenied, SignatureDoesNotMatch …).
+    throw error
+  }
+  return {
+    kind: 's3',
+    ok: true,
+    bucket: connection.s3.bucket,
+    endpoint,
+    message: `S3 bucket reachable: ${connection.s3.bucket} at ${endpoint}`,
+  }
+}
+
 export function registerIpc(): void {
   // --- connections ---------------------------------------------------------
 
-  handle(IPC.connectionsList, z.undefined(), async () => (await store()).listConnections())
+  handle(IPC.connectionsList, z.undefined(), async () =>
+    Promise.all((await (await store()).listConnections()).map(forRenderer)),
+  )
 
   handle(IPC.connectionsSave, ConnectionInputSchema, async (input) => {
-    const db = await store()
-    const saved = await db.saveConnection(input)
-    // Settings may have changed under an open session; drop it so the next
-    // use reconnects with the new values rather than the stale ones.
+    // The S3 secret, when sent, is written to the store's secret rows here and
+    // is not part of what comes back: the result carries `hasSecret` only.
+    const saved = await saveConnectionInput(input)
+    // Settings may have changed under an open session (or a cached S3 client);
+    // drop it so the next use reconnects with the new values.
     dropSession(saved.id)
     return saved
   })
@@ -144,6 +175,12 @@ export function registerIpc(): void {
   handle(IPC.connectionsTest, z.object({ id: z.string().min(1) }), async ({ id }) => {
     const db = await store()
     const connection = await requireConnection(id)
+
+    // A bucket has no shell, no SFTP and no rsync to probe. Listing one key is
+    // the test: it proves the endpoint answers, the credentials sign, and the
+    // bucket exists. Nothing is cached under `capabilities:`, which describes
+    // a remote rsync and would be meaningless here.
+    if (isS3Connection(connection)) return testS3Connection(connection)
 
     const session = await sessionFor(connection)
     const report = await probeConnection(session, connection.rsyncPath)
@@ -160,7 +197,11 @@ export function registerIpc(): void {
     const imported: string[] = []
 
     for (const host of hosts) {
+      // An ssh_config alias never replaces a saved bucket of the same name (and orphans its secret).
+      if ((await db.findConnection(host.alias))?.kind === 's3') continue
       await db.saveConnection({
+        kind: 'ssh',
+        s3: null,
         name: host.alias,
         host: host.hostName ?? host.alias,
         port: host.port ?? 22,
@@ -227,10 +268,12 @@ export function registerIpc(): void {
 
   handle(IPC.fsListRemote, RemotePathRequestSchema, async ({ connectionId, path }) => {
     const connection = await requireConnection(connectionId)
+    // A bucket has no home directory: `.` is its root, and the pane shows `/`.
+    const directory = isS3Connection(connection) ? bucketPath(path) : path
 
     const browser = await browserFor(connection)
     try {
-      return { path, entries: await browser.list(path) }
+      return { path: directory, entries: await browser.list(directory) }
     } finally {
       browser.close()
     }

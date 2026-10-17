@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto'
 import type { WebContents } from 'electron'
 import { runPlan } from '@diskpush/rsync-core'
 import { IPC, type FleetSyncRequest, type TransferRequest } from '../../shared/contract.js'
+import { isS3Connection } from '@diskpush/schemas'
+import { resolveConnection } from './connections.js'
 import { buildPlan } from './transfers.js'
 
 /**
@@ -41,6 +43,10 @@ export async function startFleetSync(request: FleetSyncRequest, sender: WebConte
     let cleanup: () => Promise<void> = async () => {}
     emit(destId, { type: 'begin' })
     try {
+      // The picker only offers servers, but the ids come from the renderer.
+      // A bucket is not a fleet host: refuse it on its own row.
+      const target = await resolveConnection(destId)
+      if (isS3Connection(target)) throw new Error(`${target.name} is an S3 bucket; Fleet Sync pushes to servers.`)
       const built = await buildPlan(req)
       cleanup = built.cleanup
       const handle = runPlan(built.plan)

@@ -95,7 +95,8 @@ A remote pane resolves against your saved connections first and then
 ```bash
 diskpush connections                                   # list
 diskpush connections add NAME [user@]host [--port N] [--identity PATH]
-diskpush connections test NAME                         # SSH, SFTP, remote rsync
+diskpush connections add NAME s3://BUCKET[/path] [--endpoint URL] [--region R] [--access-key-id ID] [--secret-stdin | --no-secret]
+diskpush connections test NAME                         # SSH, SFTP, remote rsync; or endpoint, bucket, credentials
 diskpush connections import [~/.ssh/config]            # import existing hosts
 diskpush connections remove NAME
 ```
@@ -305,3 +306,11 @@ the partial data is intact, and re-running it continues.
 - `--non-interactive` guarantees no prompt; a mirror that would delete
   something exits `66` instead of waiting.
 - Progress is only drawn when stdout is a TTY, so cron and CI logs stay clean.
+
+## S3 buckets
+
+A saved S3 connection is used like a server (`diskpush ./site/ backups:/site/`,
+`diskpush ls backups:/`), and `s3://bucket/path` works ad hoc with the AWS_*
+variables. Transfers run between this machine and the bucket on DiskPush's own
+S3 engine, with rsync's trailing-slash meaning, quick check, filters, preview
+and mirror rules. See [s3.md](s3.md).

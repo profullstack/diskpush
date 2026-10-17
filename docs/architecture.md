@@ -8,6 +8,7 @@ packages/rsync-core   Argument builder, execution planner, parsers, runner.
 packages/ssh-core     SSH sessions, SFTP browsing, host keys, preflight.
 packages/fleet-core   One command across many servers: selection, guard, runner.
 packages/database     The local store, shared by every surface.
+packages/s3-core      S3-compatible storage: a dependency-free SigV4 client, the bucket browser, and the S3 sync engine that emits rsync's event stream.
 packages/plugin-api   The plugin contract, registry and external-plugin loader.
 packages/plugin-mediaanalyzer  The built-in MediaAnalyzer plugin.
 packages/plugin-dbbackup       The built-in database backup plugin.

@@ -85,3 +85,15 @@ describe('sameHost', () => {
     expect(sameHost(parseEndpoint('./a'), parseEndpoint('prod:/b'))).toBe(false)
   })
 })
+
+describe('S3 endpoints', () => {
+  it('parses s3://bucket/key before host:path can claim it', () => {
+    expect(parseEndpoint('s3://backups/db/2026/')).toEqual({ type: 's3', name: 'backups', bucket: 'backups', path: '/db/2026/' })
+    expect(parseEndpoint('s3://backups')).toEqual({ type: 's3', name: 'backups', bucket: 'backups', path: '/' })
+    expect(() => parseEndpoint('s3:///nobucket')).toThrow(EndpointParseError)
+  })
+
+  it('renders back to s3://', () => {
+    expect(renderEndpoint({ type: 's3', name: 'b', bucket: 'b', path: '/x/' })).toBe('s3://b/x/')
+  })
+})

@@ -3,6 +3,7 @@ import { dirname } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { createClient, type Client, type InValue } from '@libsql/client'
 import {
+  connectionSecretKey,
   ConnectionSchema,
   FleetCommandSchema,
   FleetHostResultSchema,
@@ -95,8 +96,8 @@ export class DiskPushStore {
               id, name, host, port, username, auth_type, key_path,
               default_local_path, default_remote_path, jump_host, rsync_path,
               connect_timeout_seconds, keepalive_seconds, forward_agent, tags, notes,
-              created_at, updated_at
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+              created_at, updated_at, kind, s3_json
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(id) DO UPDATE SET
               name=excluded.name, host=excluded.host, port=excluded.port,
               username=excluded.username, auth_type=excluded.auth_type, key_path=excluded.key_path,
@@ -104,7 +105,8 @@ export class DiskPushStore {
               jump_host=excluded.jump_host, rsync_path=excluded.rsync_path,
               connect_timeout_seconds=excluded.connect_timeout_seconds,
               keepalive_seconds=excluded.keepalive_seconds, forward_agent=excluded.forward_agent,
-              tags=excluded.tags, notes=excluded.notes, updated_at=excluded.updated_at`,
+              tags=excluded.tags, notes=excluded.notes, updated_at=excluded.updated_at,
+              kind=excluded.kind, s3_json=excluded.s3_json`,
       args: [
         connection.id,
         connection.name,
@@ -124,12 +126,36 @@ export class DiskPushStore {
         connection.notes,
         connection.createdAt,
         connection.updatedAt,
+        connection.kind,
+        connection.s3 ? JSON.stringify(connection.s3) : null,
       ],
     })
     return connection
   }
 
+  /**
+   * A connection's secret (an S3 secret access key), kept in the owner-only
+   * settings table beside plugin sign-ins and never in `connections`. Null
+   * deletes it.
+   */
+  async getConnectionSecret(connectionId: string, name: string): Promise<string | null> {
+    const value = await this.getSetting<unknown>(connectionSecretKey(connectionId, name), null)
+    return typeof value === 'string' ? value : null
+  }
+
+  async setConnectionSecret(connectionId: string, name: string, value: string | null): Promise<void> {
+    if (value === null) {
+      await this.client.execute({ sql: 'DELETE FROM settings WHERE key = ?', args: [connectionSecretKey(connectionId, name)] })
+    } else {
+      await this.setSetting(connectionSecretKey(connectionId, name), value)
+    }
+  }
+
   async deleteConnection(nameOrId: string): Promise<boolean> {
+    const existing = await this.findConnection(nameOrId)
+    if (existing) {
+      await this.client.execute({ sql: 'DELETE FROM settings WHERE key LIKE ?', args: [`${connectionSecretKey(existing.id, '')}%`] })
+    }
     const result = await this.client.execute({
       sql: 'DELETE FROM connections WHERE name = ? OR id = ?',
       args: [nameOrId, nameOrId],
@@ -577,6 +603,8 @@ function rowToConnection(row: Row): Connection {
     notes: String(row.notes),
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
+    kind: row.kind === undefined || row.kind === null ? 'ssh' : String(row.kind),
+    s3: row.s3_json === undefined || row.s3_json === null ? null : JSON.parse(String(row.s3_json)),
   })
 }
 

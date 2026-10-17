@@ -203,4 +203,16 @@ export const MIGRATIONS: Migration[] = [
       `ALTER TABLE sync_profiles ADD COLUMN source_pane TEXT NOT NULL DEFAULT 'left'`,
     ],
   },
+  {
+    name: '006-s3-connections',
+    statements: [
+      /*
+       * A connection can be an S3-compatible bucket. Its endpoint, region,
+       * bucket and access key id go in s3_json; its secret does not go in
+       * this table at all (see Store.setConnectionSecret).
+       */
+      `ALTER TABLE connections ADD COLUMN kind TEXT NOT NULL DEFAULT 'ssh'`,
+      `ALTER TABLE connections ADD COLUMN s3_json TEXT`,
+    ],
+  },
 ]

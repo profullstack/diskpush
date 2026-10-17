@@ -44,6 +44,9 @@ importers:
       '@diskpush/rsync-core':
         specifier: workspace:*
         version: link:../../packages/rsync-core
+      '@diskpush/s3-core':
+        specifier: workspace:*
+        version: link:../../packages/s3-core
       '@diskpush/schemas':
         specifier: workspace:*
         version: link:../../packages/schemas
@@ -86,6 +89,9 @@ importers:
       '@diskpush/rsync-core':
         specifier: workspace:*
         version: link:../../packages/rsync-core
+      '@diskpush/s3-core':
+        specifier: workspace:*
+        version: link:../../packages/s3-core
       '@diskpush/schemas':
         specifier: workspace:*
         version: link:../../packages/schemas
@@ -234,12 +240,21 @@ importers:
 
   packages/rsync-core:
     dependencies:
+      '@diskpush/s3-core':
+        specifier: workspace:*
+        version: link:../s3-core
       '@diskpush/schemas':
         specifier: workspace:*
         version: link:../schemas
       zod:
         specifier: ^3.24.1
         version: 3.25.76
+
+  packages/s3-core:
+    dependencies:
+      '@diskpush/schemas':
+        specifier: workspace:*
+        version: link:../schemas
 
   packages/schemas:
     dependencies:

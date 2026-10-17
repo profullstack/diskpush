@@ -15,6 +15,7 @@ import type { App, Container, KeyEvent, MouseEvent, Rect, Theme } from '@profull
 import { detectCapabilities } from '@profullstack/hqtui'
 import { knownHostsPath } from '@diskpush/database'
 import { SftpBrowser, SshSession } from '@diskpush/ssh-core'
+import { S3Browser, type S3Client } from '@diskpush/s3-core'
 import { defaultRsyncOptions, type Change, type Connection } from '@diskpush/schemas'
 import { parseEndpoint, planTransfer, runToCompletion } from '@diskpush/rsync-core'
 import {
@@ -111,6 +112,8 @@ export class Tui {
     protocol?: Protocol,
     /** Plugin actions for `a`. Null when no plugins are loaded, and then `a` is not offered. */
     private readonly plugins: PluginHost | null = null,
+    /** Builds the client for a saved S3 connection (its stored secret, or AWS_*). Null: buckets cannot be opened. */
+    private readonly s3Clients: ((connection: Connection) => Promise<S3Client>) | null = null,
   ) {
     this.panes = { left, right }
     this.protocol = protocol ?? chooseProtocol(detectCapabilities({}, launcher.env).program)
@@ -336,6 +339,23 @@ export class Tui {
     this.status = { text, tone }
   }
 
+  private readonly buckets = new Map<string, S3Client>()
+
+  private async s3Client(connection: Connection): Promise<S3Client> {
+    const cached = this.buckets.get(connection.id)
+    if (cached) return cached
+    if (!this.s3Clients) throw new Error('S3 buckets cannot be opened here.')
+    const client = await this.s3Clients(connection)
+    this.buckets.set(connection.id, client)
+    return client
+  }
+
+  /** The pane's browser: SFTP over the shared session, or the bucket. Closing either is always safe. */
+  private async remoteBrowser(connection: Connection): Promise<SftpBrowser | S3Browser> {
+    if (connection.kind === 's3') return new S3Browser(await this.s3Client(connection))
+    return SftpBrowser.open(await this.session(connection))
+  }
+
   private async session(connection: Connection): Promise<SshSession> {
     const existing = this.sessions.get(connection.id)
     if (existing) return existing
@@ -433,7 +453,7 @@ export class Tui {
   }
 
   private async listRemote(pane: Pane, path: string): Promise<Entry[]> {
-    const browser = await SftpBrowser.open(await this.session(pane.connection!))
+    const browser = await this.remoteBrowser(pane.connection!)
     try {
       const entries = await browser.list(path)
       return entries.map((entry) => ({
@@ -858,7 +878,7 @@ export class Tui {
   }
 
   private async readRemoteHead(pane: Pane, path: string, limit: number): Promise<{ bytes: Uint8Array; size: number }> {
-    const browser = await SftpBrowser.open(await this.session(pane.connection!))
+    const browser = await this.remoteBrowser(pane.connection!)
     try {
       return await browser.readHead(path, limit)
     } finally {
@@ -1051,12 +1071,13 @@ export class Tui {
 
     try {
       const remote = source.connection ?? destination.connection
+      const bucket = [source.connection, destination.connection].find((c) => c?.kind === 's3') ?? null
       const plan = planTransfer({
         source: parseEndpoint(transfer.from),
         destination: parseEndpoint(transfer.to),
         // mkpath: the destination of a nested directory may not exist yet.
         options: defaultRsyncOptions({ dryRun: previewOnly, stats: true, mkpath: true }),
-        ...(remote ? { remoteShell: { keyPath: remote.keyPath, port: remote.port } } : {}),
+        ...(bucket ? { s3Client: await this.s3Client(bucket) } : remote ? { remoteShell: { keyPath: remote.keyPath, port: remote.port } } : {}),
       })
 
       const result = await runToCompletion(plan, { signal: controller.signal }, (event) => {

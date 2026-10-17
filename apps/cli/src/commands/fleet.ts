@@ -103,7 +103,8 @@ async function dispatch(parsed: ParsedArgv, store: DiskPushStore, output: Output
  * command is how a feature goes unused.
  */
 async function availableConnections(store: DiskPushStore): Promise<Connection[]> {
-  const saved = await store.listConnections()
+  // A bucket has no shell to run a command in.
+  const saved = (await store.listConnections()).filter((connection) => connection.kind !== 's3')
   const savedNames = new Set(saved.map((connection) => connection.name))
   return [...saved, ...sshConfigHosts().filter((host) => !savedNames.has(host.name))]
 }
@@ -218,9 +219,9 @@ async function expandLists(
  * In raw mode the tty does no echoing of its own, so nothing can leak by
  * default rather than by our getting the interception right.
  */
-async function readSecret(promptText: string): Promise<string> {
+export async function readSecret(promptText: string, what = 'A sudo password'): Promise<string> {
   const stdin = process.stdin
-  if (!stdin.isTTY) throw new ArgvError('A sudo password can only be asked for on a terminal.')
+  if (!stdin.isTTY) throw new ArgvError(`${what} can only be asked for on a terminal.`)
 
   process.stderr.write(promptText)
   const wasRaw = stdin.isRaw

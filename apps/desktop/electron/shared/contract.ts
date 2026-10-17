@@ -117,30 +117,95 @@ export const EntryNameSchema = z
   .refine((name) => name !== '.' && name !== '..', { message: 'That name is reserved.' })
   .refine((name) => name.trim() === name, { message: 'A name cannot begin or end with a space.' })
 
+/**
+ * One side of a transfer, as the renderer names it.
+ *
+ * `ssh` is the *remote connection* ref, whatever the connection is: an SSH
+ * server or an S3 bucket. The main process looks the saved connection up and
+ * decides by its `kind`, so the renderer cannot claim a server is a bucket
+ * (or the reverse), and the bucket name always comes from the saved row.
+ */
 export const EndpointRefSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('local'), path: PathSchema }),
   z.object({ type: z.literal('ssh'), connectionId: ConnectionIdSchema, path: PathSchema }),
 ])
 export type EndpointRef = z.infer<typeof EndpointRefSchema>
 
-export const ConnectionInputSchema = z.object({
-  id: ConnectionIdSchema.optional(),
-  name: z.string().min(1).max(128),
-  host: z.string().min(1).max(255),
-  port: z.number().int().min(1).max(65535).default(22),
-  username: z.string().min(1).max(128),
-  authType: z.enum(['agent', 'key', 'key-passphrase', 'password']).default('agent'),
-  keyPath: PathSchema.nullable().default(null),
-  defaultLocalPath: PathSchema.nullable().default(null),
-  defaultRemotePath: PathSchema.nullable().default(null),
-  jumpHost: z.string().max(255).nullable().default(null),
-  rsyncPath: PathSchema.nullable().default(null),
-  connectTimeoutSeconds: z.number().int().min(1).max(600).default(15),
-  keepaliveSeconds: z.number().int().min(1).max(3600).nullable().default(30),
-  forwardAgent: z.boolean().default(false),
-  tags: z.array(z.string().max(64)).max(32).default([]),
-  notes: z.string().max(4096).default(''),
+/**
+ * S3 settings as the renderer sends them. Mirrors S3ConnectionSettingsSchema in
+ * @diskpush/schemas, with length caps and a scheme check: the endpoint is a URL
+ * the main process will send signed requests to, so only http(s) is accepted.
+ */
+export const S3SettingsInputSchema = z.object({
+  /** Null is AWS. */
+  endpoint: z
+    .string()
+    .max(2048)
+    .url()
+    .refine((value) => /^https?:\/\//i.test(value), { message: 'The endpoint must be an http:// or https:// URL.' })
+    .nullable()
+    .default(null),
+  /** `auto` for Cloudflare R2. */
+  region: z
+    .string()
+    .min(1)
+    .max(64)
+    .regex(/^[A-Za-z0-9-]+$/, { message: 'A region is letters, digits and hyphens, e.g. us-east-1 or auto.' })
+    .default('us-east-1'),
+  bucket: z
+    .string()
+    .min(1)
+    .max(255)
+    .regex(/^[A-Za-z0-9._-]+$/, { message: 'A bucket name is letters, digits, dots, hyphens and underscores.' }),
+  /** Null decides: path-style for custom endpoints, virtual-hosted for AWS. */
+  pathStyle: z.boolean().nullable().default(null),
+  /** Null reads AWS_ACCESS_KEY_ID. */
+  accessKeyId: z.string().min(1).max(256).regex(/^\S+$/, { message: 'An access key ID has no spaces.' }).nullable().default(null),
 })
+
+/**
+ * A connection to save: an SSH server or an S3 bucket.
+ *
+ * For `kind: 's3'`, `host`, `username` and `port` are not the renderer's to
+ * set; the main process derives them from the endpoint and bucket (so lists
+ * read `bucket@host`), and they may be omitted.
+ *
+ * `s3SecretAccessKey` is write-only: it goes into the store's secret rows and
+ * is never part of anything sent back. Absent or empty keeps the saved secret;
+ * `null` clears it.
+ */
+export const ConnectionInputSchema = z
+  .object({
+    id: ConnectionIdSchema.optional(),
+    kind: z.enum(['ssh', 's3']).default('ssh'),
+    s3: S3SettingsInputSchema.nullable().default(null),
+    s3SecretAccessKey: z.string().max(1024).nullable().optional(),
+    name: z.string().min(1).max(128),
+    host: z.string().min(1).max(255).optional(),
+    port: z.number().int().min(1).max(65535).default(22),
+    username: z.string().min(1).max(128).optional(),
+    authType: z.enum(['agent', 'key', 'key-passphrase', 'password']).default('agent'),
+    keyPath: PathSchema.nullable().default(null),
+    defaultLocalPath: PathSchema.nullable().default(null),
+    defaultRemotePath: PathSchema.nullable().default(null),
+    jumpHost: z.string().max(255).nullable().default(null),
+    rsyncPath: PathSchema.nullable().default(null),
+    connectTimeoutSeconds: z.number().int().min(1).max(600).default(15),
+    keepaliveSeconds: z.number().int().min(1).max(3600).nullable().default(30),
+    forwardAgent: z.boolean().default(false),
+    tags: z.array(z.string().max(64)).max(32).default([]),
+    notes: z.string().max(4096).default(''),
+  })
+  .superRefine((input, ctx) => {
+    if (input.kind === 's3') {
+      if (!input.s3) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['s3'], message: 'An S3 connection needs a bucket.' })
+      return
+    }
+    if (!input.host) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['host'], message: 'Required' })
+    if (!input.username) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['username'], message: 'Required' })
+    if (input.s3) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['s3'], message: 'Only an S3 connection has S3 settings.' })
+  })
+export type ConnectionInput = z.infer<typeof ConnectionInputSchema>
 
 /**
  * Transfer options the renderer may set.

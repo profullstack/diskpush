@@ -1,6 +1,8 @@
 import { createApp } from '@profullstack/hqtui'
 import type { DiskPushStore } from '@diskpush/database'
 import { EXIT } from '../exit-codes.js'
+import { S3_SECRET_NAME, s3ClientFor } from '@diskpush/s3-core'
+import { isS3Connection } from '@diskpush/schemas'
 import { failure, type Output } from '../output.js'
 import { type ParsedArgv } from '../parse-argv.js'
 import { resolveEndpoint, sshConfigHosts } from '../resolve.js'
@@ -33,7 +35,9 @@ export async function runTui(parsed: ParsedArgv, store: DiskPushStore, output: O
     if (!resolved.connection) {
       return failure(
         output,
-        `${resolved.endpoint.host} is neither a saved connection nor a host in ~/.ssh/config.`,
+        resolved.endpoint.type === 's3'
+          ? `No saved connection for s3://${resolved.endpoint.bucket}. Save one with: diskpush connections add NAME s3://${resolved.endpoint.bucket}`
+          : `${resolved.endpoint.host} is neither a saved connection nor a host in ~/.ssh/config.`,
         EXIT.configuration,
       )
     }
@@ -43,7 +47,10 @@ export async function runTui(parsed: ParsedArgv, store: DiskPushStore, output: O
   const choices = buildEndpointChoices(await store.listConnections(), sshConfigHosts(), defaultLocalPath())
   // Plugins that failed to load are left out of `a`; `diskpush plugins` says why.
   const { registry } = await loadPlugins(store)
-  const tui = new Tui(panes[0]!, panes[1]!, choices, systemLauncher(), undefined, registryHost(registry))
+  const tui = new Tui(panes[0]!, panes[1]!, choices, systemLauncher(), undefined, registryHost(registry), async (connection) => {
+    if (!isS3Connection(connection)) throw new Error(`${connection.name} is not an S3 connection.`)
+    return s3ClientFor(connection.s3, await store.getConnectionSecret(connection.id, S3_SECRET_NAME), process.env, connection.name)
+  })
 
   // Images ride on escape sequences tmux drops by default.
   enableTmuxPassthrough()

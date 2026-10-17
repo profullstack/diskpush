@@ -59,6 +59,8 @@ export type PaneState = {
   error: string | null
   /** Set when the server has SFTP but no rsync: browse yes, transfer no. */
   transfersDisabled: boolean
+  /** False only for the placeholder shown before launch has picked an endpoint. */
+  initialised: boolean
 }
 
 export function endpointLabel(endpoint: PaneEndpoint, connections: readonly Connection[]): string {

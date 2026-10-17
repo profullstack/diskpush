@@ -9,12 +9,15 @@ import {
   type RsyncCapabilities,
 } from '@diskpush/rsync-core'
 import type { DiskPushStore } from '@diskpush/database'
+import { S3_SECRET_NAME, adhocS3Settings, s3ClientFor, type S3Client } from '@diskpush/s3-core'
 import {
   PresetNameSchema,
   defaultRsyncOptions,
+  isS3Connection,
   type Connection,
   type Endpoint,
   type RsyncOptions,
+  type S3Endpoint,
   type SshEndpoint,
 } from '@diskpush/schemas'
 import { ArgvError, flagValue, flagValues, hasFlag, numberFlag, type ParsedArgv } from './parse-argv.js'
@@ -61,7 +64,21 @@ export async function resolveEndpoint(store: DiskPushStore, input: string): Prom
   const endpoint = parseEndpoint(input)
   if (endpoint.type === 'local') return { endpoint, connection: null }
 
+  if (endpoint.type === 's3') {
+    // `s3://bucket/key`: a saved connection for that bucket supplies the
+    // endpoint and credentials; without one it is ad hoc, on AWS_* variables.
+    const saved = (await store.listConnections()).find((c) => isS3Connection(c) && c.s3.bucket === endpoint.bucket) ?? null
+    if (!saved) return { endpoint, connection: null }
+    return { endpoint: { ...endpoint, connectionId: saved.id, name: saved.name }, connection: saved }
+  }
+
   const saved = await store.findConnection(endpoint.host)
+  if (isS3Connection(saved)) {
+    // `backups:/db/` where `backups` is a saved bucket.
+    const path = endpoint.path === '.' ? (saved.defaultRemotePath ?? '/') : endpoint.path
+    const resolved: S3Endpoint = { type: 's3', connectionId: saved.id, name: saved.name, bucket: saved.s3.bucket, path: path.startsWith('/') ? path : `/${path}` }
+    return { endpoint: resolved, connection: saved }
+  }
   // A saved connection wins; otherwise fall back to ~/.ssh/config, which is
   // where most people already keep their hosts.
   const connection = saved ?? sshConfigConnection(endpoint.host)
@@ -75,6 +92,36 @@ export async function resolveEndpoint(store: DiskPushStore, input: string): Prom
     connectionId: connection.id,
   }
   return { endpoint: resolved, connection }
+}
+
+/**
+ * The S3 client for a resolved bucket endpoint: the saved connection's
+ * settings and stored secret, or, ad hoc, AWS_ENDPOINT_URL / AWS_REGION and
+ * the AWS_* keys.
+ */
+export async function s3ClientForEndpoint(
+  store: DiskPushStore,
+  resolved: ResolvedEndpoint,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<S3Client> {
+  if (resolved.endpoint.type !== 's3') throw new Error('Not an S3 endpoint.')
+  if (isS3Connection(resolved.connection)) {
+    const secret = await store.getConnectionSecret(resolved.connection.id, S3_SECRET_NAME)
+    return s3ClientFor(resolved.connection.s3, secret, env, resolved.connection.name)
+  }
+  return s3ClientFor(adhocS3Settings(resolved.endpoint.bucket, env), null, env, `s3://${resolved.endpoint.bucket}`)
+}
+
+/**
+ * A stored endpoint back as the string a user would type, so a job or profile
+ * re-resolves through the same path: `name:/path` for a saved connection
+ * (SSH or bucket), `s3://bucket/path` for an ad-hoc bucket.
+ */
+export function renderStoredEndpoint(endpoint: Endpoint): string {
+  if (endpoint.type === 'local') return endpoint.path
+  if (endpoint.type === 's3') return endpoint.connectionId ? `${endpoint.name}:${endpoint.path}` : `s3://${endpoint.bucket}${endpoint.path.startsWith('/') ? '' : '/'}${endpoint.path}`
+  const prefix = endpoint.user ? `${endpoint.user}@${endpoint.host}` : endpoint.host
+  return `${prefix}:${endpoint.path}`
 }
 
 /** Where a saved connection's cached capability report lives. */

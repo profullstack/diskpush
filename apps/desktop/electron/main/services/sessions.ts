@@ -1,7 +1,25 @@
 import { knownHostsPath } from '@diskpush/database'
-import { SftpBrowser, SshSession } from '@diskpush/ssh-core'
-import type { Connection } from '@diskpush/schemas'
+import { S3Browser } from '@diskpush/s3-core'
+import { SftpBrowser, SshSession, type RemoteEntry } from '@diskpush/ssh-core'
+import { isS3Connection, type Connection } from '@diskpush/schemas'
 import { BrowserWindow, dialog } from 'electron'
+import { dropAllS3Clients, dropS3Client, s3ClientForConnection } from './s3.js'
+
+/**
+ * What the file operations in ipc.ts need from a remote pane, whichever kind
+ * of connection is behind it. SftpBrowser and S3Browser both satisfy it; the
+ * entries they return have the same shape.
+ */
+export interface RemoteBrowser {
+  list(directory: string): Promise<RemoteEntry[]>
+  stat(path: string): Promise<RemoteEntry>
+  mkdir(path: string): Promise<void>
+  createFile(path: string): Promise<void>
+  rename(from: string, to: string): Promise<void>
+  unlink(path: string): Promise<void>
+  removeRecursive(path: string): Promise<void>
+  close(): void
+}
 
 /**
  * SSH sessions are pooled per connection so browsing does not reconnect on
@@ -10,6 +28,9 @@ import { BrowserWindow, dialog } from 'electron'
 const sessions = new Map<string, Promise<SshSession>>()
 
 export async function sessionFor(connection: Connection): Promise<SshSession> {
+  // Everything that reaches for a shell (Fleet, the rsync probe) comes through
+  // here, so this is the one place an S3 bucket is turned away from it.
+  if (isS3Connection(connection)) throw new Error(`${connection.name} is an S3 bucket, not an SSH server.`)
   const existing = sessions.get(connection.id)
   if (existing) {
     try {
@@ -33,11 +54,19 @@ export async function sessionFor(connection: Connection): Promise<SshSession> {
   }
 }
 
-export async function browserFor(connection: Connection): Promise<SftpBrowser> {
+/**
+ * A browser for a remote pane: SFTP over the pooled session for a server, or
+ * an S3Browser over the cached client for a bucket. Callers close it either
+ * way; for S3 that is a no-op.
+ */
+export async function browserFor(connection: Connection): Promise<RemoteBrowser> {
+  if (isS3Connection(connection)) return new S3Browser(await s3ClientForConnection(connection))
   return SftpBrowser.open(await sessionFor(connection))
 }
 
+/** Forgets a connection's session and S3 client, so the next use picks up its saved settings. */
 export function dropSession(connectionId: string): void {
+  dropS3Client(connectionId)
   const existing = sessions.get(connectionId)
   sessions.delete(connectionId)
   void existing?.then((session) => session.close()).catch(() => {})
@@ -45,6 +74,7 @@ export function dropSession(connectionId: string): void {
 
 export function closeAllSessions(): void {
   for (const id of [...sessions.keys()]) dropSession(id)
+  dropAllS3Clients()
 }
 
 /**

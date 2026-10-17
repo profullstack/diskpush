@@ -110,9 +110,10 @@ export function buildEndpointChoices(
     { label: 'Local', detail: 'this machine', connection: null, path: localPath },
     ...saved.map((connection) => ({
       label: connection.name,
-      detail: `${connection.username}@${connection.host}`,
+      detail: connection.kind === 's3' && connection.s3 ? `s3://${connection.s3.bucket}  (${connection.host})` : `${connection.username}@${connection.host}`,
       connection,
-      path: connection.defaultRemotePath ?? '.',
+      // A bucket has no home directory to start in.
+      path: connection.defaultRemotePath ?? (connection.kind === 's3' ? '/' : '.'),
     })),
     ...sshHosts.map((connection) => ({
       label: connection.name,
@@ -415,6 +416,7 @@ export function endpointString(pane: Pane, rel = '', isDirectory = true): string
   const joined = pane.connection ? posix.join(pane.path, rel) : join(pane.path, rel)
   const path = isDirectory && !joined.endsWith('/') ? `${joined}/` : joined
   if (!pane.connection) return path
+  if (pane.connection.kind === 's3' && pane.connection.s3) return `s3://${pane.connection.s3.bucket}${path.startsWith('/') ? '' : '/'}${path}`
   return `${pane.connection.username}@${pane.connection.host}:${path}`
 }
 
