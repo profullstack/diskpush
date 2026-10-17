@@ -305,6 +305,10 @@ function sandbox() {
   writeFileSync(join(root, 'www', 'app-worktrees', 'feat', 'dev.sqlite'), header)
   writeFileSync(join(root, 'www', 'agentbbs', 'data', 'bbs.bak-001.sqlite'), header)
   writeFileSync(join(root, 'www', 'agentbbs', 'data', '.test-run-1.db'), header)
+  for (const dir of ['.retired/old-app', 'backups', 'tmp/scratch']) {
+    mkdirSync(join(root, 'apps', dir), { recursive: true })
+    writeFileSync(join(root, 'apps', dir, 'copy.db'), header)
+  }
 
   const registry = new PluginRegistry(memoryBackend())
   registry.register(createDbBackupPlugin())

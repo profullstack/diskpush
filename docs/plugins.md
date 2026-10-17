@@ -140,7 +140,7 @@ On each server one read-only shell script, sent in a single ssh call, finds:
 | MySQL / MariaDB in Docker | `docker ps`, then `mysql -uroot` inside the container with the container's own `MYSQL_ROOT_PASSWORD` | `docker exec <container> mysqldump …`, with that same password from the container's environment |
 | Native Postgres | every online cluster (`pg_lsclusters`), as the `postgres` OS user | `sudo -n -u postgres pg_dump -p <port> …` |
 | Native MySQL / MariaDB | root over the local socket | `mysqldump` as root |
-| SQLite | files under `/srv`, `/opt`, `/var/www`, `/root`, `/home` (setting `sqliteRoots`) whose first bytes are SQLite's header, skipping dependency, cache, source-checkout and worktree folders, hidden files, `*.bak*`/replica copies and `opencode.db`; files over 4 GB are listed as skipped (`--max-sqlite-mb`) | SQLite's online backup on the server, `PRAGMA quick_check`, then the file itself comes back |
+| SQLite | files under `/srv`, `/opt`, `/var/www`, `/root`, `/home` (setting `sqliteRoots`) whose first bytes are SQLite's header, skipping dependency, cache, source-checkout, worktree, `backups` and `tmp` folders, hidden folders and files, `*.bak*`/replica copies and `opencode.db`; files over 4 GB are listed as skipped (`--max-sqlite-mb`) | SQLite's online backup on the server, `PRAGMA quick_check`, then the file itself comes back |
 
 **The dump runs on the server; only its bytes come back over ssh.** No
 database port is opened to this machine, no `pg_dump` of the right version is
