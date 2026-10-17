@@ -56,3 +56,17 @@ describe('humanizeStderr', () => {
     expect(humanizeStderr('some unrecognised failure')).toBeNull()
   })
 })
+
+describe('a destination folder that cannot be created', () => {
+  it('names the folder and the real cause, not a full disk', () => {
+    const stderr = 'rsync: [Receiver] mkdir "/home/anthony/Desktop/me/ideas" failed: No such file or directory (2)\nrsync error: error in file IO (code 11) at main.c(800) [Receiver=3.4.1]'
+    const message = humanizeStderr(stderr)
+    expect(message).toContain('/home/anthony/Desktop/me/ideas')
+    expect(message).toContain('a folder above it does not exist')
+    expect(message).not.toMatch(/full|read-only/)
+  })
+
+  it('no longer guesses "full or read-only" for a bare code 11', () => {
+    expect(interpretExit(11).message).not.toMatch(/full|read-only/)
+  })
+})

@@ -22,7 +22,7 @@ const MESSAGES: Record<number, { message: string; resumable?: boolean; ok?: bool
   10: { message: 'Connection interrupted (socket I/O error). This transfer can be resumed.', resumable: true },
   11: {
     message:
-      'File I/O error. The destination filesystem may be full or read-only. Partial transfer data was preserved where possible.',
+      'rsync hit a file I/O error on one side (code 11). The rsync output says which path and why. Partial transfer data was preserved where possible.',
     resumable: true,
   },
   12: { message: 'The rsync data stream failed, usually because the connection dropped. This transfer can be resumed.', resumable: true },
@@ -67,6 +67,13 @@ export function interpretExit(code: number, signal: NodeJS.Signals | null = null
 
 /** Recognises the common stderr shapes worth rewriting before a user sees them. */
 export function humanizeStderr(stderr: string): string | null {
+  // Checked before the disk-full and permission cases: it is the commonest code-11
+  // failure, and the old generic wording ("filesystem full or read-only") sent people
+  // looking in the wrong place.
+  const mkdir = /mkdir "([^"]+)" failed: No such file or directory/i.exec(stderr)
+  if (mkdir) {
+    return `The destination folder ${mkdir[1]} could not be created because a folder above it does not exist on that side. Create it first, or let DiskPush create the whole path (Fleet Sync does, with --mkpath, on rsync 3.2.3 or newer).`
+  }
   if (/No space left on device/i.test(stderr)) {
     return 'Transfer stopped because the destination filesystem is out of space. Partial transfer data was preserved where possible.'
   }

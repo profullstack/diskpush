@@ -1,10 +1,11 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { CircleAlert, CircleCheck, CircleDashed, HardDriveDownload, Loader2, Play, Square } from 'lucide-react'
+import { CircleAlert, CircleCheck, CircleDashed, Copy, HardDriveDownload, Loader2, Play, Square } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { PathInput, type PathSource } from '@/components/path-input'
+import { destinationFor, errorReport } from '@/lib/fleet-sync'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { api, unwrap, type Connection, type FleetSyncEvent } from '@/lib/api'
 
@@ -18,7 +19,19 @@ import { api, unwrap, type Connection, type FleetSyncEvent } from '@/lib/api'
  */
 
 type DestState = 'pending' | 'running' | 'done' | 'error'
-type DestView = { id: string; name: string; host: string; state: DestState; percent: number; message: string }
+type DestView = {
+  id: string
+  name: string
+  host: string
+  state: DestState
+  percent: number
+  /** The last line worth showing on the row while it runs, then the outcome. */
+  message: string
+  /** rsync's own stderr, kept so a failure shows its real cause, not just the summary. */
+  log: string[]
+}
+
+const LOG_LINES = 30
 
 const STATE_ICON: Record<DestState, React.ReactNode> = {
   pending: <CircleDashed className="size-3.5 text-faint" />,
@@ -61,7 +74,10 @@ export function FleetSyncPanel() {
         else if (e.type === 'progress') {
           next.state = 'running'
           next.percent = Math.max(0, Math.min(100, Math.round(e.progress.percent)))
-        } else if (e.type === 'stderr') next.message = e.line
+        } else if (e.type === 'stderr') {
+          next.message = e.line
+          next.log = [...cur.log, e.line].slice(-LOG_LINES)
+        }
         else if (e.type === 'error') {
           next.state = 'error'
           next.message = e.message
@@ -100,7 +116,7 @@ export function FleetSyncPanel() {
     const initial: Record<string, DestView> = {}
     for (const id of ids) {
       const s = servers.find((x) => x.id === id)
-      initial[id] = { id, name: s?.name ?? id, host: s?.host ?? '', state: 'pending', percent: 0, message: '' }
+      initial[id] = { id, name: s?.name ?? id, host: s?.host ?? '', state: 'pending', percent: 0, message: '', log: [] }
     }
     setDests(initial)
 
@@ -113,13 +129,24 @@ export function FleetSyncPanel() {
       api()?.fleet.sync({
         source,
         destinationConnectionIds: ids,
-        destinationPath: destPath.trim() || sourcePath.trim(),
+        destinationPath: destinationFor(sourcePath, destPath),
         options: {},
         concurrency: 4,
       }),
     )
     setSyncId(res?.syncId ?? null)
   }, [selected, sourceId, sourcePath, destPath, servers])
+
+  const [copied, setCopied] = useState<string | null>(null)
+  const copyError = useCallback(async (d: DestView) => {
+    try {
+      await navigator.clipboard.writeText(errorReport(d))
+      setCopied(d.id)
+      setTimeout(() => setCopied((cur) => (cur === d.id ? null : cur)), 1500)
+    } catch {
+      // The text stays selectable in the block, so a refused clipboard is not a dead end.
+    }
+  }, [])
 
   const cancel = useCallback(async () => {
     if (syncId) await api()?.fleet.cancelSync(syncId)
@@ -203,17 +230,41 @@ export function FleetSyncPanel() {
       <ScrollArea className="min-h-0 flex-1 rounded-md border border-line">
         <div className="flex flex-col">
           {Object.values(dests).map((d) => (
-            <div key={d.id} className="flex items-center gap-2 px-2 py-1.5 text-[12px]">
-              {STATE_ICON[d.state]}
-              <span className="w-40 truncate">{d.name}</span>
-              <div className="h-1.5 flex-1 overflow-hidden rounded bg-secondary">
-                <div
-                  className={`h-full ${d.state === 'error' ? 'bg-destructive' : 'bg-primary'}`}
-                  style={{ width: `${d.percent}%` }}
-                />
+            <div key={d.id} className="border-b border-line last:border-b-0">
+              <div className="flex items-center gap-2 px-2 py-1.5 text-[12px]">
+                {STATE_ICON[d.state]}
+                <span className="w-40 truncate">{d.name}</span>
+                <div className="h-1.5 flex-1 overflow-hidden rounded bg-secondary">
+                  <div
+                    className={`h-full ${d.state === 'error' ? 'bg-destructive' : 'bg-primary'}`}
+                    style={{ width: `${d.percent}%` }}
+                  />
+                </div>
+                <span className="w-10 text-right text-faint">{d.percent}%</span>
+                {d.message && d.state !== 'error' ? <span className="max-w-[40%] truncate text-faint">{d.message}</span> : null}
               </div>
-              <span className="w-10 text-right text-faint">{d.percent}%</span>
-              {d.message ? <span className="max-w-[40%] truncate text-faint">{d.message}</span> : null}
+              {d.state === 'error' ? (
+                <div className="mx-2 mb-2 rounded-md border border-destructive/40 bg-destructive/5 p-2 text-[12px]" role="alert">
+                  <div className="flex items-start gap-2">
+                    <p className="flex-1 font-medium text-destructive selectable">{d.message || 'The transfer failed.'}</p>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => void copyError(d)}
+                      className="h-7 shrink-0 gap-1.5 text-[11px]"
+                      aria-label={`Copy the error for ${d.name}`}
+                    >
+                      <Copy className="size-3" />
+                      {copied === d.id ? 'Copied' : 'Copy error'}
+                    </Button>
+                  </div>
+                  {d.log.length ? (
+                    <pre className="mt-2 max-h-40 overflow-auto rounded bg-background/60 p-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap text-faint selectable">
+                      {d.log.join('\n')}
+                    </pre>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
           ))}
           {Object.keys(dests).length === 0 ? (
