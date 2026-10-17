@@ -30,6 +30,10 @@ jobs:
       - name: Scan the dbbackup plugin
         run: threatcrush scan packages/plugin-dbbackup --deps --fail-on critical,high,medium
 
+      # The S3 engine signs requests and holds credentials: the same bar.
+      - name: Scan the S3 engine
+        run: threatcrush scan packages/s3-core --deps --fail-on critical,high,medium
+
       - name: Scan the repository
         run: |
           threatcrush scan . --format json --output threatcrush.json

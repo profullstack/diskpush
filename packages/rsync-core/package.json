@@ -18,6 +18,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@diskpush/s3-core": "workspace:*",
     "@diskpush/schemas": "workspace:*",
     "zod": "^3.24.1"
   }

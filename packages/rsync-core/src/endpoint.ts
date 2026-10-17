@@ -1,4 +1,4 @@
-import type { Endpoint, SshEndpoint } from '@diskpush/schemas'
+import { renderS3Endpoint, type Endpoint, type SshEndpoint } from '@diskpush/schemas'
 
 export class EndpointParseError extends Error {
   constructor(message: string, readonly input: string) {
@@ -31,6 +31,11 @@ export function parseEndpoint(input: string, platform: NodeJS.Platform = process
   if (value.startsWith('rsync://')) {
     throw new EndpointParseError('rsync:// daemon endpoints are not supported; use an SSH endpoint', input)
   }
+
+  // Before HOST_PATH, which would otherwise read `s3://b/k` as host `s3`.
+  const s3 = /^s3:\/\/([^/\s]+)(\/.*)?$/i.exec(value)
+  if (s3) return { type: 's3', name: s3[1]!, bucket: s3[1]!, path: s3[2] ?? '/' }
+  if (/^s3:\/\//i.test(value)) throw new EndpointParseError('An S3 endpoint is s3://BUCKET/path', input)
 
   const drivePattern = platform === 'win32' ? WINDOWS_DRIVE_ANY : WINDOWS_DRIVE_BACKSLASH
   if (drivePattern.test(value)) return { type: 'local', path: value }
@@ -68,6 +73,7 @@ function sshEndpoint(parts: { user?: string; host: string; path: string }): SshE
  */
 export function renderEndpoint(endpoint: Endpoint): string {
   if (endpoint.type === 'local') return endpoint.path
+  if (endpoint.type === 's3') return renderS3Endpoint(endpoint)
   const prefix = endpoint.user ? `${endpoint.user}@${endpoint.host}` : endpoint.host
   return `${prefix}:${endpoint.path}`
 }

@@ -1,8 +1,10 @@
 'use client'
 
 import { useState } from 'react'
-import { Server, ShieldCheck } from 'lucide-react'
+import { Database, Server, ShieldCheck } from 'lucide-react'
 import { api, unwrap, type Connection } from '@/lib/api'
+import { KindSwitch, S3Fields } from '@/components/s3-fields'
+import { BLANK_S3, s3Payload, s3Problem, type S3Draft } from '@/lib/s3-form'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
@@ -13,6 +15,8 @@ const AUTH = [
   { id: 'agent', label: 'SSH agent' },
   { id: 'key', label: 'Key file' },
 ] as const
+
+const LABEL = 'text-[10.5px] uppercase tracking-[0.08em] text-faint'
 
 export function ConnectionDialog({
   open,
@@ -30,23 +34,40 @@ export function ConnectionDialog({
   const [remotePath, setRemotePath] = useState('')
   const [keyPath, setKeyPath] = useState('')
   const [auth, setAuth] = useState<'agent' | 'key'>('agent')
+  const [kind, setKind] = useState<'ssh' | 's3'>('ssh')
+  const [s3, setS3] = useState<S3Draft>(BLANK_S3)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+
+  const s3Issue = s3Problem(s3)
+  const canSave = name.trim() !== '' && (kind === 's3' ? s3Issue === null : host.trim() !== '' && username.trim() !== '')
 
   async function save() {
     setBusy(true)
     setError(null)
     try {
       const connection = await unwrap(
-        api()?.connections.save({
-          name: name.trim(),
-          host: host.trim(),
-          username: username.trim(),
-          port: Number(port) || 22,
-          authType: auth,
-          keyPath: auth === 'key' ? keyPath.trim() || null : null,
-          defaultRemotePath: remotePath.trim() || null,
-        }),
+        api()?.connections.save(
+          kind === 's3'
+            ? {
+                // host, username and port are derived from the endpoint and
+                // bucket in the main process.
+                kind: 's3',
+                name: name.trim(),
+                ...s3Payload(s3),
+                defaultRemotePath: remotePath.trim() || null,
+              }
+            : {
+                kind: 'ssh',
+                name: name.trim(),
+                host: host.trim(),
+                username: username.trim(),
+                port: Number(port) || 22,
+                authType: auth,
+                keyPath: auth === 'key' ? keyPath.trim() || null : null,
+                defaultRemotePath: remotePath.trim() || null,
+              },
+        ),
       )
       onSaved(connection)
       onClose()
@@ -76,26 +97,37 @@ export function ConnectionDialog({
 
   return (
     <Dialog open={open} onOpenChange={(next) => (next ? undefined : onClose())}>
-      <DialogContent className="max-w-lg gap-0 border-line-strong bg-popover p-0 [--dialog-pad:0px]">
-        <DialogHeader className="flex-row items-center gap-3 space-y-0 border-b border-line px-[18px] py-4">
+      {/*
+        A column with only the body scrolling: the dialog is capped at the
+        window height, and at 960x600 the S3 form is taller than that, which
+        used to clip the footer and leave Save unreachable.
+      */}
+      <DialogContent className="flex max-w-lg flex-col gap-0 border-line-strong bg-popover p-0 [--dialog-pad:0px]">
+        <DialogHeader className="shrink-0 flex-row items-center gap-3 space-y-0 border-b border-line px-[18px] py-4">
           <span className="flex size-[30px] items-center justify-center rounded-lg bg-info-surface text-primary">
-            <Server className="size-[17px]" />
+            {kind === 's3' ? <Database className="size-[17px]" /> : <Server className="size-[17px]" />}
           </span>
-          <DialogTitle className="text-[14px]">New server</DialogTitle>
+          <DialogTitle className="text-[14px]">{kind === 's3' ? 'New S3 bucket' : 'New server'}</DialogTitle>
         </DialogHeader>
 
-        <div className="flex flex-col gap-3.5 px-[18px] py-4">
+        <div className="flex min-h-0 flex-1 flex-col gap-3.5 overflow-y-auto px-[18px] py-4">
           {error ? (
             <p className="selectable rounded-lg border border-danger-line bg-danger-surface px-3 py-2 text-[12px] text-danger-ink">
               {error}
             </p>
           ) : null}
 
+          <KindSwitch value={kind} onChange={setKind} disabled={busy} />
+
           <div className="flex flex-col gap-1.5">
             <Label className="text-[10.5px] uppercase tracking-[0.08em] text-faint">Name</Label>
-            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="production" />
+            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder={kind === 's3' ? 'backups' : 'production'} />
           </div>
 
+          {kind === 's3' ? (
+            <S3Fields value={s3} onChange={setS3} disabled={busy} labelClassName={LABEL} />
+          ) : (
+          <>
           <div className="grid grid-cols-3 gap-3">
             <div className="col-span-2 flex flex-col gap-1.5">
               <Label className="text-[10.5px] uppercase tracking-[0.08em] text-faint">Host</Label>
@@ -149,24 +181,33 @@ export function ConnectionDialog({
               </div>
             )}
           </div>
+          </>
+          )}
 
           <div className="flex flex-col gap-1.5">
-            <Label className="text-[10.5px] uppercase tracking-[0.08em] text-faint">Default remote path</Label>
-            <Input value={remotePath} onChange={(e) => setRemotePath(e.target.value)} placeholder="/srv/app" />
+            <Label className="text-[10.5px] uppercase tracking-[0.08em] text-faint">
+              {kind === 's3' ? 'Default path in the bucket' : 'Default remote path'}
+            </Label>
+            <Input value={remotePath} onChange={(e) => setRemotePath(e.target.value)} placeholder={kind === 's3' ? '/' : '/srv/app'} />
           </div>
         </div>
 
-        <DialogFooter className="items-center border-t border-line px-[18px] py-3.5 sm:justify-between">
-          <Button variant="ghost" onClick={importSshConfig} disabled={busy} className="h-[33px] text-muted-foreground">
-            Import from ~/.ssh/config
-          </Button>
+        <DialogFooter className="shrink-0 items-center border-t border-line px-[18px] py-3.5 sm:justify-between">
+          {/* ~/.ssh/config holds servers, never buckets. The empty span keeps Save on the right. */}
+          {kind === 'ssh' ? (
+            <Button variant="ghost" onClick={importSshConfig} disabled={busy} className="h-[33px] text-muted-foreground">
+              Import from ~/.ssh/config
+            </Button>
+          ) : (
+            <span />
+          )}
           <div className="flex gap-2">
             <Button variant="outline" onClick={onClose} className="h-[33px] border-line-strong">
               Cancel
             </Button>
             <Button
               onClick={save}
-              disabled={busy || !name.trim() || !host.trim() || !username.trim()}
+              disabled={busy || !canSave}
               className="h-[33px] font-semibold"
             >
               Save

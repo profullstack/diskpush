@@ -50,6 +50,10 @@ export const VALUE_FLAGS = new Set([
   '--key',
   '--path',
   '--jump',
+  // connections add (S3)
+  '--endpoint',
+  '--region',
+  '--access-key-id',
   // fleet
   '--on',
   '--concurrency',

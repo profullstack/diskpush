@@ -5,7 +5,7 @@ import { EXIT } from '../exit-codes.js'
 import { table } from '../format.js'
 import { failure, type Output } from '../output.js'
 import { flagValue, type ParsedArgv } from '../parse-argv.js'
-import { optionsFromFlags } from '../resolve.js'
+import { optionsFromFlags, renderStoredEndpoint } from '../resolve.js'
 import { runTransfer } from './transfer.js'
 
 export async function runProfiles(parsed: ParsedArgv, store: DiskPushStore, output: Output): Promise<number> {
@@ -134,8 +134,4 @@ async function runProfile(parsed: ParsedArgv, store: DiskPushStore, output: Outp
   return runTransfer(forwarded.command!, forwarded, store, output)
 }
 
-function render(endpoint: import('@diskpush/schemas').Endpoint): string {
-  if (endpoint.type === 'local') return endpoint.path
-  const prefix = endpoint.user ? `${endpoint.user}@${endpoint.host}` : endpoint.host
-  return `${prefix}:${endpoint.path}`
-}
+const render = renderStoredEndpoint

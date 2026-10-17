@@ -3,6 +3,7 @@ import type { RsyncEvent, RsyncStats } from '@diskpush/schemas'
 import { humanizeStderr, interpretExit } from './errors.js'
 import { emptyStats, parseItemizeLine, parseProgressLine, parseStatsLine, splitOutputLines } from './parse.js'
 import type { ExecutionPlan } from './plan.js'
+import { runS3Sync } from '@diskpush/s3-core'
 
 export type RunOptions = {
   cwd?: string
@@ -24,6 +25,10 @@ export type RsyncRunHandle = {
  * argument; nothing on this side is re-interpreted.
  */
 export function runPlan(plan: ExecutionPlan, options: RunOptions = {}): RsyncRunHandle {
+  if (plan.engine === 's3') {
+    if (!plan.s3) throw new Error('An S3 plan without its transfer spec.')
+    return runS3Sync(plan.s3, options.signal ? { signal: options.signal } : {})
+  }
   const queue: RsyncEvent[] = []
   const waiters: Array<(value: IteratorResult<RsyncEvent>) => void> = []
   let finished = false

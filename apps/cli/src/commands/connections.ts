@@ -5,11 +5,14 @@ import { createInterface } from 'node:readline/promises'
 import type { DiskPushStore } from '@diskpush/database'
 import { knownHostsPath } from '@diskpush/database'
 import { expandTilde, parseSshConfig, probeConnection, SshSession } from '@diskpush/ssh-core'
+import { S3_SECRET_NAME, parseS3Url, s3ClientFor, s3DisplayFields } from '@diskpush/s3-core'
+import { isS3Connection, type S3ConnectionSettings } from '@diskpush/schemas'
 import { EXIT } from '../exit-codes.js'
 import { table } from '../format.js'
 import { failure, type Output } from '../output.js'
 import { ArgvError, flagValue, hasFlag, type ParsedArgv } from '../parse-argv.js'
 import { capabilityCacheKey } from '../resolve.js'
+import { readSecret } from './fleet.js'
 
 export async function runConnections(parsed: ParsedArgv, store: DiskPushStore, output: Output): Promise<number> {
   const subcommand = parsed.positionals[0] ?? 'list'
@@ -41,12 +44,20 @@ async function listConnections(store: DiskPushStore, output: Output): Promise<nu
     output.line('No saved connections. Add one with: diskpush connections add NAME user@host')
     return EXIT.ok
   }
-  output.line(
-    table(
-      connections.map((c) => [c.name, `${c.username}@${c.host}`, String(c.port), c.authType, c.defaultRemotePath ?? '']),
-      ['NAME', 'TARGET', 'PORT', 'AUTH', 'DEFAULT PATH'],
+  const rows = await Promise.all(
+    connections.map(async (c) =>
+      isS3Connection(c)
+        ? [
+            c.name,
+            `s3://${c.s3.bucket} @ ${c.host}`,
+            String(c.port),
+            (await store.getConnectionSecret(c.id, S3_SECRET_NAME)) ? 's3 key' : 's3 env',
+            c.defaultRemotePath ?? '/',
+          ]
+        : [c.name, `${c.username}@${c.host}`, String(c.port), c.authType, c.defaultRemotePath ?? ''],
     ),
   )
+  output.line(table(rows, ['NAME', 'TARGET', 'PORT', 'AUTH', 'DEFAULT PATH']))
   return EXIT.ok
 }
 
@@ -56,6 +67,28 @@ async function testConnection(parsed: ParsedArgv, store: DiskPushStore, output: 
 
   const connection = await store.findConnection(name)
   if (!connection) return failure(output, `No connection named ${JSON.stringify(name)}.`, EXIT.configuration)
+
+  if (isS3Connection(connection)) {
+    try {
+      const client = s3ClientFor(connection.s3, await store.getConnectionSecret(connection.id, S3_SECRET_NAME), process.env, connection.name)
+      const page = await client.list({ delimiter: '/', maxKeys: 20 })
+      if (output.isJson) {
+        output.json({ status: 'ok', connection: connection.name, bucket: connection.s3.bucket, endpoint: client.url('').origin, sample: page })
+        return EXIT.ok
+      }
+      output.line(
+        table([
+          ['Endpoint', 'ok', client.url('').origin],
+          ['Bucket', 'ok', `${connection.s3.bucket} (${connection.s3.region})`],
+          ['Credentials', 'ok', connection.s3.accessKeyId ?? 'from AWS_ACCESS_KEY_ID'],
+          ['Top level', 'ok', `${page.prefixes.length} folder(s), ${page.objects.length} object(s)${page.next ? ' and more' : ''}`],
+        ]),
+      )
+      return EXIT.ok
+    } catch (error) {
+      return failure(output, (error as Error).message, EXIT.unavailable)
+    }
+  }
 
   let session: SshSession
   try {
@@ -112,8 +145,14 @@ async function testConnection(parsed: ParsedArgv, store: DiskPushStore, output: 
 async function addConnection(parsed: ParsedArgv, store: DiskPushStore, output: Output): Promise<number> {
   const [, name, target] = parsed.positionals
   if (!name || !target) {
-    return failure(output, 'Usage: diskpush connections add NAME [user@]host [--port N] [--identity PATH]', EXIT.usage)
+    return failure(
+      output,
+      'Usage: diskpush connections add NAME [user@]host [--port N] [--identity PATH]\n' +
+        '       diskpush connections add NAME s3://BUCKET[/path] [--endpoint URL] [--region R] [--access-key-id ID] [--secret-stdin | --no-secret]',
+      EXIT.usage,
+    )
   }
+  if (/^s3:\/\//i.test(target)) return addS3Connection(parsed, store, output, name, target)
 
   const at = target.lastIndexOf('@')
   const username = at === -1 ? (process.env.USER ?? 'root') : target.slice(0, at)
@@ -121,6 +160,8 @@ async function addConnection(parsed: ParsedArgv, store: DiskPushStore, output: O
   const identity = flagValue(parsed, '--identity') ?? flagValue(parsed, '--key')
 
   const connection = await store.saveConnection({
+    kind: 'ssh',
+    s3: null,
     name,
     host,
     port: parsePort(flagValue(parsed, '--port')),
@@ -140,6 +181,72 @@ async function addConnection(parsed: ParsedArgv, store: DiskPushStore, output: O
 
   if (output.isJson) output.json({ status: 'ok', connection })
   else output.line(`Saved connection ${connection.name} (${connection.username}@${connection.host}:${connection.port}).`)
+  return EXIT.ok
+}
+
+/**
+ * `connections add NAME s3://bucket[/path]`. The secret access key is asked
+ * for on the terminal (never an argv flag, which shell history and `ps`
+ * would keep), read from stdin with --secret-stdin, or left to
+ * AWS_SECRET_ACCESS_KEY with --no-secret.
+ */
+async function addS3Connection(parsed: ParsedArgv, store: DiskPushStore, output: Output, name: string, target: string): Promise<number> {
+  const url = parseS3Url(target)
+  if (!url) return failure(output, `${target} is not s3://BUCKET[/path].`, EXIT.usage)
+  const endpoint = flagValue(parsed, '--endpoint') ?? null
+  if (endpoint !== null && !/^https?:\/\/[^/]+/.test(endpoint)) return failure(output, '--endpoint must be an http(s) URL.', EXIT.usage)
+  const region = flagValue(parsed, '--region') ?? (endpoint && /r2\.cloudflarestorage\.com/.test(endpoint) ? 'auto' : 'us-east-1')
+  const pathStyle = hasFlag(parsed, '--path-style') ? true : hasFlag(parsed, '--virtual-hosted') ? false : null
+  const accessKeyId = flagValue(parsed, '--access-key-id') ?? null
+  const settings: S3ConnectionSettings = { endpoint, region, bucket: url.bucket, pathStyle, accessKeyId }
+
+  let secret: string | null = null
+  if (hasFlag(parsed, '--secret-stdin')) {
+    const chunks: Buffer[] = []
+    for await (const chunk of process.stdin) chunks.push(chunk as Buffer)
+    secret = Buffer.concat(chunks).toString('utf8').trim() || null
+    if (!secret) return failure(output, '--secret-stdin read nothing.', EXIT.usage)
+  } else if (!hasFlag(parsed, '--no-secret') && accessKeyId) {
+    secret = (await readSecret(`Secret access key for ${accessKeyId}: `, 'An S3 secret access key')).trim() || null
+  }
+
+  // Prove it works before saving it, so a typo is found now rather than mid-backup.
+  if (!hasFlag(parsed, '--no-check')) {
+    try {
+      await s3ClientFor(settings, secret, process.env, name).checkBucket()
+    } catch (error) {
+      return failure(output, `${(error as Error).message}\nNothing was saved. Pass --no-check to save it anyway.`, EXIT.unavailable)
+    }
+  }
+
+  const display = s3DisplayFields(settings)
+  const connection = await store.saveConnection({
+    kind: 's3',
+    s3: settings,
+    name,
+    host: display.host,
+    port: display.port,
+    username: display.username,
+    authType: 'key',
+    keyPath: null,
+    defaultLocalPath: null,
+    defaultRemotePath: url.path === '/' ? (flagValue(parsed, '--path') ?? null) : url.path,
+    jumpHost: null,
+    rsyncPath: null,
+    connectTimeoutSeconds: 15,
+    keepaliveSeconds: 30,
+    forwardAgent: false,
+    tags: ['s3'],
+    notes: '',
+  })
+  await store.setConnectionSecret(connection.id, S3_SECRET_NAME, secret)
+
+  if (output.isJson) output.json({ status: 'ok', connection })
+  else {
+    output.line(`Saved S3 connection ${connection.name} (s3://${settings.bucket} at ${display.host}).`)
+    if (!secret) output.line('No secret stored: AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY will be read at run time.')
+    output.line(`Use it like a server: diskpush ./dir/ ${connection.name}:/backups/   diskpush ls ${connection.name}:/`)
+  }
   return EXIT.ok
 }
 
@@ -165,7 +272,11 @@ async function importConnections(parsed: ParsedArgv, store: DiskPushStore, outpu
   const hosts = parseSshConfig(contents).filter((host) => host.hostName || host.user)
   const imported: string[] = []
   for (const host of hosts) {
+    // An ssh_config alias never replaces a saved bucket of the same name (and orphans its secret).
+    if ((await store.findConnection(host.alias))?.kind === 's3') continue
     await store.saveConnection({
+      kind: 'ssh',
+      s3: null,
       name: host.alias,
       host: host.hostName ?? host.alias,
       port: host.port ?? 22,

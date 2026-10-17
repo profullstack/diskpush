@@ -8,7 +8,7 @@ import {
   type Hazard,
   type SudoMode,
 } from '@diskpush/fleet-core'
-import type { Connection, FleetCommand, FleetHostResult, FleetList, HostUpdateReport } from '@diskpush/schemas'
+import { isS3Connection, type Connection, type FleetCommand, type FleetHostResult, type FleetList, type HostUpdateReport } from '@diskpush/schemas'
 import { sshConfigConnections, type SshSession } from '@diskpush/ssh-core'
 import { userInfo } from 'node:os'
 import { IPC, type FleetRequest } from '../../shared/contract.js'
@@ -29,6 +29,8 @@ function localhostConnection(): Connection {
   const now = new Date().toISOString()
   return {
     id: LOCAL_CONNECTION_ID,
+    kind: 'ssh',
+    s3: null,
     name: 'localhost (this machine)',
     host: 'localhost',
     port: 22,
@@ -66,10 +68,19 @@ function connectFleet(connection: Connection): Promise<SshSession> {
 type RunningFleet = { runId: string; controller: AbortController }
 const running = new Map<string, RunningFleet>()
 
-/** Saved connections plus ~/.ssh/config hosts, saved winning a name clash. */
+/**
+ * Saved connections plus ~/.ssh/config hosts, saved winning a name clash.
+ *
+ * S3 buckets are left out: Fleet runs commands over SSH and Fleet Sync fans a
+ * path out to servers, and a bucket has no shell for either. Leaving them out
+ * here also keeps them out of `connectionsFor`, so a stale id cannot slip one in.
+ */
 export async function fleetServers(): Promise<Connection[]> {
-  const saved = await (await store()).listConnections()
-  const savedNames = new Set(saved.map((connection) => connection.name))
+  const all = await (await store()).listConnections()
+  // A bucket's name still shadows an ssh_config host of the same name, as any
+  // saved connection does.
+  const savedNames = new Set(all.map((connection) => connection.name))
+  const saved = all.filter((connection) => !isS3Connection(connection))
   // localhost first, then saved connections, then ~/.ssh/config hosts.
   return [
     localhostConnection(),

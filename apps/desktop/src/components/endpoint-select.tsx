@@ -1,7 +1,8 @@
 'use client'
 
-import { Monitor, Plus, Server } from 'lucide-react'
+import { Database, Monitor, Plus, Server } from 'lucide-react'
 import type { Connection } from '@/lib/api'
+import { isS3 } from '@/lib/s3-form'
 import {
   Select,
   SelectContent,
@@ -12,6 +13,10 @@ import {
   SelectTrigger,
 } from '@/components/ui/select'
 
+/**
+ * `ssh` is the remote variant for any saved connection, S3 buckets included:
+ * the main process decides how to reach it from the saved connection's kind.
+ */
 export type PaneEndpoint = { kind: 'local' } | { kind: 'ssh'; connectionId: string }
 
 const LOCAL = '__local__'
@@ -48,10 +53,9 @@ export function EndpointSelect({
   onOpen?: () => void
 }) {
   const current = value.kind === 'local' ? LOCAL : value.connectionId
-  const selectedLabel =
-    value.kind === 'local'
-      ? 'This computer'
-      : ([...saved, ...sshConfig].find((connection) => connection.id === value.connectionId)?.name ?? 'server')
+  const selected =
+    value.kind === 'local' ? null : [...saved, ...sshConfig].find((connection) => connection.id === value.connectionId)
+  const selectedLabel = value.kind === 'local' ? 'This computer' : (selected?.name ?? 'server')
 
   return (
     <Select
@@ -86,6 +90,8 @@ export function EndpointSelect({
         <span className="flex min-w-0 items-center gap-2">
           {value.kind === 'local' ? (
             <Monitor className="size-[15px] shrink-0 text-muted-foreground" />
+          ) : isS3(selected) ? (
+            <Database className="size-[15px] shrink-0 text-primary" />
           ) : (
             <Server className="size-[15px] shrink-0 text-primary" />
           )}
@@ -93,7 +99,11 @@ export function EndpointSelect({
         </span>
       </SelectTrigger>
 
-      <SelectContent className="border-line-strong bg-popover">
+      {/*
+        As wide as its widest row, never narrower than the trigger: at the
+        trigger's ~145px every `user@host` and `s3://bucket` was cut off.
+      */}
+      <SelectContent className="w-auto min-w-(--anchor-width) max-w-[min(440px,calc(100vw-2rem))] border-line-strong bg-popover">
         <SelectItem value={LOCAL}>
           <Monitor className="text-muted-foreground" />
           This computer
@@ -105,10 +115,10 @@ export function EndpointSelect({
             <SelectLabel className="text-faint">Saved</SelectLabel>
             {saved.map((connection) => (
               <SelectItem key={connection.id} value={connection.id}>
-                <Server className="text-primary" />
+                {isS3(connection) ? <Database className="text-primary" /> : <Server className="text-primary" />}
                 {connection.name}
                 <span className="ml-1 font-[family-name:var(--font-mono)] text-[11px] text-muted-foreground">
-                  {connection.username}@{connection.host}
+                  {isS3(connection) ? `s3://${connection.s3!.bucket}` : `${connection.username}@${connection.host}`}
                 </span>
               </SelectItem>
             ))}
@@ -134,7 +144,7 @@ export function EndpointSelect({
         <SelectSeparator />
         <SelectItem value={ADD}>
           <Plus className="text-muted-foreground" />
-          Add a server…
+          Add a server or bucket…
         </SelectItem>
       </SelectContent>
     </Select>

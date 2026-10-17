@@ -165,6 +165,14 @@
     --color-info-surface: #eef4ff;
     --color-info-line: #b9cffc;
     --color-info-ink: #1b4fc4;
+
+    /*
+     * The status hues are tuned for near-black; on white #4ade80 was ~1.6:1
+     * and the "Deletes off" footer and connection-test results were
+     * unreadable. Darker steps of the same hues clear 4.5:1 on white.
+     */
+    --color-ok: #15803d;
+    --color-warn: #b45309;
   }
 }
 

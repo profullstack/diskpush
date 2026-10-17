@@ -22,6 +22,7 @@
     "@diskpush/plugin-dbbackup": "workspace:*",
     "@diskpush/plugin-mediaanalyzer": "workspace:*",
     "@diskpush/rsync-core": "workspace:*",
+    "@diskpush/s3-core": "workspace:*",
     "@diskpush/schemas": "workspace:*",
     "@diskpush/ssh-core": "workspace:*",
     "@profullstack/hqtui": "^0.5.1",

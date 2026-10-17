@@ -2,6 +2,7 @@ import { defaultRsyncOptions } from '@diskpush/schemas'
 import { describe, expect, it } from 'vitest'
 import { parseEndpoint } from './endpoint.js'
 import { planTransfer } from './plan.js'
+import { S3Client } from '@diskpush/s3-core'
 import { parseRsyncCapabilities } from './version.js'
 
 const MODERN = parseRsyncCapabilities(`rsync  version 3.4.1  protocol version 32
@@ -128,5 +129,28 @@ describe('planTransfer: server to server', () => {
         capabilities: MODERN,
       }),
     ).toThrow(/confirm the delete list/i)
+  })
+})
+
+describe('planTransfer: S3', () => {
+  const client = new S3Client({ endpoint: 'http://127.0.0.1:1', region: 'us-east-1', bucket: 'b', pathStyle: true }, { accessKeyId: 'a', secretAccessKey: 's' })
+  const bucket = { type: 's3' as const, name: 'b', bucket: 'b', path: '/backups/' }
+
+  it('runs local -> bucket on the S3 engine, not rsync', () => {
+    const plan = planTransfer({ source: parseEndpoint('./site/'), destination: bucket, options: defaultRsyncOptions(), s3Client: client })
+    expect(plan.engine).toBe('s3')
+    expect(plan.s3).toMatchObject({ direction: 'upload', local: './site/', remote: '/backups/' })
+    expect(plan.display).toBe('diskpush s3 sync ./site/ s3://b/backups/')
+  })
+
+  it('refuses server <-> bucket, a mirror without a confirmed preview, and a missing client', () => {
+    expect(() => planTransfer({ source: parseEndpoint('prod:/srv/'), destination: bucket, options: defaultRsyncOptions(), s3Client: client })).toThrow(/between this machine and a bucket/)
+    expect(() => planTransfer({ source: parseEndpoint('./a/'), destination: bucket, options: defaultRsyncOptions({ deleteMode: 'after' }), s3Client: client })).toThrow(/confirm the delete list/)
+    expect(() => planTransfer({ source: bucket, destination: parseEndpoint('./a/'), options: defaultRsyncOptions() })).toThrow(/no S3 client/)
+  })
+
+  it('says which rsync-only options it cannot honour', () => {
+    const plan = planTransfer({ source: parseEndpoint('./a/'), destination: bucket, options: defaultRsyncOptions({ acls: true, rawArgs: ['--foo'] }), s3Client: client })
+    expect(plan.warnings).toHaveLength(2)
   })
 })

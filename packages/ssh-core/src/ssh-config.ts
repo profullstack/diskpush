@@ -135,6 +135,8 @@ export function sshConfigConnections(env: NodeJS.ProcessEnv = process.env): Conn
       const identity = host.identityFile ? expandTilde(host.identityFile) : null
       return {
         id: `ssh-config:${host.alias}`,
+        kind: 'ssh',
+        s3: null,
         name: host.alias,
         host: host.hostName ?? host.alias,
         port: host.port ?? 22,

@@ -9,6 +9,13 @@ vi.mock('./transfers.js', () => ({
     cleanup: async () => {},
   })),
 }))
+vi.mock('./connections.js', () => ({
+  resolveConnection: vi.fn(async (id: string) =>
+    id === 'bucket'
+      ? { id, name: 'backups', kind: 's3', s3: { endpoint: null, region: 'us-east-1', bucket: 'b', pathStyle: null, accessKeyId: null } }
+      : null,
+  ),
+}))
 vi.mock('@diskpush/rsync-core', () => ({
   runPlan: vi.fn(() => ({
     events: (async function* () {
@@ -69,5 +76,16 @@ describe('startFleetSync', () => {
       expect(forId.some((s) => s.payload.event.type === 'exit'), `${id} exits`).toBe(true)
     }
     expect(sends.some((s) => s.payload.connectionId === null && s.payload.event.type === 'done')).toBe(true)
+  })
+
+  it('refuses an S3 bucket as a destination on its own row, and the rest still run', async () => {
+    const { sends, sender } = fakeSender()
+    await startFleetSync(req(['bucket', 'a']), sender)
+    await new Promise((r) => setTimeout(r, 30))
+
+    const bucket = sends.filter((s) => s.payload.connectionId === 'bucket')
+    expect(bucket.some((s) => s.payload.event.type === 'error')).toBe(true)
+    expect(bucket.some((s) => s.payload.event.type === 'exit')).toBe(false)
+    expect(sends.some((s) => s.payload.connectionId === 'a' && s.payload.event.type === 'exit')).toBe(true)
   })
 })

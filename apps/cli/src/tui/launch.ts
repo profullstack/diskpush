@@ -68,6 +68,9 @@ export type Target = { path: string; name: string; connection: Connection | null
  * nothing has to be uploaded back, and the file the editor saves is the file.
  */
 export function editLaunch(target: Target, env: NodeJS.ProcessEnv, available: Available): Launch | { error: string } {
+  if (target.connection?.kind === 's3') {
+    return { error: `${target.name} is in a bucket: there is no shell to edit it in. Sync it here, edit it, and sync it back.` }
+  }
   if (target.connection) {
     const c = target.connection
     const argv = [
@@ -132,7 +135,12 @@ export function openLaunch(
   { text = false }: { text?: boolean } = {},
 ): Launch | { error: string } {
   if (target.connection) {
-    return { error: `x opens files on this machine. Sync ${target.name} here first, or press e to edit it over ssh.` }
+    return {
+      error:
+        target.connection.kind === 's3'
+          ? `x opens files on this machine. Sync ${target.name} here first.`
+          : `x opens files on this machine. Sync ${target.name} here first, or press e to edit it over ssh.`,
+    }
   }
   const kind = text ? 'other' : mediaKind(target.name)
   if (hasDesktop(env, platform)) {

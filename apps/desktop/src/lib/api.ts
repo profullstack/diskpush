@@ -22,8 +22,28 @@ export type FileEntry = {
   targetType?: 'file' | 'directory' | 'symlink' | 'other'
 }
 
+/** Where an S3 connection points. Mirrors S3ConnectionSettings; the secret is never here. */
+export type S3Settings = {
+  /** Null is AWS. */
+  endpoint: string | null
+  region: string
+  bucket: string
+  /** Null decides by endpoint. */
+  pathStyle: boolean | null
+  /** Null reads AWS_ACCESS_KEY_ID. */
+  accessKeyId: string | null
+}
+
 export type Connection = {
   id: string
+  /**
+   * An SSH server or an S3 bucket. Absent on older rows and ssh_config hosts,
+   * which are SSH. For a bucket, `username@host` reads `bucket@endpoint-host`.
+   */
+  kind?: 'ssh' | 's3'
+  s3?: S3Settings | null
+  /** For a bucket: whether a secret access key is stored. The key itself never reaches the renderer. */
+  hasSecret?: boolean
   name: string
   host: string
   port: number
@@ -124,11 +144,16 @@ export type PreviewProgress = {
 }
 
 /** A saved source/destination pair with its options. Runnable from the CLI too. */
+export type ProfileEndpoint =
+  | { type: 'local'; path: string }
+  | { type: 'ssh'; connectionId?: string; host: string; path: string }
+  | { type: 's3'; connectionId?: string; name: string; bucket: string; path: string }
+
 export type SyncProfile = {
   id: string
   name: string
-  source: { type: 'local'; path: string } | { type: 'ssh'; connectionId?: string; host: string; path: string }
-  destination: { type: 'local'; path: string } | { type: 'ssh'; connectionId?: string; host: string; path: string }
+  source: ProfileEndpoint
+  destination: ProfileEndpoint
   options: { deleteMode: 'off' | 'delay' | 'during' | 'after' | 'before' }
   /** Which pane the source was on when saved. Older rows default to 'left'. */
   sourcePane?: 'left' | 'right'

@@ -40,6 +40,8 @@ import {
   type TransferEvent,
 } from '@/lib/api'
 import { withTrailingSlash } from '@/lib/format'
+import { blankPane, placeholderPane, shouldLoadPane } from '@/lib/pane-load'
+import { defaultRemotePathOf, isS3, s3SyncCommand, s3Url } from '@/lib/s3-form'
 
 /** A row in the header menu. Plain button, styled once. */
 function MenuItem({ icon, label, onClick }: { icon: React.ReactNode; label: string; onClick: () => void }) {
@@ -90,21 +92,12 @@ type TransferDraft = {
   selection: string[]
 }
 
-const blankPane = (endpoint: PaneEndpoint, path: string): PaneState => ({
-  endpoint,
-  path,
-  entries: [],
-  selected: new Set(),
-  loading: true,
-  error: null,
-  transfersDisabled: false,
-})
 
 export default function Workspace() {
   const [saved, setSaved] = useState<Connection[]>([])
   const [sshConfig, setSshConfig] = useState<Connection[]>([])
-  const [left, setLeft] = useState<PaneState>(blankPane({ kind: 'local' }, '/'))
-  const [right, setRight] = useState<PaneState>(blankPane({ kind: 'local' }, '/'))
+  const [left, setLeft] = useState<PaneState>(placeholderPane)
+  const [right, setRight] = useState<PaneState>(placeholderPane)
   const [active, setActive] = useState<'left' | 'right'>('left')
   const [direction, setDirection] = useState<'ltr' | 'rtl'>('ltr')
   const [mirror, setMirror] = useState(false)
@@ -186,7 +179,7 @@ export default function Workspace() {
       const first = savedList[0] ?? hosts[0]
       setRight(
         first
-          ? blankPane({ kind: 'ssh', connectionId: first.id }, first.defaultRemotePath ?? '.')
+          ? blankPane({ kind: 'ssh', connectionId: first.id }, defaultRemotePathOf(first))
           : blankPane({ kind: 'local' }, home),
       )
     })().catch((caught: unknown) => setError(caught instanceof Error ? caught.message : String(caught)))
@@ -209,14 +202,14 @@ export default function Workspace() {
   }, [])
 
   useEffect(() => {
-    if (outsideShell || left.path === '/') return
+    if (!shouldLoadPane(left, outsideShell)) return
     void navigate('left', left.endpoint, left.path)
     // Endpoint changes reload; path changes go through navigate itself.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [left.endpoint])
 
   useEffect(() => {
-    if (outsideShell || right.path === '/') return
+    if (!shouldLoadPane(right, outsideShell)) return
     void navigate('right', right.endpoint, right.path)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [right.endpoint])
@@ -513,12 +506,44 @@ export default function Workspace() {
   }
 
   const connected = saved.length + sshConfig.length
+  // Buckets are counted on their own: "3 servers" for one server and two buckets
+  // overstated what Fleet, for one, could reach.
+  const buckets = saved.filter((connection) => isS3(connection)).length
+  const servers = connected - buckets
+  const availability = [
+    servers > 0 ? `${servers} server${servers === 1 ? '' : 's'}` : null,
+    buckets > 0 ? `${buckets} bucket${buckets === 1 ? '' : 's'}` : null,
+  ]
+    .filter(Boolean)
+    .join(' · ')
   const rsyncFlags = [
     'rsync --archive --partial-dir=.rsync-partial --info=progress2',
     mirror ? '--delete-delay' : null,
   ]
     .filter(Boolean)
     .join(' ')
+  /*
+   * When either pane is a bucket the transfer runs on DiskPush's S3 engine, not
+   * rsync, so the footer must not claim rsync flags or archive metadata.
+   */
+  const routeFrom = direction === 'ltr' ? left : right
+  const routeTo = direction === 'ltr' ? right : left
+  const bucketOf = (pane: PaneState) =>
+    pane.endpoint.kind === 'local'
+      ? null
+      : (allConnections.find((c) => isS3(c) && c.id === (pane.endpoint as { connectionId: string }).connectionId) ?? null)
+  const fromBucket = bucketOf(routeFrom)
+  const toBucket = bucketOf(routeTo)
+  const s3Route = fromBucket !== null || toBucket !== null
+  const sideLabel = (pane: PaneState, bucket: Connection | null) => {
+    const path = withTrailingSlash(pane.path)
+    if (bucket?.s3) return s3Url(bucket.s3.bucket, path)
+    if (pane.endpoint.kind === 'local') return path
+    return `${endpointLabel(pane.endpoint, allConnections)}:${path}`
+  }
+  const commandLine = s3Route
+    ? s3SyncCommand(sideLabel(routeFrom, fromBucket), sideLabel(routeTo, toBucket), mirror)
+    : rsyncFlags
 
   return (
     <div className="flex h-full flex-col">
@@ -554,8 +579,8 @@ export default function Workspace() {
           )}
           {connected > 0 ? (
             <>
-              <span className="numeric font-medium text-foreground">{connected}</span>
-              <span>server{connected === 1 ? '' : 's'} available</span>
+              <span className="numeric font-medium text-foreground">{availability}</span>
+              <span>available</span>
             </>
           ) : (
             <span>No servers yet</span>
@@ -733,9 +758,15 @@ export default function Workspace() {
         <footer className="flex h-[28px] shrink-0 items-center gap-2.5 border-t border-line bg-background px-4 text-[11px] text-faint">
           <span>Incremental</span>
           <span className="text-line-strong">·</span>
-          <span>Archive metadata</span>
-          <span className="text-line-strong">·</span>
-          <span>Resume</span>
+          {s3Route ? (
+            <span>S3</span>
+          ) : (
+            <>
+              <span>Archive metadata</span>
+              <span className="text-line-strong">·</span>
+              <span>Resume</span>
+            </>
+          )}
           <span className="text-line-strong">·</span>
           <span className={mirror ? 'font-medium text-destructive' : 'text-ok'}>Deletes {mirror ? 'ON' : 'off'}</span>
           {/*
@@ -744,8 +775,8 @@ export default function Workspace() {
             always half a word. It keeps a gutter now, and the full string is in
             the tooltip.
           */}
-          <span className="selectable numeric ml-auto min-w-0 max-w-[54%] truncate pl-4 text-[10.5px]" title={rsyncFlags}>
-            {rsyncFlags}
+          <span className="selectable numeric ml-auto min-w-0 max-w-[54%] truncate pl-4 text-[10.5px]" title={commandLine}>
+            {commandLine}
           </span>
         </footer>
       </div>
@@ -801,7 +832,7 @@ function railLabel(endpoint: PaneEndpoint, connections: readonly Connection[]): 
 function defaultPathFor(endpoint: PaneEndpoint, connections: readonly Connection[]): string {
   if (endpoint.kind === 'local') return '/'
   const connection = connections.find((candidate) => candidate.id === endpoint.connectionId)
-  return connection?.defaultRemotePath ?? '.'
+  return defaultRemotePathOf(connection)
 }
 
 /** A plugin job's progress, folded into the same shape the transfer band draws. */

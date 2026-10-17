@@ -13,9 +13,12 @@ diskpush ./dist/ prod:/srv/app/            # local  -> server
 diskpush prod:/var/log/app/ ./logs/        # server -> local
 diskpush server-a:/data/ server-b:/backup/ # server -> server, directly
 diskpush ./data/ prod:/data/ -- --checksum # your own rsync flags
+diskpush ./site/ backups:/site/            # local  -> S3 bucket (R2, B2, AWS …)
 ```
 
 - **Local → server**, **server → local**, and **server → server** directly.
+- **S3 buckets too**: AWS S3, Cloudflare R2, Backblaze B2, MinIO and any
+  S3-compatible storage, saved and browsed like a server. See [docs/s3.md](docs/s3.md).
 - **Archive metadata by default.** Permissions, timestamps, symlinks.
 - **Resumable by default.** An interrupted transfer keeps its partial data.
 - **Skips unchanged files.** Re-running a job moves almost nothing.
@@ -151,6 +154,7 @@ to make that flag hard to trigger by accident.
 | [docs/file-browser.md](docs/file-browser.md) | Why browsing is SFTP and transfers are rsync |
 | [docs/profiles.md](docs/profiles.md) | Saved, repeatable directory pairs |
 | [docs/fleet.md](docs/fleet.md) | Running one command, or an upgrade, across many servers |
+| [docs/s3.md](docs/s3.md) | S3-compatible buckets: saving, credentials, how transfers behave |
 | [docs/plugins.md](docs/plugins.md) | Plugins, MediaAnalyzer, database backups, writing one, and the security model |
 | [docs/threatcrush-scan.md](docs/threatcrush-scan.md) | What the ThreatCrush badge enforces, and every finding below it |
 | [docs/security.md](docs/security.md) | Threat model and the decisions that follow from it |
@@ -168,6 +172,7 @@ packages/schemas    typed option model shared by every surface
 packages/rsync-core the transfer engine, with no Electron in it
 packages/ssh-core   SSH sessions, SFTP browsing, host keys, preflight
 packages/fleet-core one command across many servers, with no Electron in it
+packages/s3-core    S3-compatible storage: SigV4 client, bucket browser, sync engine
 packages/database   the local store shared by desktop and CLI
 packages/plugin-api the plugin contract, registry and external loader
 packages/plugin-mediaanalyzer  the built-in MediaAnalyzer plugin
