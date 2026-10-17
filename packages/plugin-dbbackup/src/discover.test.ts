@@ -314,6 +314,8 @@ function sandbox() {
   registry.register(createDbBackupPlugin())
   const settings = registry.settingsFor('dbbackup')
   void settings.set('sqliteRoots', root)
+  // Never the default ~/Backups/diskpush: a test must not leave fake dumps where real ones go.
+  void settings.set('backupDir', backups)
   const env = { PATH: `${bin}:/usr/bin:/bin`, HOME: process.env.HOME }
   const servers: ServerDirectory = {
     list: async () => [{ name: 'dev2', host: 'dev2.example', port: 22, username: 'root', keyPath: null, jumpHost: null, sshConfigAlias: null, passwordAuth: false }],
