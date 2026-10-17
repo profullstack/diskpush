@@ -4,9 +4,10 @@
  * them anywhere rsync reaches, and restore them.
  *
  * Surfaces:
- *   CLI      diskpush dbbackup add | list | remove | run | dump | backups | prune | verify | restore | cron | doctor
+ *   CLI      diskpush dbbackup discover | add | list | remove | run | dump | backups | prune | verify | restore | cron | doctor
  *   TUI      `a` on a .sqlite/.db file (back it up) or on a backup (verify it)
- *   desktop  right-click the same; "Back up every database now" under Plugins…
+ *   desktop  right-click the same; "Find databases on every server" and
+ *            "Back up every database now" under Plugins…
  */
 import { open, rm } from 'node:fs/promises'
 import { createRequire } from 'node:module'
@@ -19,7 +20,9 @@ import {
   type DiskpushPlugin,
   type EntryRef,
 } from '@diskpush/plugin-api'
+import { discover, reconcile, saveFound, type Found, type Reconciled, type ServerReport, type SkippedServer } from './discover.js'
 import { redactUrl } from './engines.js'
+import { describeRemote } from './remote.js'
 import { KINDS, isValidName, parseBackupFileName, parseDays, parseTags, type Kind, type TagFilter } from './naming.js'
 import {
   DEFAULT_BACKUP_DIR,
@@ -43,9 +46,11 @@ import {
   type ListedBackup,
 } from './ops.js'
 
+export * from './discover.js'
 export * from './engines.js'
 export * from './naming.js'
 export * from './ops.js'
+export * from './remote.js'
 export { dumpToFile, rsyncPushArgs, sqliteToFile, verifyFile } from './runner.js'
 
 const PACKAGE_VERSION: string = createRequire(import.meta.url)('../package.json').version
@@ -160,6 +165,53 @@ async function findBackup(ctx: CommandContext, ref: string, tags: TagFilter): Pr
   return newest
 }
 
+/** Where a found database is, in a few words: `docker:app-db-1/app`, `native:5432/app`, a file path. */
+function whereFound(found: Found): string {
+  if (found.kind === 'sqlite') return found.path ?? ''
+  return found.via === 'docker' ? `docker:${found.container}/${found.database}` : `native${found.port ? `:${found.port}` : ''}/${found.database}`
+}
+
+function discoverLines(reports: readonly ServerReport[], skippedServers: readonly SkippedServer[], rows: readonly Reconciled[], vanished: readonly DatabaseConfig[], added: readonly DatabaseConfig[]): string[] {
+  const lines: string[] = []
+  const width = Math.max(4, ...rows.map((row) => row.name.length))
+  for (const report of reports) {
+    const who = report.user ? ` (${report.user}@${report.hostname ?? report.server}, ${report.access ?? 'user'})` : ''
+    lines.push(`${report.server}${who}`)
+    if (!report.ok) {
+      lines.push(`  ✗ ${report.error}`)
+      continue
+    }
+    if (report.duplicateOf) {
+      lines.push(`  the same machine as ${report.duplicateOf}; listed there`)
+      continue
+    }
+    const mine = rows.filter((row) => row.found.server === report.server)
+    if (!mine.length) lines.push('  no databases found')
+    for (const row of mine) {
+      const status = row.saved ? 'saved' : added.some((db) => db.name === row.name) ? 'ADDED' : 'new'
+      const size = row.found.bytes === null ? '?' : formatBytes(row.found.bytes)
+      const owners = row.found.owners.length ? `  ${row.found.owners.join(',')}` : ''
+      lines.push(`  ${status.padEnd(5)} ${row.name.padEnd(width)}  ${row.found.kind.padEnd(8)}  ${size.padStart(9)}  ${whereFound(row.found)}${owners}`)
+    }
+    for (const warning of report.warnings) lines.push(`  ! ${warning}`)
+    if (report.skipped.length) lines.push(`  skipped ${report.skipped.length} file${report.skipped.length === 1 ? '' : 's'}: ${report.skipped.slice(0, 3).map((s) => `${s.path} (${s.reason})`).join('; ')}${report.skipped.length > 3 ? '; …' : ''}`)
+  }
+  for (const db of vanished) lines.push(`gone? ${db.name} is saved but was not found on ${db.server} this time`)
+  if (skippedServers.length) {
+    const forges = skippedServers.filter((s) => s.reason.startsWith('a git host')).length
+    const other = skippedServers.filter((s) => !s.reason.startsWith('a git host'))
+    lines.push(`not looked on: ${[forges ? `${forges} git host alias${forges === 1 ? '' : 'es'}` : '', ...other.map((s) => `${s.name} (${s.reason})`)].filter(Boolean).join(', ')}`)
+  }
+  const fresh = rows.filter((row) => !row.saved && !added.some((db) => db.name === row.name)).length
+  const failed = reports.filter((report) => !report.ok).length
+  lines.push('')
+  lines.push(
+    `${rows.length} database${rows.length === 1 ? '' : 's'} on ${reports.length - failed} of ${reports.length} server${reports.length === 1 ? '' : 's'}` +
+      (added.length ? `; saved ${added.length}. Back them up with: diskpush dbbackup run` : fresh ? `; ${fresh} not saved yet. Save them with: diskpush dbbackup discover --save` : '; all saved.'),
+  )
+  return lines
+}
+
 export function createDbBackupPlugin(): DiskpushPlugin {
   const fail = (ctx: CommandContext, error: unknown) => {
     const message = describeError(error)
@@ -183,6 +235,7 @@ export function createDbBackupPlugin(): DiskpushPlugin {
       { key: 'keepDays', label: 'Also keep days', type: 'string', default: '0', description: 'Also keep every backup younger than this many days. 0 turns it off.' },
       { key: 'push', label: 'Push to', type: 'string', default: '', description: 'An rsync destination every backup is copied to, e.g. backup@nas:/srv/db. Empty: keep them local.' },
       { key: 'rsh', label: 'SSH command', type: 'string', default: '', description: 'The remote shell for pushes. Empty: ssh -o BatchMode=yes' },
+      { key: 'sqliteRoots', label: 'SQLite search folders', type: 'string', default: '', description: 'Where discovery looks for SQLite files on each server, comma separated. Empty: /srv, /opt, /var/www, /root, /home' },
       { key: 'pg_dumpPath', label: 'pg_dump path', type: 'string', default: '', description: 'Empty: the newest pg_dump installed.' },
       { key: 'mysqldumpPath', label: 'mysqldump path', type: 'string', default: '', description: 'Empty: mysqldump or mariadb-dump on PATH.' },
     ],
@@ -193,6 +246,27 @@ export function createDbBackupPlugin(): DiskpushPlugin {
       return newest ? `${count} · last backup ${newest.name} at ${newest.at.toISOString()}` : `${count} · no backups yet`
     },
     tasks: [
+      {
+        id: 'discover',
+        label: 'Find databases on every server',
+        description: 'Looks on each saved server and ~/.ssh/config host over ssh, and saves every database it finds for backup.',
+        async run(ctx) {
+          try {
+            const { reports } = await discover(ctx)
+            const { rows } = reconcile(reports, await loadDatabases(ctx))
+            const added = await saveFound(ctx, rows, { tags: [] })
+            const failed = reports.filter((r) => !r.ok)
+            return {
+              ok: failed.length === 0,
+              message:
+                `Found ${rows.length} database${rows.length === 1 ? '' : 's'} on ${reports.length - failed.length} server${reports.length - failed.length === 1 ? '' : 's'}; saved ${added.length} new.` +
+                (failed.length ? ` Could not look on: ${failed.map((r) => `${r.server} (${r.error})`).join('; ')}` : ''),
+            }
+          } catch (error) {
+            return { ok: false, message: describeError(error) }
+          }
+        },
+      },
       {
         id: 'run-all',
         label: 'Back up every database now',
@@ -268,6 +342,51 @@ export function createDbBackupPlugin(): DiskpushPlugin {
     ],
     commands: [
       {
+        name: 'discover',
+        summary: 'find every database on your servers over ssh (Postgres, Supabase, MySQL in docker or native, SQLite files); --save keeps them',
+        usage: 'discover [SERVER...] [--local] [--save] [--tags a,b] [--push DEST] [--keep-last N] [--keep-days D] [--accept-new] [--timeout SECONDS] [--max-sqlite-mb N]',
+        async run(args, ctx) {
+          try {
+            const a = parseArgs(args, { values: ['tags', 'push', 'keep-last', 'keep-days', 'timeout', 'max-sqlite-mb', 'concurrency'], flags: ['local', 'save', 'accept-new', 'all'] })
+            const numberOf = (key: string) => {
+              const raw = a.value(key)
+              if (raw === undefined) return undefined
+              const n = Number(raw)
+              if (!Number.isFinite(n) || n <= 0) throw new UsageError(`--${key} takes a number above 0.`)
+              return n
+            }
+            const maxMb = numberOf('max-sqlite-mb')
+            const { reports, skipped } = await discover(ctx, {
+              servers: a.positional,
+              local: a.flag('local'),
+              acceptNew: a.flag('accept-new'),
+              ...(numberOf('timeout') !== undefined ? { timeoutSeconds: numberOf('timeout')! } : {}),
+              ...(numberOf('concurrency') !== undefined ? { concurrency: numberOf('concurrency')! } : {}),
+              ...(maxMb !== undefined ? { maxSqliteBytes: maxMb * 1024 * 1024 } : {}),
+            })
+            const { rows, vanished } = reconcile(reports, await loadDatabases(ctx))
+            let added: DatabaseConfig[] = []
+            if (a.flag('save')) {
+              const defaults: Pick<DatabaseConfig, 'tags' | 'push' | 'keepLast' | 'keepDays'> = { tags: parseTags(a.value('tags')) }
+              if (a.value('push')) defaults.push = a.value('push')
+              if (a.value('keep-last') !== undefined) defaults.keepLast = Number(a.value('keep-last'))
+              if (a.value('keep-days') !== undefined) defaults.keepDays = parseDays(a.value('keep-days')!)
+              for (const n of [defaults.keepLast, defaults.keepDays]) if (n !== undefined && (!Number.isFinite(n) || n < 0)) throw new UsageError('--keep-last and --keep-days take a number of 0 or more.')
+              added = await saveFound(ctx, rows, defaults)
+            }
+            const ok = reports.every((report) => report.ok)
+            done(
+              ctx,
+              { ok, servers: reports, skippedServers: skipped, databases: rows.map((row) => ({ name: row.name, saved: row.saved || added.some((db) => db.name === row.name), ...row.found })), vanished: vanished.map((db) => db.name), added },
+              discoverLines(reports, skipped, rows, vanished, added),
+            )
+            return ok ? 0 : 1
+          } catch (error) {
+            return fail(ctx, error)
+          }
+        },
+      },
+      {
         name: 'add',
         summary: 'save a database to back up (the URL is asked for, and kept with your secrets)',
         usage: 'add NAME [--kind postgres|supabase|mysql|sqlite] [--url-env VAR | --path FILE] [--tags a,b] [--push DEST] [--keep-last N] [--keep-days D] [--dump-arg ARG]',
@@ -320,7 +439,7 @@ export function createDbBackupPlugin(): DiskpushPlugin {
           const dbs = await loadDatabases(ctx)
           const rows = await Promise.all(
             dbs.map(async (db) => {
-              const target = db.kind === 'sqlite' ? db.path : db.urlEnv ? `$${db.urlEnv}` : redactUrl((await ctx.secrets.get(urlSecretKey(db.name))) ?? '(no URL)')
+              const target = db.server ? describeRemote(db) : db.kind === 'sqlite' ? db.path : db.urlEnv ? `$${db.urlEnv}` : redactUrl((await ctx.secrets.get(urlSecretKey(db.name))) ?? '(no URL)')
               return { ...db, target, retention: await retentionFor(ctx, db) }
             }),
           )

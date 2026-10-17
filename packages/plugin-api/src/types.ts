@@ -71,6 +71,36 @@ export interface ProgressSink {
   log(level: LogLevel, message: string): void
 }
 
+/**
+ * A server DiskPush can reach over SSH, as the host knows it: a saved
+ * connection or a `~/.ssh/config` host. Enough to build an `ssh` command
+ * line; never a password.
+ */
+export type ServerRef = {
+  /** What the user calls it: the connection name or the ssh_config alias. */
+  name: string
+  host: string
+  port: number
+  username: string
+  /** An identity file. Null: the agent and ssh's own defaults. */
+  keyPath: string | null
+  /** ProxyJump, e.g. `bastion` or `user@bastion:2222`. */
+  jumpHost: string | null
+  /** Set for a ~/.ssh/config host: connect by the alias so the rest of that entry applies. */
+  sshConfigAlias: string | null
+  /** The connection signs in with a password, which nothing non-interactive can use. */
+  passwordAuth: boolean
+}
+
+/** The servers the user has given DiskPush, for plugins that work on them over ssh. */
+export interface ServerDirectory {
+  list(): Promise<ServerRef[]>
+  /** known_hosts files to trust, in order: pass them to ssh as UserKnownHostsFile. */
+  knownHostsFiles: string[]
+  /** An ssh_config other than ~/.ssh/config (DISKPUSH_SSH_CONFIG), for `ssh -F`. */
+  sshConfigFile: string | null
+}
+
 /** Everything any plugin code is handed, whichever surface is running it. */
 export interface BaseContext {
   settings: PluginSettings
@@ -86,6 +116,8 @@ export interface BaseContext {
   surface: Surface
   /** Environment variables, so a plugin can take an API key from one. */
   env: Readonly<Record<string, string | undefined>>
+  /** The user's servers. Absent on a host that has none to offer; optional, so older plugins and hosts are unaffected. */
+  servers?: ServerDirectory
 }
 
 export interface ActionContext extends BaseContext {

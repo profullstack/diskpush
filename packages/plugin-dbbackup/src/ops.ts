@@ -36,6 +36,7 @@ import {
   type Retention,
   type TagFilter,
 } from './naming.js'
+import { LOCAL_SERVER, commandOn, findServer, remoteDumpCommand } from './remote.js'
 import { dumpToFile, gunzipStream, restoreSqliteFile, rsyncPushArgs, run, sqliteToFile, verifyFile, type DumpResult } from './runner.js'
 
 export type DatabaseConfig = {
@@ -52,6 +53,24 @@ export type DatabaseConfig = {
   keepDays?: number
   /** Appended to the dump tool's argv, e.g. `--exclude-table=audit_log`. */
   dumpArgs?: string[]
+  /**
+   * The server it lives on: a connection name, a ~/.ssh/config alias, or
+   * `local`. Set, the dump runs there with that server's own tools and only
+   * the dump comes back over ssh; `urlEnv` and the stored URL are not used.
+   */
+  server?: string
+  /** On a server: inside a container, or the server's own install. */
+  via?: 'docker' | 'native'
+  container?: string
+  /** Its name on the server (`name` is DiskPush's name for it). */
+  database?: string
+  dbUser?: string
+  /** psql/pg_dump `-h` inside a container, when its socket refuses the user. */
+  dbHost?: string
+  /** A native Postgres cluster's port. */
+  port?: number
+  /** How the dump becomes the right user there: one of remote.ts's RUN_AS. */
+  runAs?: string
 }
 
 export const DEFAULT_BACKUP_DIR = join(homedir(), 'Backups', 'diskpush')
@@ -142,9 +161,26 @@ export async function backupDatabase(
     const file = backupFileName(db.name, options.now ?? new Date(), tags, extensionFor(db.kind))
     const dir = join(await backupDir(ctx), db.name)
     const final = join(dir, file)
-    ctx.progress.update({ message: `Backing up ${db.name} (${db.kind})…`, currentFile: file })
+    ctx.progress.update({ message: `Backing up ${db.name} (${db.kind}${db.server && db.server !== LOCAL_SERVER ? ` on ${db.server}` : ''})…`, currentFile: file })
     let result: DumpResult
-    if (db.kind === 'sqlite') {
+    if (db.server) {
+      const server = await findServer(ctx.servers, db.server)
+      const ssh = server ? await toolPath(ctx, 'ssh') : '/bin/sh'
+      const { program, args } = commandOn(server, remoteDumpCommand(db), ssh, {
+        knownHostsFiles: ctx.servers?.knownHostsFiles ?? [],
+        sshConfigFile: ctx.servers?.sshConfigFile ?? null,
+      })
+      result = await dumpToFile({
+        program,
+        args,
+        extraEnv: {},
+        env: ctx.env,
+        signal: ctx.signal,
+        final,
+        // A SQLite copy has no trailer; the server checked it with PRAGMA quick_check before sending it.
+        trailer: db.kind === 'sqlite' ? null : TRAILERS[db.kind],
+      })
+    } else if (db.kind === 'sqlite') {
       if (!db.path) throw new Error(`${db.name}: no SQLite file configured.`)
       const sqlite3 = findTool('sqlite3', ctx.env, (await ctx.settings.get<string>('sqlite3Path', '')).trim() || null)
       result = await sqliteToFile({ source: db.path, final, sqlite3, env: ctx.env, signal: ctx.signal })
@@ -301,7 +337,7 @@ export async function restoreBackup(
 export type ToolStatus = { tool: string; path: string | null; hint?: string }
 
 export async function doctor(ctx: BaseContext): Promise<ToolStatus[]> {
-  const tools: Tool[] = ['pg_dump', 'psql', 'mysqldump', 'mysql', 'sqlite3', 'rsync']
+  const tools: Tool[] = ['pg_dump', 'psql', 'mysqldump', 'mysql', 'sqlite3', 'rsync', 'ssh']
   const out: ToolStatus[] = []
   for (const tool of tools) {
     const path = findTool(tool, ctx.env, (await ctx.settings.get<string>(`${tool}Path`, '')).trim() || null)

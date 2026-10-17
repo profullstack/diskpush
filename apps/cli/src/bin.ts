@@ -18,7 +18,7 @@ import { ArgvError, hasFlag, isKnownCommand, looksLikeEndpoint, parseArgv } from
 import { autoUpdate, reexec } from './self-update.js'
 import { findPluginCall, runPluginCommand, runPlugins } from './commands/plugins.js'
 import { pluginHelp } from './help.js'
-import { loadPlugins } from './plugins.js'
+import { loadPlugins, serverDirectory } from './plugins.js'
 import { PluginError } from '@diskpush/plugin-api'
 import { existsSync } from 'node:fs'
 
@@ -41,7 +41,7 @@ async function runPlugin(argv: readonly string[]): Promise<number | null> {
     })
     for (const { name, error } of failures) output.warn(`plugin ${name} did not load: ${error}`)
     if (await autoUpdate(call.pluginId, output) === 'updated') reexec()
-    return await runPluginCommand(registry, call.pluginId, call.args, output)
+    return await runPluginCommand(registry, call.pluginId, call.args, output, serverDirectory(store))
   } catch (error) {
     if (error instanceof PluginError) {
       process.stderr.write(`${error.message}\n`)

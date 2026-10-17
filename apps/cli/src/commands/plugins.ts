@@ -9,6 +9,7 @@ import {
   type DiskpushPlugin,
   type PluginRegistry,
   type ProgressSink,
+  type ServerDirectory,
 } from '@diskpush/plugin-api'
 import { EXIT } from '../exit-codes.js'
 import { failure, type Output } from '../output.js'
@@ -174,6 +175,7 @@ export async function runPluginCommand(
   pluginId: string,
   argv: readonly string[],
   output: Output,
+  servers?: ServerDirectory,
 ): Promise<number> {
   const plugin = await registry.require(pluginId)
   const args = stripGlobalFlags(argv)
@@ -208,6 +210,7 @@ export async function runPluginCommand(
     signal: controller.signal,
     surface: 'cli',
     env: process.env,
+    ...(servers ? { servers } : {}),
     cwd: process.cwd(),
     json: output.isJson,
     print: (text) => output.line(text),

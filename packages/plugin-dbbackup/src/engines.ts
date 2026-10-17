@@ -117,16 +117,21 @@ export function redactUrl(input: string): string {
   }
 }
 
-export function pgDumpInvocation(kind: 'postgres' | 'supabase', connection: string, extraArgs: readonly string[] = []): Invocation {
-  const target = parsePostgresUrl(connection)
-  const args = ['--dbname', target.url, '--format=plain', '--no-password']
+/** pg_dump's options after the connection, the same whether it runs here or on a server. */
+export function pgDumpFlags(kind: 'postgres' | 'supabase'): string[] {
+  const args = ['--format=plain', '--no-password']
   if (kind === 'supabase') {
     // Supabase roles (supabase_admin, authenticator, …) exist only on Supabase;
     // owning objects by them makes a dump unrestorable anywhere else.
     args.push('--no-owner', '--no-privileges')
     for (const schema of SUPABASE_EXCLUDED_SCHEMAS) args.push(`--exclude-schema=${schema}`)
   }
-  args.push(...extraArgs)
+  return args
+}
+
+export function pgDumpInvocation(kind: 'postgres' | 'supabase', connection: string, extraArgs: readonly string[] = []): Invocation {
+  const target = parsePostgresUrl(connection)
+  const args = ['--dbname', target.url, ...pgDumpFlags(kind), ...extraArgs]
   return { args, env: target.password ? { PGPASSWORD: target.password } : {} }
 }
 
@@ -143,18 +148,23 @@ function mysqlConnectionArgs(target: MysqlTarget): string[] {
   return args
 }
 
+/** mysqldump's options, the same whether it runs here or on a server. */
+export const MYSQLDUMP_FLAGS: readonly string[] = [
+  // A consistent snapshot of InnoDB without locking the tables for the length of the dump.
+  '--single-transaction',
+  '--quick',
+  '--routines',
+  '--triggers',
+  '--events',
+  '--hex-blob',
+  '--default-character-set=utf8mb4',
+]
+
 export function mysqldumpInvocation(connection: string, extraArgs: readonly string[] = []): Invocation {
   const target = parseMysqlUrl(connection)
   const args = [
     ...mysqlConnectionArgs(target),
-    // A consistent snapshot of InnoDB without locking the tables for the length of the dump.
-    '--single-transaction',
-    '--quick',
-    '--routines',
-    '--triggers',
-    '--events',
-    '--hex-blob',
-    '--default-character-set=utf8mb4',
+    ...MYSQLDUMP_FLAGS,
     ...target.options,
     ...extraArgs,
     // Last, and alone: no --databases, so the dump restores into a database of any name.
@@ -169,12 +179,17 @@ export function mysqlRestoreInvocation(connection: string): Invocation {
   return { args, env: target.password ? { MYSQL_PWD: target.password } : {} }
 }
 
+/** One word for a POSIX shell, single-quoted: what goes into a command run over ssh. */
+export function shq(word: string): string {
+  return /^[A-Za-z0-9_./:=@%+,-]+$/.test(word) ? word : `'${word.replace(/'/g, `'\\''`)}'`
+}
+
 /** A path inside a sqlite3 dot-command, single-quoted. */
 export function sqliteQuote(path: string): string {
   return `'${path.replace(/'/g, "''")}'`
 }
 
-export type Tool = 'pg_dump' | 'psql' | 'mysqldump' | 'mysql' | 'sqlite3' | 'rsync'
+export type Tool = 'pg_dump' | 'psql' | 'mysqldump' | 'mysql' | 'sqlite3' | 'rsync' | 'ssh'
 
 const CANDIDATES: Record<Tool, string[]> = {
   pg_dump: ['pg_dump'],
@@ -184,6 +199,7 @@ const CANDIDATES: Record<Tool, string[]> = {
   mysql: ['mysql', 'mariadb'],
   sqlite3: ['sqlite3'],
   rsync: ['rsync'],
+  ssh: ['ssh'],
 }
 
 function isExecutable(path: string): boolean {
@@ -243,4 +259,5 @@ export const INSTALL_HINT: Record<Tool, string> = {
   mysql: 'Install the MySQL or MariaDB client (apt install default-mysql-client, brew install mysql-client).',
   sqlite3: 'Install sqlite3 (apt install sqlite3, brew install sqlite), or run DiskPush on Node 22.16 or newer.',
   rsync: 'Needed only to push backups (apt install rsync, brew install rsync).',
+  ssh: 'Needed for databases on servers (apt install openssh-client).',
 }

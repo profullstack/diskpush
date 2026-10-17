@@ -98,8 +98,9 @@ export function run(options: RunOptions): Promise<void> {
 export type DumpResult = { path: string; bytes: number }
 
 /**
- * pg_dump / mysqldump → gzip → `<final>`. `trailer` is the line the tool ends
- * a complete dump with; without it the dump is thrown away.
+ * pg_dump / mysqldump (or ssh running one on a server) → gzip → `<final>`.
+ * `trailer` is the line the tool ends a complete dump with; without it the
+ * dump is thrown away.
  */
 export async function dumpToFile(options: {
   program: string
@@ -108,7 +109,8 @@ export async function dumpToFile(options: {
   env: Env
   signal: AbortSignal
   final: string
-  trailer: string
+  /** Null: the output has no trailer to check (a SQLite file streamed from a server). */
+  trailer: string | null
 }): Promise<DumpResult> {
   await mkdir(dirname(options.final), { recursive: true })
   const partial = join(dirname(options.final), `.${options.final.split(/[\\/]/).pop()}.partial`)
@@ -122,7 +124,7 @@ export async function dumpToFile(options: {
       run({ program: options.program, args: options.args, env: options.env, extraEnv: options.extraEnv, signal: options.signal, stdout: sink }),
       writing,
     ])
-    if (!tail.text().includes(options.trailer)) {
+    if (options.trailer !== null && !tail.text().includes(options.trailer)) {
       throw new Error(`The dump ended without "${options.trailer}", so it is incomplete and was discarded.`)
     }
     await rename(partial, options.final)
