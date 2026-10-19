@@ -18,7 +18,7 @@ allowBuilds:
   cpu-features: false
 
 minimumReleaseAgeExclude:
-  - '@profullstack/x402-gateway@0.1.0 || 0.7.0'
+  - '@profullstack/x402-gateway'
   - '@profullstack/hqtui@0.2.0 || 0.5.0 || 0.5.1'
   - '@profullstack/keys'
   - '@profullstack/footer'
