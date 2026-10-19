@@ -1,4 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 import { Client, type AnyAuthMethod, type ConnectConfig, type SFTPWrapper } from 'ssh2'
 import type { Connection } from '@diskpush/schemas'
 import { keyTypeOf, sha256Fingerprint } from './fingerprint.js'
@@ -23,7 +25,14 @@ export type HostKeyPrompt = (details: {
 }) => Promise<boolean>
 
 export type SessionOptions = {
+  /** DiskPush's own known_hosts: read, and where newly trusted keys are written. */
   knownHostsPath: string
+  /**
+   * Further known_hosts files trusted read-only, so a host OpenSSH already
+   * knows is not "new" to DiskPush. Defaults to ~/.ssh/known_hosts (hashed
+   * entries included); pass [] to trust only `knownHostsPath`.
+   */
+  trustedKnownHostsPaths?: readonly string[]
   /**
    * Asked only when a host is genuinely new. A *changed* key is never
    * prompted away here; it fails, and the user has to deal with it
@@ -76,7 +85,8 @@ export class SshSession {
 
   static async connect(connection: Connection, options: SessionOptions): Promise<SshSession> {
     const client = new Client()
-    const knownHosts = readKnownHosts(options.knownHostsPath)
+    const trusted = options.trustedKnownHostsPaths ?? [join(homedir(), '.ssh', 'known_hosts')]
+    const knownHosts = [options.knownHostsPath, ...trusted.filter((p) => p !== options.knownHostsPath)].flatMap(readKnownHosts)
 
     const config: ConnectConfig = {
       host: connection.host,
