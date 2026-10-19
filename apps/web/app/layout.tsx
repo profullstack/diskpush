@@ -1,12 +1,13 @@
 import type { Metadata } from 'next'
 import { Footer, Header } from '@/components/chrome'
+import { PitFooter } from '@/components/pit-footer'
 import { SITE } from '@/lib/site'
 import './globals.css'
 import Script from "next/script";
 
 /**
- * ISR for every prerendered page: re-rendered at most hourly, so a new
- * @profullstack/footer template release reaches them without a redeploy.
+ * ISR for every prerendered page: re-rendered at most hourly, so a change to
+ * the pit.world network footer reaches them without a redeploy.
  */
 export const revalidate = 3600
 
@@ -96,6 +97,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <Footer />
         <Script data-site="4f356371-83a0-4cb2-b570-75b961e6ddcb" src="https://crawlproof.com/stats.js" strategy="afterInteractive" />
         <Script src="https://crawlproof.com/ad.js" strategy="afterInteractive" />
+        <PitFooter />
       </body>
     </html>
   )

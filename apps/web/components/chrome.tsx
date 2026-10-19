@@ -1,5 +1,4 @@
 import Link from 'next/link'
-import { Footer as PfsFooter } from '@profullstack/footer/react'
 import { CopyButton } from '@/components/copy-button'
 import { NAV, SITE } from '@/lib/site'
 
@@ -34,25 +33,28 @@ export function Header() {
   )
 }
 
-/**
- * @profullstack/footer: the same links, copyright and webring every Profullstack
- * site renders, from the package's @latest template (async server component).
- */
+/** One row: copyright and the links people need. The network is the pit.world footer's job. */
 export function Footer() {
+  const links = [
+    { label: 'Docs', href: '/docs' },
+    { label: 'GitHub', href: SITE.repo, rel: 'noreferrer' },
+    { label: 'Releases', href: SITE.releases, rel: 'noreferrer' },
+    { label: 'Security', href: '/security' },
+    { label: 'Privacy', href: '/privacy' },
+  ]
   return (
-    <div className="mt-8 text-text">
-      <PfsFooter
-        site="https://diskpush.com/"
-        tagline="MIT licensed"
-        links={[
-          { label: 'Docs', href: '/docs' },
-          { label: 'GitHub', href: SITE.repo, rel: 'noreferrer' },
-          { label: 'Releases', href: SITE.releases, rel: 'noreferrer' },
-          { label: 'Security', href: '/security' },
-          { label: 'Privacy', href: '/privacy' },
-        ]}
-      />
-    </div>
+    <footer className="mt-8 border-t border-line text-sm">
+      <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-center gap-x-5 gap-y-2 px-5 py-5 text-center opacity-75">
+        <span>&copy; {new Date().getFullYear()} Profullstack, Inc. &middot; MIT licensed</span>
+        <nav aria-label="Footer" className="flex flex-wrap justify-center gap-x-5 gap-y-1">
+          {links.map((l) => (
+            <a key={l.label} href={l.href} rel={l.rel} className="hover:underline">
+              {l.label}
+            </a>
+          ))}
+        </nav>
+      </div>
+    </footer>
   )
 }
 
