@@ -85,13 +85,16 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en">
       <body className="flex min-h-screen flex-col">
         <Header />
-        <main className="flex-1">{children}</main>
+        <main className="flex-1">
+          {/* One CrawlProof unit at the top of the content, never by the footer.
+           * No data-format: ad.js picks the size from the container width. */}
+          <div className="mx-auto max-w-6xl px-5 pt-6">
+            <div data-cp-ad="" data-slot="8d21a830-acfe-40ba-9d0d-0078d66ca479" />
+          </div>
+          {children}
+        </main>
         <Footer />
-              <Script data-site="4f356371-83a0-4cb2-b570-75b961e6ddcb" src="https://crawlproof.com/stats.js" strategy="afterInteractive" />
-              <div data-cp-ad="" data-slot="8d21a830-acfe-40ba-9d0d-0078d66ca479" data-format="banner_300x250" />
-        <div data-cp-ad="" data-slot="8d21a830-acfe-40ba-9d0d-0078d66ca479" data-format="banner_728x90" />
-        <div data-cp-ad="" data-slot="8d21a830-acfe-40ba-9d0d-0078d66ca479" data-format="banner_320x50" />
-        <div data-cp-ad="" data-slot="8d21a830-acfe-40ba-9d0d-0078d66ca479" data-format="text_link" />
+        <Script data-site="4f356371-83a0-4cb2-b570-75b961e6ddcb" src="https://crawlproof.com/stats.js" strategy="afterInteractive" />
         <Script src="https://crawlproof.com/ad.js" strategy="afterInteractive" />
       </body>
     </html>
