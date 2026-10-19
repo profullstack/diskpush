@@ -7,7 +7,7 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
@@ -63,7 +63,7 @@ jobs:
   # only), then boot it under Bun and read the pages that come off disk at
   # request time or go through the crawl-gateway middleware.
   web-bun:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with:
@@ -110,7 +110,7 @@ jobs:
           cat /tmp/web.log
 
   integration:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
