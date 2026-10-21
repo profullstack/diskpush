@@ -1,6 +1,7 @@
 import type { Metadata } from 'next'
 import { Footer, Header } from '@/components/chrome'
 import { PitFooter } from '@/components/pit-footer'
+import { AdUnit } from '@/components/ad-unit'
 import { SITE } from '@/lib/site'
 import './globals.css'
 import Script from "next/script";
@@ -87,11 +88,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body className="flex min-h-screen flex-col">
         <Header />
         <main className="flex-1">
-          {/* One CrawlProof unit at the top of the content, never by the footer.
-           * No data-format: ad.js picks the size from the container width. */}
-          <div className="mx-auto max-w-6xl px-5 pt-6">
-            <div data-cp-ad="" data-slot="8d21a830-acfe-40ba-9d0d-0078d66ca479" />
-          </div>
+          {/* One low-profile CrawlProof unit at the top of the content, never by
+           * the footer, and none on the homepage. */}
+          <AdUnit />
           {children}
         </main>
         <Footer />
