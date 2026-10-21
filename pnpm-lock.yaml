@@ -163,8 +163,8 @@ importers:
         specifier: latest
         version: 0.2.4(react@19.2.8)
       '@profullstack/x402-gateway':
-        specifier: ^0.10.1
-        version: 0.10.1
+        specifier: ^0.11.0
+        version: 0.11.0
       marked:
         specifier: ^15.0.7
         version: 15.0.12
@@ -1212,8 +1212,8 @@ packages:
     resolution: {integrity: sha512-3tG0Icz2gwLfwbOwdYxgCTTcjCyAAhEnU82ReIrbOQiN8f3R84WrPLWfE4Pqg/ce57VFVPpNkSmd5doaXKV+dw==}
     engines: {node: '>=20.0.0'}
 
-  '@profullstack/x402-gateway@0.10.1':
-    resolution: {integrity: sha512-YF/P3GRbb/8dAHIhDT2R7yHSAK+olrT4/zAWLzf5aF9Na8o1/rJCdP+k6UnGepyQ9RQ2qL9p5diRVwb18Zt4VA==}
+  '@profullstack/x402-gateway@0.11.0':
+    resolution: {integrity: sha512-Lfrz+SRTwQZfcoCaVtaaMNPJx74Lp/5oyS7vJJAEuJmH1TjBzhE7dWquISkj1p42oc+VW5I9xH9p7YhEKqmr4Q==}
     engines: {node: '>=20.11'}
 
   '@radix-ui/primitive@1.1.7':
@@ -5139,7 +5139,7 @@ snapshots:
 
   '@profullstack/text-type-detection@1.0.0': {}
 
-  '@profullstack/x402-gateway@0.10.1':
+  '@profullstack/x402-gateway@0.11.0':
     dependencies:
       '@profullstack/keys': 0.1.0
 
