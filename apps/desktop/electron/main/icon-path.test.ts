@@ -39,15 +39,17 @@ describe('StartupWMClass', () => {
 
   it('is what electron-builder writes into the packaged entry', () => {
     const manifest = JSON.parse(readFileSync(join(root, 'apps', 'desktop', 'package.json'), 'utf8'))
-    expect(manifest.build.linux.desktop.StartupWMClass).toBe(WM_CLASS)
+    expect(manifest.build.linux.desktop.entry.StartupWMClass).toBe(WM_CLASS)
   })
 
-  it('is a flat map, which is the only shape electron-builder 25 reads', () => {
-    // `desktop: { entry: {...} }` is electron-builder 26 syntax. 25 stringifies
-    // the nested object, so the deb shipped `entry=[object Object]` and lost
-    // its Keywords without a warning.
+  it('sits under desktop.entry as flat strings, the shape electron-builder 26 reads', () => {
+    // electron-builder 26 rejects a flat `linux.desktop` map at schema
+    // validation; 25 instead stringified the nested object, so the deb shipped
+    // `entry=[object Object]` and lost its Keywords without a warning. The
+    // builder version and this shape have to move together.
     const manifest = JSON.parse(readFileSync(join(root, 'apps', 'desktop', 'package.json'), 'utf8'))
-    for (const value of Object.values(manifest.build.linux.desktop)) {
+    expect(Object.keys(manifest.build.linux.desktop)).toEqual(['entry'])
+    for (const value of Object.values(manifest.build.linux.desktop.entry)) {
       expect(typeof value).toBe('string')
     }
   })
