@@ -12,11 +12,14 @@
  * *format* compatibility at runtime, and the unit tests never start Electron.
  */
 import { spawnSync } from 'node:child_process'
+import { createRequire } from 'node:module'
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 
 const desktop = resolve(import.meta.dirname, '..', 'apps', 'desktop')
-const electron = join(desktop, 'node_modules', 'electron', 'dist', 'electron')
+// Electron 4x has no postinstall: the binary is fetched the first time the
+// package is required, which also hands back its path.
+const electron = createRequire(join(desktop, 'package.json'))('electron')
 
 /**
  * Every asset the exported page asks for must resolve to a real file through
