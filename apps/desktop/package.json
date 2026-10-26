@@ -89,8 +89,10 @@
       ],
       "icon": "resources/icons",
       "desktop": {
-        "Keywords": "rsync;sftp;ssh;sync;transfer;backup;",
-        "StartupWMClass": "DiskPush"
+        "entry": {
+          "Keywords": "rsync;sftp;ssh;sync;transfer;backup;",
+          "StartupWMClass": "DiskPush"
+        }
       },
       "artifactName": "${productName}-${version}-linux-${arch}.${ext}"
     },
