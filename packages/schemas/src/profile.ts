@@ -45,8 +45,8 @@ export const SyncProfileSchema = z.object({
    */
   sourcePane: z.enum(['left', 'right']).default('left'),
   trustDeletes: z.boolean().default(false),
-  schedule: ScheduleSchema.default({}),
-  watch: WatchSchema.default({}),
+  schedule: ScheduleSchema.prefault({}),
+  watch: WatchSchema.prefault({}),
   notifyOnSuccess: z.boolean().default(false),
   notifyOnFailure: z.boolean().default(true),
   createdAt: z.string(),

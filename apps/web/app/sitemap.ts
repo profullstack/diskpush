@@ -40,7 +40,7 @@ async function committed(path: string): Promise<Date | null> {
 
 async function touched(path: string): Promise<Date | null> {
   try {
-    return (await stat(join(ROOT, path))).mtime
+    return (await stat(join(/*turbopackIgnore: true*/ ROOT, path))).mtime
   } catch {
     return null
   }

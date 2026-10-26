@@ -20,7 +20,7 @@ RUN --mount=type=cache,id=diskpush-pnpm-store,target=/root/.local/share/pnpm/sto
   pnpm install --frozen-lockfile --prod=false --filter @diskpush/web...
 RUN pnpm --filter @diskpush/web build
 
-FROM oven/bun:1.4.0-slim AS runtime
+FROM oven/bun:1.4.4-slim AS runtime
 WORKDIR /app
 ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 PORT=3000
 # Docker sets HOSTNAME to the container id, and standalone binds to it literally.
