@@ -1,6 +1,6 @@
 {
   "name": "@diskpush/fleet-core",
-  "version": "0.16.3",
+  "version": "0.16.4",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -21,6 +21,6 @@
     "@diskpush/rsync-core": "workspace:*",
     "@diskpush/schemas": "workspace:*",
     "@diskpush/ssh-core": "workspace:*",
-    "zod": "^3.24.1"
+    "zod": "^4.6.7"
   }
 }

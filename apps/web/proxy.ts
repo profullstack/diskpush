@@ -1,7 +1,7 @@
 import { gate } from "@/lib/crawl-gateway";
 import { NextResponse, type NextRequest } from "next/server";
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   // The status page's health probe skips the crawl gateway.
   if (request.nextUrl.pathname === "/api/health") return NextResponse.next();
   // Crawl gateway first: AI training crawlers get 402 Payment Required (or the
