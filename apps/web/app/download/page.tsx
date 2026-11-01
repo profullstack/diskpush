@@ -26,9 +26,8 @@ export const metadata: Metadata = {
 // published and downloadable while this page still offered v0.1.7. Next
 // revalidates lazily -- on the first request after the window lapses, not on a
 // timer -- so the ceiling is 60 GitHub calls an hour and the real number
-// tracks traffic. Worth knowing before lowering it further: unauthenticated
-// GitHub allows exactly 60 an hour per IP, and latestRelease() answers null on
-// a refusal, which renders as no release at all.
+// tracks traffic. If GitHub refuses the request, latestRelease() checks the
+// release assets for this build's version before rendering an empty state.
 export const dynamic = 'force-dynamic'
 
 export default async function DownloadPage() {
@@ -39,7 +38,9 @@ export default async function DownloadPage() {
       <h1 className="text-3xl font-bold tracking-tight">Download DiskPush</h1>
       <p className="mt-3 text-muted">
         {release
-          ? `Current stable version ${release.version}, released ${new Date(release.publishedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}.`
+          ? release.publishedAt
+            ? `Current stable version ${release.version}, released ${new Date(release.publishedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}.`
+            : `Current stable version ${release.version}.`
           : 'Builds are published to GitHub Releases. Until the first tagged release, install from source.'}
       </p>
 
