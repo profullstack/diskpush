@@ -31,10 +31,11 @@ describe('buildCommand', () => {
   it('leaves stdin free for the password, and sends the script as an argument', () => {
     // `sudo -S` reads stdin ONLY when it actually needs a password. Under
     // NOPASSWD, a cached timestamp, or an already-root login it reads nothing,
-    // and a password prepended to the script becomes command number one:
-    //     /bin/sh: 1: <the password>: not found
+    // so the helper closes stdin before starting the interpreter.
     const built = buildCommand({ script: 'id', interpreter: 'sh', sudo: 'password' })
-    expect(built.command).toBe("sudo -S -p '' /bin/sh -ec id")
+    expect(built.command).toBe(
+      `sudo -S -p '' /bin/sh -c 'exec </dev/null; exec "$@"' DISKPUSH /bin/sh -ec id`,
+    )
     expect(built.stdin).toBeUndefined()
   })
 
@@ -45,18 +46,47 @@ describe('buildCommand', () => {
       sudo: 'password',
     })
     // Single-quoted with embedded quotes escaped: the shell sees one argument.
-    expect(built.command).toBe(`sudo -S -p '' /bin/sh -ec 'echo "it'\\''s $(whoami)"; rm -rf /tmp/x'`)
+    expect(built.command).toBe(
+      `sudo -S -p '' /bin/sh -c 'exec </dev/null; exec "$@"' DISKPUSH /bin/sh -ec ` +
+        `'echo "it'\\''s $(whoami)"; rm -rf /tmp/x'`,
+    )
   })
 
   it('honours --no-fail-fast in the password path too', () => {
     const built = buildCommand({ script: 'id', interpreter: 'sh', sudo: 'password', failFast: false })
-    expect(built.command).toBe("sudo -S -p '' /bin/sh -c id")
+    expect(built.command).toBe(
+      `sudo -S -p '' /bin/sh -c 'exec </dev/null; exec "$@"' DISKPUSH /bin/sh -c id`,
+    )
   })
 
   it('runs raw text unwrapped, with nothing on stdin', () => {
     const built = buildCommand({ script: 'uptime', interpreter: 'raw', sudo: 'off' })
     expect(built.command).toBe('uptime')
     expect(built.stdin).toBeUndefined()
+  })
+
+  it('closes the password stream before running a raw sudo command chain', () => {
+    const built = buildCommand({
+      script: 'sudo apt update && sudo apt upgrade && sudo snap refresh',
+      interpreter: 'raw',
+      sudo: 'password',
+    })
+    expect(built.command).toBe(
+      `sudo -S -p '' /bin/sh -c 'exec </dev/null; exec /bin/sh -c "$1"' DISKPUSH ` +
+        `'sudo apt update && sudo apt upgrade && sudo snap refresh'`,
+    )
+  })
+
+  it('closes the password stream before running an interpreted script', () => {
+    const built = buildCommand({
+      script: 'sudo apt update && sudo apt upgrade && sudo snap refresh',
+      interpreter: 'sh',
+      sudo: 'password',
+    })
+    expect(built.command).toBe(
+      `sudo -S -p '' /bin/sh -c 'exec </dev/null; exec "$@"' DISKPUSH /bin/sh -ec ` +
+        `'sudo apt update && sudo apt upgrade && sudo snap refresh'`,
+    )
   })
 
   it('quotes the working directory', () => {

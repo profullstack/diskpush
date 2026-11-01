@@ -103,7 +103,16 @@ export function buildCommand(options: BuildOptions): BuiltCommand {
   const env = envPrefix(options.env)
 
   if (interpreter === 'raw') {
-    const command = `${cd}${env}${sudoPrefix(sudo)}${script}`
+    // Keep the password stream away from commands in the raw script too.
+    // With `sudo -S`, sudo may leave stdin unread when its ticket is cached,
+    // NOPASSWD applies, or the login is already root. In that case an
+    // interactive command such as `apt upgrade` could mistake the password
+    // for its confirmation. The helper closes stdin only after sudo has had
+    // its chance to read the password, then evaluates the complete raw script.
+    const command =
+      sudo === 'password'
+        ? `${cd}${sudoPrefix(sudo)}${env}/bin/sh -c ${shellQuote('exec </dev/null; exec /bin/sh -c "$1"')} DISKPUSH ${shellQuote(script)}`
+        : `${cd}${env}${sudoPrefix(sudo)}${script}`
     // Nothing on stdin: `withSudoPassword` is what puts a password there, and
     // only when one was actually collected.
     return { command, stdin: undefined, display: command }
@@ -113,22 +122,21 @@ export function buildCommand(options: BuildOptions): BuiltCommand {
   const errexit = options.failFast === false ? '' : 'e'
 
   /*
-   * With a sudo password, stdin belongs to sudo and to nothing else.
-   *
-   * `sudo -S` reads the password from stdin *only when it actually needs one*.
-   * Under NOPASSWD, a cached timestamp, or when the login is already root, it
-   * reads nothing — and the password line then falls through to `sh -es` and
-   * is executed as command number one:
-   *
-   *     /bin/sh: 1: <the password>: not found
-   *
-   * That is not a corner case; it is what happens on every correctly
-   * configured deploy account. So in this mode the script travels as a
-   * quoted argument instead, and stdin carries the password alone. There is
-   * no ordering to get right because the two never share a stream.
+   * With a sudo password, stdin carries only the password and the script
+   * travels as a quoted argument. `sudo -S` reads the password only when it
+   * needs one; with NOPASSWD, a cached ticket, or an already-root login, that
+   * line would otherwise reach the command and could answer an interactive
+   * prompt. The helper below closes stdin after sudo has authenticated, before
+   * it starts the interpreter.
    */
   if (sudo === 'password') {
-    const command = `${cd}${sudoPrefix(sudo)}${env}${binary} -${errexit}c ${shellQuote(script)}`
+    // sudo reads its password from stdin, but may not read anything when the
+    // login already has a valid ticket. Close stdin in a root shell before it
+    // launches the script so leftover password bytes cannot answer a prompt
+    // from the script (for example, apt upgrade's confirmation).
+    const command =
+      `${cd}${sudoPrefix(sudo)}${env}/bin/sh -c ${shellQuote('exec </dev/null; exec "$@"')} ` +
+      `DISKPUSH ${binary} -${errexit}c ${shellQuote(script)}`
     return {
       command,
       // The password is added by `withSudoPassword`, and it is all that ever
@@ -155,16 +163,10 @@ export function buildCommand(options: BuildOptions): BuiltCommand {
 /**
  * Puts the sudo password on stdin, and nothing else.
  *
- * It used to prepend the password to the script, on the theory that `sudo -S`
- * eats the first line and hands the rest on. It does — but only when it needs
- * a password at all. Under NOPASSWD, a cached timestamp, or an already-root
- * login it reads nothing, the shell gets the password as its first command,
- * and the run dies with `<password>: not found` — leaking the password into
- * an error message on the way.
- *
- * `buildCommand` therefore routes the script through an argument whenever
- * this mode is used, leaving stdin free. Refuses rather than silently
- * corrupting if that ever stops being true.
+ * `sudo -S` reads it only when it needs to authenticate. `buildCommand`
+ * passes the script as an argument and closes stdin in the command process,
+ * so an unread password cannot become a shell command or an interactive
+ * response. Refuses rather than silently corrupting if stdin is not free.
  *
  * Kept separate from `buildCommand` so the password never travels through the
  * object that gets logged: `display` is built before this is called and is
