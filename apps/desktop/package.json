@@ -66,6 +66,11 @@
         "to": "cli"
       },
       {
+        "from": "resources/cli/node_modules",
+        "to": "cli/node_modules",
+        "filter": ["**/*"]
+      },
+      {
         "from": "resources/icon.png",
         "to": "icon.png"
       },

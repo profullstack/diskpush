@@ -11,7 +11,7 @@
  * Run scripts/package-cli.mjs first: it produces the CLI copy this embeds.
  */
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, rmSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, rmSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 
@@ -49,6 +49,22 @@ console.log('staging a self-contained app...')
 rmSync(stage, { recursive: true, force: true })
 run('pnpm', ['deploy', '--filter', '@diskpush/desktop', '--legacy', stage], root)
 
+// pnpm deploy applies npm-packlist rules and drops nested node_modules.
+// Restore the CLI tree after deploy so resources/cli keeps the workspace
+// packages and production dependencies built by package-cli.
+const stagedCli = join(stage, 'resources/cli')
+rmSync(stagedCli, { recursive: true, force: true })
+mkdirSync(join(stage, 'resources'), { recursive: true })
+cpSync(join(desktop, 'resources/cli'), stagedCli, { recursive: true, verbatimSymlinks: true })
+
+const stagedCliDatabase = join(stagedCli, 'node_modules/@diskpush/database/package.json')
+if (!existsSync(stagedCliDatabase)) {
+  console.error('staged desktop CLI is missing @diskpush/database. Run scripts/package-cli.mjs first.')
+  process.exit(1)
+}
+console.log('checking the staged CLI starts...')
+run('node', [join(stagedCli, 'dist/bin.js'), '--version'], stage)
+
 mkdirSync(buildTmp, { recursive: true })
 const targets = process.argv.slice(3).length > 0 ? process.argv.slice(3) : ['AppImage', 'deb', 'tar.gz']
 
@@ -62,5 +78,14 @@ run(
   stage,
   { TMPDIR: buildTmp },
 )
+
+const packagedCli = join(outDir, 'linux-unpacked/resources/cli')
+const packagedCliDatabase = join(packagedCli, 'node_modules/@diskpush/database/package.json')
+if (!existsSync(packagedCliDatabase)) {
+  console.error('electron-builder omitted the CLI runtime dependencies from resources/cli.')
+  process.exit(1)
+}
+console.log('checking the packaged CLI starts...')
+run('node', [join(packagedCli, 'dist/bin.js'), '--version'], outDir)
 
 console.log(`\nartifacts in ${outDir}`)
