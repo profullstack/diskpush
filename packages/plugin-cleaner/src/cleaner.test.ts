@@ -16,7 +16,7 @@ vi.setConfig({ testTimeout: 120_000, hookTimeout: 60_000 })
 import type { BaseContext } from '@diskpush/plugin-api'
 import { applyClean, scanTarget, sshArgs, type CleanOptions } from './api.js'
 import { serveMcp } from './mcp.js'
-import { classifyDir, dockerTime, parseDockerSize, growthSince, parseCategories } from './model.js'
+import { buildReport, classifyDir, dockerTime, parseDockerSize, growthSince, parseCategories, parseRecords } from './model.js'
 import { applyScript, scanScript, DEFAULT_SCRIPT_OPTIONS } from './script.js'
 
 const base = mkdtempSync(join(tmpdir(), 'diskpush-cleaner-test-'))
@@ -321,6 +321,16 @@ describe('pieces', () => {
     expect(parseDockerSize('0B')).toBe(0)
     expect(dockerTime('2026-11-11 09:56:23 +0000 UTC')).toBe(Date.parse('2026-11-11T09:56:23Z') / 1000)
     expect(dockerTime('2026-11-11 09:49:27.393197051 +0100 CET')).toBe(Date.parse('2026-11-11T08:49:27Z') / 1000)
+  })
+
+  it('keeps what a timed-out du had counted as a lower bound, and ranks unknown sizes first', () => {
+    const raw = parseRecords(['META\t1000\tLinux\t1700000000\t0\t/h', 'TOP\t/h/a', 'SIZE\t/h/a\t100\t0', 'TOP\t/h/big', 'SIZE\t/h/big\t5000\t1', 'TOP\t/h/huge', 'SIZE\t/h/huge\t0\t1', 'END'].join('\n'))
+    const report = buildReport(raw, { target: 'local', idleDays: 3, partialHours: 24, journalCap: '1G', imageAge: '72h', useSudo: false })
+    expect(report.topDirs.map((d) => [d.path, d.bytes, d.timedOut])).toEqual([
+      ['/h/huge', -1, true],
+      ['/h/big', 5000 * 1024, true],
+      ['/h/a', 100 * 1024, false],
+    ])
   })
 
   it('classifies big directories for a human', () => {

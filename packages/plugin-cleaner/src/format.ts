@@ -41,7 +41,7 @@ export function formatReport(report: Report, options: { limit?: number; why?: bo
     out.push('Biggest directories')
     for (const d of report.topDirs.slice(0, 12)) {
       const grown = report.growth?.dirs.find((g) => g.path === d.path)
-      out.push(`  ${(d.timedOut ? '?' : formatBytes(d.bytes)).padStart(9)}  ${d.path}${d.kind ? `  [${d.kind}]` : ''}${grown ? `  (${grown.deltaBytes > 0 ? '+' : '-'}${formatBytes(Math.abs(grown.deltaBytes))})` : ''}`)
+      out.push(`  ${(d.bytes < 0 ? '?' : `${d.timedOut ? '≥' : ''}${formatBytes(d.bytes)}`).padStart(10)}  ${d.path}${d.kind ? `  [${d.kind}]` : ''}${grown ? `  (${grown.deltaBytes > 0 ? '+' : '-'}${formatBytes(Math.abs(grown.deltaBytes))})` : ''}`)
     }
     out.push('')
   }

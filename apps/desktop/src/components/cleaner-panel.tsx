@@ -403,7 +403,7 @@ function Overview({ report }: { report: CleanerReport }) {
         <ul className="space-y-0.5">
           {report.topDirs.slice(0, 12).map((d) => (
             <li key={d.path} className="flex gap-2">
-              <span className="w-20 shrink-0 text-right tabular-nums">{d.timedOut ? '?' : formatBytes(d.bytes)}</span>
+              <span className="w-20 shrink-0 text-right tabular-nums">{d.bytes < 0 ? '?' : `${d.timedOut ? '≥ ' : ''}${formatBytes(d.bytes)}`}</span>
               <span className="truncate font-mono selectable" title={d.path}>
                 {d.path}
               </span>

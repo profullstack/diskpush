@@ -148,10 +148,17 @@ if ! is_root && [ "$USE_SUDO" = 1 ] && have sudo && sudo -n true 2>/dev/null; th
 can_root() { is_root || [ -n "$SUDO" ]; }
 
 # Sizes, in KiB, of paths on stdin (one per line), several du at once, each
-# bounded: a du that runs out of time reports -1 instead of hanging the scan.
-sizes() {
-  tr '\n' '\0' | xargs -0 -P "$PAR" -n 1 sh -c '[ -n "$1" ] || exit 0; k=$( { if command -v timeout >/dev/null 2>&1; then timeout "$DU_TIMEOUT" du -sxk -- "$1"; else du -sxk -- "$1"; fi; } 2>/dev/null | awk "NR==1{print \$1}"); printf "SIZE\t%s\t%s\n" "$1" "\${k:--1}"' sh
-}
+# bounded. A du that runs out of time still printed every subfolder it
+# finished, so their sum is reported as a lower bound (last field 1) instead
+# of nothing: "at least 120 GB, still counting" is what finds a culprit.
+SIZE_ONE='p=$1; [ -n "$p" ] || exit 0
+if command -v timeout >/dev/null 2>&1; then o=$(timeout "$DU_TIMEOUT" du -xk -d 1 -- "$p" 2>/dev/null); rc=$?; else o=$(du -xk -d 1 -- "$p" 2>/dev/null); rc=$?; fi
+if [ "$rc" = 124 ] || [ "$rc" = 137 ]; then
+  k=$(printf "%s\n" "$o" | awk -F "\t" -v p="$p" "\$2!=p && \$1 ~ /^[0-9]+\$/ {s+=\$1} END{print s+0}"); printf "SIZE\t%s\t%s\t1\n" "$p" "$k"
+else
+  k=$(printf "%s\n" "$o" | awk -F "\t" -v p="$p" "\$2==p {k=\$1} END{print (k==\"\" ? -1 : k)}"); printf "SIZE\t%s\t%s\t0\n" "$p" "$k"
+fi'
+sizes() { tr '\n' '\0' | xargs -0 -P "$PAR" -n 1 sh -c "$SIZE_ONE" sh; }
 
 # Every path some process works in or runs from right now.
 # One ls over /proc, not a readlink per process: on a box with thousands of
@@ -306,15 +313,18 @@ fi
 
 const SCAN_TOP = unescape(String.raw`
 step "sizing the biggest directories"
-# One bounded du per root sizes all its children in a single pass. A root too
-# big for that (or one that holds another root, like /home holding $HOME) is
-# sized folder by folder instead, several du at a time, each bounded on its
-# own, so one huge folder shows as "?" instead of hiding the rest.
+# One bounded du per root sizes all its children in a single pass. When it runs
+# out of time, the children it finished keep their exact sizes and only the
+# rest are sized one by one (several at a time, each bounded, a lower bound
+# when even that runs out). A root that holds another root (/home holding
+# $HOME) goes folder by folder from the start, skipping that root.
 ROOTS=$(top_roots)
 per_child() {
+  done_list=$2
   kids=$(for c in "$1"/* "$1"/.[!.]* "$1"/..?*; do
     [ -d "$c" ] && [ ! -L "$c" ] && okpath "$c" || continue
     printf '%s\n' "$ROOTS" | grep -qxF -- "$c" && continue
+    [ -n "$done_list" ] && printf '%s\n' "$done_list" | grep -qxF -- "$c" && continue
     printf '%s\n' "$c"
   done | head -n 400)
   printf '%s\n' "$kids" | while IFS= read -r c; do [ -n "$c" ] && emit TOP "$c"; done
@@ -326,16 +336,15 @@ printf '%s\n' "$ROOTS" | while IFS= read -r r; do
   case "$r" in /proc|/proc/*|/sys|/sys/*|/dev|/dev/*|/run|/run/*) continue ;; esac
   step "sizing $r"
   if printf '%s\n' "$ROOTS" | awk -v r="$r" 'index($0, r "/")==1 && substr($0, length(r)+2) !~ /\// {f=1} END{exit !f}'; then
-    per_child "$r"
+    per_child "$r" ""
     continue
   fi
   out=$(tmo $((DU_TIMEOUT * 3)) du -xak -d 1 -- "$r" 2>/dev/null; echo "rc=$?")
   rc=\${out##*rc=}
+  printf '%s\n' "$out" | awk -F '\t' -v r="$r" 'NF==2 && $2!=r && $1 ~ /^[0-9]+$/ { printf "TOP\t%s\nSIZE\t%s\t%s\t0\n", $2, $2, $1 }'
   if [ "$rc" = 124 ] || [ "$rc" = 137 ]; then
-    emit WARN "$r is too big to size in one pass; sized its folders one by one"
-    per_child "$r"
-  else
-    printf '%s\n' "$out" | awk -F '\t' -v r="$r" 'NF==2 && $2!=r && $1 ~ /^[0-9]+$/ { printf "TOP\t%s\nSIZE\t%s\t%s\n", $2, $2, $1 }'
+    emit WARN "$r is too big to size in one pass; sized the rest of its folders one by one"
+    per_child "$r" "$(printf '%s\n' "$out" | awk -F '\t' -v r="$r" 'NF==2 && $2!=r {print $2}')"
   fi
 done
 `)

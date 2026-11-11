@@ -46,6 +46,7 @@ export type Item = {
 }
 
 export type Filesystem = { device: string; mount: string; sizeBytes: number; usedBytes: number; availBytes: number; usedPercent: number }
+/** `timedOut`: du ran out of time; `bytes` is then a lower bound (what it had counted), or -1 when it had nothing. */
 export type DirSize = { path: string; bytes: number; timedOut: boolean; kind: string | null }
 export type Writer = { pid: number; bytesPerSecond: number; command: string; container: string | null; cmdline: string }
 export type Kept = { root: string; reason: string; dirs: number }
@@ -196,6 +197,8 @@ type Raw = {
   homeMount: string | null
   fs: Filesystem[]
   sizes: Map<string, number>
+  /** Paths whose size is only a lower bound. */
+  partial: Set<string>
   top: string[]
   writers: Writer[]
   caches: { id: CacheId; path: string; tool: boolean; busy: boolean }[]
@@ -221,6 +224,7 @@ export function parseRecords(output: string, options: { imageAge?: string } = {}
     homeMount: null,
     fs: [],
     sizes: new Map(),
+    partial: new Set(),
     top: [],
     writers: [],
     caches: [],
@@ -257,9 +261,14 @@ export function parseRecords(output: string, options: { imageAge?: string } = {}
         raw.fs.push({ device, mount, sizeBytes, usedBytes, availBytes, usedPercent: Math.round(((usedBytes) / (usedBytes + availBytes || 1)) * 100) })
         break
       }
-      case 'SIZE':
-        if (f[1]) raw.sizes.set(f[1], Number(f[2]) >= 0 ? Number(f[2]) * KIB : -1)
+      case 'SIZE': {
+        if (!f[1]) break
+        const kb = Number(f[2])
+        const partial = f[3] === '1'
+        raw.sizes.set(f[1], Number.isFinite(kb) && kb >= 0 && !(partial && kb === 0) ? kb * KIB : -1)
+        if (partial) raw.partial.add(f[1])
         break
+      }
       case 'TOP':
         if (f[1]) raw.top.push(f[1])
         break
@@ -576,9 +585,10 @@ export function buildReport(raw: Raw, options: BuildOptions): Report {
   const topDirs: DirSize[] = raw.top
     .map((path) => {
       const bytes = size(path)
-      return { path, bytes, timedOut: bytes < 0, kind: classifyDir(path, raw.dockerRoot) }
+      return { path, bytes, timedOut: bytes < 0 || raw.partial.has(path), kind: classifyDir(path, raw.dockerRoot) }
     })
-    .sort((a, b) => (b.timedOut ? Infinity : b.bytes) - (a.timedOut ? Infinity : a.bytes))
+    // Unknown first (it ran out of time with nothing counted, so it may be the biggest), then by size; a lower bound counts as its size.
+    .sort((a, b) => (b.bytes < 0 ? Infinity : b.bytes) - (a.bytes < 0 ? Infinity : a.bytes))
 
   for (const dir of topDirs) {
     if (!dir.kind || !REVIEW_WHY[dir.kind]) continue
@@ -636,7 +646,7 @@ export function buildReport(raw: Raw, options: BuildOptions): Report {
   const warnings = [...raw.warnings]
   if (!raw.complete) warnings.push('The scan did not finish; the report is partial.')
   const timedOut = topDirs.filter((d) => d.timedOut).length
-  if (timedOut) warnings.push(`${timedOut} director${timedOut === 1 ? 'y was' : 'ies were'} too big to size in time (shown as ?): look inside them first.`)
+  if (timedOut) warnings.push(`${timedOut} director${timedOut === 1 ? 'y was' : 'ies were'} too big to size in time (shown as ≥ what was counted, or ?): look inside them first.`)
 
   return {
     target: options.target,
