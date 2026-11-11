@@ -226,6 +226,17 @@ database now* is under Plugins… in the desktop.
 command for pushes), `sqliteRoots` (where discovery looks for SQLite files), and `pg_dumpPath` / `mysqldumpPath` / `psqlPath` /
 `mysqlPath` / `sqlite3Path` to pin a tool.
 
+## Cleaner
+
+`cleaner` (`diskpush clean`) finds what is filling and growing a disk and
+frees space safely: caches, docker build cache, old unused images, rotated
+logs, build output in idle projects, stale partial files. Analysis is always
+a dry run; apply removes only safe-class items and re-checks every guard as
+it deletes; databases, backups, volumes and media are only ever reported.
+It runs locally or on any server over ssh, from the CLI, the TUI, the desktop
+Cleaner tab and MCP (`diskpush clean mcp`). Everything else is in
+[cleaner.md](cleaner.md).
+
 ## Writing a plugin
 
 A plugin is an object. `definePlugin` checks its shape when it is defined, so

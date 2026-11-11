@@ -22,7 +22,7 @@ const SETTING_KEY = /^[A-Za-z][A-Za-z0-9_.-]{0,63}$/
 export const RESERVED_IDS = new Set([
   'sync', 'push', 'pull', 'publish', 'deploy', 'backup', 'mirror', 'rsync', 'ls', 'connections', 'profiles',
   'profile', 'jobs', 'job', 'retry', 'update', 'upgrade', 'uninstall', 'remove', 'doctor', 'desktop', 'tui',
-  'fleet', 'help', 'version', 'plugins', 'plugin',
+  'fleet', 'help', 'version', 'plugins', 'plugin', 'clean',
 ])
 
 export class PluginError extends Error {

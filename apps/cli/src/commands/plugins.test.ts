@@ -76,6 +76,28 @@ describe('dispatch to a plugin', () => {
     expect(stripGlobalFlags(['--json', 'say', '-q', 'x'])).toEqual(['say', 'x'])
   })
 
+  it('`diskpush clean` is the cleaner, and a missing command means run', async () => {
+    const { registry: r } = await loadPlugins(memoryBackend(), { external: false })
+    expect(await r.isEnabled('cleaner')).toBe(true)
+    expect(findPluginCall(['clean', 'web-1', '--apply'], r)).toEqual({ pluginId: 'cleaner', args: ['web-1', '--apply'], defaultCommand: 'run' })
+    expect(findPluginCall(['cleaner', 'report'], r)).toEqual({ pluginId: 'cleaner', args: ['report'] })
+    const said: string[][] = []
+    const fake = new PluginRegistry(memoryBackend())
+    fake.register(
+      definePlugin({
+        id: 'cleaner',
+        name: 'Cleaner',
+        version: '1',
+        description: 'x',
+        commands: ['run', 'report'].map((name) => ({ name, summary: name, usage: name, async run(args: string[]) { said.push([name, ...args]); return 0 } })),
+      }),
+    )
+    await runPluginCommand(fake, 'cleaner', ['web-1', '--apply'], output(), undefined, 'run')
+    await runPluginCommand(fake, 'cleaner', ['report', 'web-1'], output(), undefined, 'run')
+    await runPluginCommand(fake, 'cleaner', [], output(), undefined, 'run')
+    expect(said).toEqual([['run', 'web-1', '--apply'], ['report', 'web-1'], ['run']])
+  })
+
   it('runs the command with its own arguments and a context bound to the plugin', async () => {
     const r = registry()
     const code = await runPluginCommand(r, 'echo', ['say', 'hello', 'world', '--loud'], output())

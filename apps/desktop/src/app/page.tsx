@@ -16,10 +16,12 @@ import {
   Settings,
   Users,
   X,
+  Brush,
 } from 'lucide-react'
 import { ConnectionDialog } from '@/components/connection-dialog'
 import { FleetView } from '@/components/fleet-view'
 import { FleetSyncPanel } from '@/components/fleet-sync-panel'
+import { CleanerPanel } from '@/components/cleaner-panel'
 import { PluginsDialog } from '@/components/plugins-dialog'
 import { ProfileBar } from '@/components/profile-bar'
 import { ServerManager } from '@/components/server-manager'
@@ -129,7 +131,7 @@ export default function Workspace() {
   const [showPlugins, setShowPlugins] = useState(false)
   /** Which pane a plugin job is working in, so the pane is re-read when it changes files. */
   const pluginSideRef = useRef<{ jobId: string; side: 'left' | 'right' } | null>(null)
-  const [tab, setTab] = useState<'transfer' | 'fleet' | 'sync'>('transfer')
+  const [tab, setTab] = useState<'transfer' | 'fleet' | 'sync' | 'cleaner'>('transfer')
   const [profiles, setProfiles] = useState<SyncProfile[]>([])
   const [outsideShell, setOutsideShell] = useState(false)
 
@@ -604,6 +606,10 @@ export default function Workspace() {
             <HardDriveDownload className="size-3.5" />
             Fleet Sync
           </TabButton>
+          <TabButton active={tab === 'cleaner'} onClick={() => setTab('cleaner')}>
+            <Brush className="size-3.5" />
+            Cleaner
+          </TabButton>
         </nav>
 
         <div className="ml-auto flex items-center gap-2">
@@ -787,6 +793,10 @@ export default function Workspace() {
 
       <div className={`flex min-h-0 flex-1 flex-col ${tab === 'sync' ? '' : 'hidden'}`}>
         <FleetSyncPanel />
+      </div>
+
+      <div className={`flex min-h-0 flex-1 flex-col ${tab === 'cleaner' ? '' : 'hidden'}`}>
+        <CleanerPanel />
       </div>
 
       <ServerManager

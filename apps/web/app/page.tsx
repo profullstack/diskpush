@@ -111,6 +111,7 @@ export default function HomePage() {
       <Hero />
       <HowItWorks />
       <Features />
+      <Cleaner />
       <Desktop />
       <Defaults />
       <Cli />
@@ -227,6 +228,40 @@ function Features() {
               <p className="mt-2 text-sm leading-relaxed text-muted">{feature.body}</p>
             </div>
           ))}
+        </div>
+      </div>
+    </section>
+  )
+}
+
+function Cleaner() {
+  return (
+    <section id="cleaner" className="border-b border-line">
+      <div className="mx-auto max-w-6xl px-5 py-16">
+        <div className="grid min-w-0 gap-10 lg:grid-cols-[1fr_1.15fr] lg:items-center">
+          <div>
+            <h2 className="text-2xl font-semibold tracking-tight">Disk full? Cleaner finds out why.</h2>
+            <p className="mt-4 leading-relaxed text-muted">
+              The built-in Cleaner shows what is filling and growing a disk, on this machine or any
+              server: the biggest directories, which processes are writing right now, and growth since
+              the last look. Every finding is classified as safe, safe-if-idle or needs-a-human, ranked
+              by space freed per unit of risk, and explained.
+            </p>
+            <p className="mt-3 leading-relaxed text-muted">
+              Analysis is always a dry run. Apply removes only regenerable caches, docker build cache,
+              old unused images, rotated logs, build output in idle projects and abandoned partial
+              files, re-checking every guard as it goes. Databases, backups and volumes are only ever
+              reported. CLI, TUI, the desktop Cleaner tab and MCP.
+            </p>
+            <Link href="/docs/cleaner" className="mt-6 inline-block text-accent hover:underline">
+              How the Cleaner decides what is safe →
+            </Link>
+          </div>
+          <div className="min-w-0 space-y-3">
+            <Code label="see what fills the disk">{`diskpush clean report web-1`}</Code>
+            <Code label="free space (dry run unless --apply)">{`diskpush clean web-1 --apply`}</Code>
+            <Code label="keep 20 GB free, from cron">{`diskpush clean --min-free-gb 20 --apply`}</Code>
+          </div>
         </div>
       </div>
     </section>

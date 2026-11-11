@@ -94,6 +94,14 @@ const api = {
       call<boolean>(IPC.pluginsSetSettings, { pluginId, values }),
     setEnabled: (pluginId: string, enabled: boolean) => call<boolean>(IPC.pluginsSetEnabled, { pluginId, enabled }),
   },
+  // The Cleaner tab: targets by name, applies by report id + item ids. Never a path.
+  cleaner: {
+    targets: () => call(IPC.cleanerTargets),
+    scan: (jobId: string, target: string, only: string[] = [], idleDays?: number) =>
+      call(IPC.cleanerScan, { jobId, target, only, ...(idleDays ? { idleDays } : {}) }),
+    apply: (jobId: string, reportId: string, ids: string[]) => call(IPC.cleanerApply, { jobId, reportId, ids }),
+    cancel: (jobId: string) => call<boolean>(IPC.cleanerCancel, { jobId }),
+  },
   events: {
     /**
      * Returns an unsubscribe function. The listener is wrapped so the

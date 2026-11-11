@@ -12,6 +12,7 @@ packages/s3-core      S3-compatible storage: a dependency-free SigV4 client, the
 packages/plugin-api   The plugin contract, registry and external-plugin loader.
 packages/plugin-mediaanalyzer  The built-in MediaAnalyzer plugin.
 packages/plugin-dbbackup       The built-in database backup plugin.
+packages/plugin-cleaner        The built-in Cleaner plugin: disk analysis and safe cleanup, CLI/TUI/desktop/MCP.
 apps/cli              The `diskpush` command.
 apps/desktop          Electron main, preload, and the renderer.
 apps/web              diskpush.com.
