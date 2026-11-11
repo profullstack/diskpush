@@ -1,6 +1,6 @@
 {
   "name": "@diskpush/plugin-cleaner",
-  "version": "0.17.0",
+  "version": "0.17.1",
   "description": "DiskPush plugin: find what is filling a disk (biggest directories, current writers, growth), classify every finding by risk, and free space safely: regenerable caches, build output in idle projects, stale partial downloads, docker build cache, old logs. Dry run by default.",
   "license": "MIT",
   "type": "module",
