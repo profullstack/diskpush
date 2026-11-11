@@ -10,7 +10,7 @@
 // two classic bypasses.
 const csp = [
   "default-src 'self'",
-  "script-src 'self' 'unsafe-inline'",
+  "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net",
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: https://built.indie.pit.world https://pwamart.com",
   "font-src 'self' data:",

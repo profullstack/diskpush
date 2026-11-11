@@ -85,6 +85,15 @@ export const viewport = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
+      <head>
+        {/* WebMCP (@profullstack/webmcp): site_info/open_page for the AI agent in the visitor's browser. */}
+        <script
+          type="module"
+          data-webmcp=""
+          src="https://cdn.jsdelivr.net/npm/@profullstack/webmcp@0/src/embed.js"
+          data-pages={JSON.stringify({ download: '/download', docs: '/docs', security: '/security', privacy: '/privacy' })}
+        />
+      </head>
       <body className="flex min-h-screen flex-col">
         <Header />
         <main className="flex-1">
