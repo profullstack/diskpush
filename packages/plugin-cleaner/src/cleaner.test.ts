@@ -324,11 +324,14 @@ describe('pieces', () => {
   })
 
   it('keeps what a timed-out du had counted as a lower bound, and ranks unknown sizes first', () => {
-    const raw = parseRecords(['META\t1000\tLinux\t1700000000\t0\t/h', 'TOP\t/h/a', 'SIZE\t/h/a\t100\t0', 'TOP\t/h/big', 'SIZE\t/h/big\t5000\t1', 'TOP\t/h/huge', 'SIZE\t/h/huge\t0\t1', 'END'].join('\n'))
+    const raw = parseRecords(['META\t1000\tLinux\t1700000000\t0\t/h', 'TOP\t/h/a', 'SIZE\t/h/a\t100\t0', 'TOP\t/h/big', 'SIZE\t/h/big\t5000\t1', 'TOP\t/h/huge', 'SIZE\t/h/huge\t0\t1', 'TOP\t/h/complete', 'SIZE\t/h/complete\t90000\t0', 'TOP\t/h/slow', 'SIZE\t/h/slow\t10\t1', 'END'].join('\n'))
     const report = buildReport(raw, { target: 'local', idleDays: 3, partialHours: 24, journalCap: '1G', imageAge: '72h', useSudo: false })
+    // A folder du could not finish lists before any finished one, even with a tiny lower bound.
     expect(report.topDirs.map((d) => [d.path, d.bytes, d.timedOut])).toEqual([
       ['/h/huge', -1, true],
       ['/h/big', 5000 * 1024, true],
+      ['/h/slow', 10 * 1024, true],
+      ['/h/complete', 90000 * 1024, false],
       ['/h/a', 100 * 1024, false],
     ])
   })

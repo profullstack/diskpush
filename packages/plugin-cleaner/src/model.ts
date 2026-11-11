@@ -587,8 +587,9 @@ export function buildReport(raw: Raw, options: BuildOptions): Report {
       const bytes = size(path)
       return { path, bytes, timedOut: bytes < 0 || raw.partial.has(path), kind: classifyDir(path, raw.dockerRoot) }
     })
-    // Unknown first (it ran out of time with nothing counted, so it may be the biggest), then by size; a lower bound counts as its size.
-    .sort((a, b) => (b.bytes < 0 ? Infinity : b.bytes) - (a.bytes < 0 ? Infinity : a.bytes))
+    // Anything du could not finish first: it may well be the biggest, and a small lower bound
+    // (du counted for 20 s before giving up) must not push it off the list. Then by size.
+    .sort((a, b) => Number(b.timedOut) - Number(a.timedOut) || (b.bytes < 0 ? Infinity : b.bytes) - (a.bytes < 0 ? Infinity : a.bytes))
 
   for (const dir of topDirs) {
     if (!dir.kind || !REVIEW_WHY[dir.kind]) continue
