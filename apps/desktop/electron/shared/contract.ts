@@ -74,6 +74,12 @@ export const IPC = {
   pluginsSetSettings: 'plugins:set-settings',
   pluginsSetEnabled: 'plugins:set-enabled',
 
+  /** The Cleaner tab: free disk space on this machine or a server (plugin `cleaner`). */
+  cleanerTargets: 'cleaner:targets',
+  cleanerScan: 'cleaner:scan',
+  cleanerApply: 'cleaner:apply',
+  cleanerCancel: 'cleaner:cancel',
+
   /** Main -> renderer, progress and the outcome of a plugin action or task. */
   eventPlugin: 'plugins:progress',
 
@@ -528,6 +534,30 @@ export const PluginSettingsSetSchema = z.object({
     .record(z.string().regex(/^[A-Za-z][A-Za-z0-9_.-]{0,63}$/), z.union([z.string().max(4096), z.boolean(), z.null()]))
     .refine((values) => Object.keys(values).length <= 64, { message: 'Too many settings at once.' }),
 })
+
+/**
+ * The Cleaner tab. The renderer names a target (`local` or a server name the
+ * main process looks up) and, to apply, the id of a report the main process
+ * produced plus item ids from it. It never sends a path: what is removed is
+ * whatever the main process's own scan found, re-checked on the target.
+ */
+export const CleanerTargetSchema = z.string().regex(/^[A-Za-z0-9_.@:-]{1,128}$/, 'That is not a target name.')
+export const CleanerCategorySchema = z.enum(['caches', 'docker', 'logs', 'build', 'partials'])
+
+export const CleanerScanRequestSchema = z.object({
+  jobId: JobIdSchema,
+  target: CleanerTargetSchema,
+  only: z.array(CleanerCategorySchema).max(5).default([]),
+  idleDays: z.number().int().min(1).max(3650).optional(),
+})
+export type CleanerScanRequest = z.infer<typeof CleanerScanRequestSchema>
+
+export const CleanerApplyRequestSchema = z.object({
+  jobId: JobIdSchema,
+  reportId: z.string().regex(/^[a-z0-9-]{1,64}$/),
+  ids: z.array(z.string().min(1).max(8192)).min(1).max(50000),
+})
+export type CleanerApplyRequest = z.infer<typeof CleanerApplyRequestSchema>
 
 /** Only http(s) may be handed to the system browser. */
 export const ExternalUrlSchema = z.string().url().refine((value) => /^https?:\/\//i.test(value), {

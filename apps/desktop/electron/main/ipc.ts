@@ -12,6 +12,8 @@ import {
   ExternalUrlSchema,
   FleetCheckRequestSchema,
   FleetSyncRequestSchema,
+  CleanerScanRequestSchema,
+  CleanerApplyRequestSchema,
   FleetSyncIdSchema,
   FleetCommandSaveSchema,
   FleetListRenameSchema,
@@ -53,6 +55,7 @@ import {
   startFleet,
 } from './services/fleet.js'
 import { startFleetSync, cancelFleetSync } from './services/fleet-sync.js'
+import { cleanerApply, cleanerCancel, cleanerScan, cleanerTargets } from './services/cleaner.js'
 import { browserFor, dropSession, sessionFor, type RemoteBrowser } from './services/sessions.js'
 import { store } from './services/store.js'
 import { advanceSeries, handlersFor, openSeries, openWith, stopSeries } from './services/open-with.js'
@@ -471,6 +474,18 @@ export function registerIpc(): void {
   handle(IPC.pluginsSetEnabled, z.object({ pluginId: PluginIdSchema, enabled: z.boolean() }), async ({ pluginId, enabled }) =>
     setPluginEnabled(pluginId, enabled),
   )
+
+  // --- cleaner -------------------------------------------------------------
+  // The renderer names a target and, to apply, a report id plus item ids from
+  // that report. Paths only ever come from the main process's own scan.
+
+  handle(IPC.cleanerTargets, z.undefined(), async () => cleanerTargets())
+
+  handle(IPC.cleanerScan, CleanerScanRequestSchema, async (request, event) => cleanerScan(request, event.sender))
+
+  handle(IPC.cleanerApply, CleanerApplyRequestSchema, async (request, event) => cleanerApply(request, event.sender))
+
+  handle(IPC.cleanerCancel, z.object({ jobId: JobIdSchema }), async ({ jobId }) => cleanerCancel(jobId))
 
   // --- shell ---------------------------------------------------------------
 

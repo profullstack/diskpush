@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
+  CleanerApplyRequestSchema,
+  CleanerScanRequestSchema,
   IPC,
   LocalDirectorySchema,
   PluginActionRequestSchema,
@@ -75,5 +77,24 @@ describe('channels', () => {
     expect(IPC.pluginsGetSettings).toBe('plugins:get-settings')
     expect(IPC.pluginsSetSettings).toBe('plugins:set-settings')
     expect(IPC.eventPlugin).toBe('plugins:progress')
+  })
+})
+
+describe('cleaner requests', () => {
+  const jobId = '6f9619ff-8b86-4011-b42d-00c04fc964ff'
+  it('name a target and categories, never a path', () => {
+    expect(CleanerScanRequestSchema.safeParse({ jobId, target: 'local' }).success).toBe(true)
+    expect(CleanerScanRequestSchema.safeParse({ jobId, target: 'dev-box.example', only: ['build', 'docker'] }).success).toBe(true)
+    expect(CleanerScanRequestSchema.safeParse({ jobId, target: '../../etc' }).success).toBe(false)
+    expect(CleanerScanRequestSchema.safeParse({ jobId, target: 'local', only: ['volumes'] }).success).toBe(false)
+  })
+  it('apply names a report id and item ids', () => {
+    expect(CleanerApplyRequestSchema.safeParse({ jobId, reportId: '6f9619ff-8b86-4011-b42d-00c04fc964ff', ids: ['cache:npm'] }).success).toBe(true)
+    expect(CleanerApplyRequestSchema.safeParse({ jobId, reportId: 'x/../y', ids: ['cache:npm'] }).success).toBe(false)
+    expect(CleanerApplyRequestSchema.safeParse({ jobId, reportId: 'abc', ids: [] }).success).toBe(false)
+  })
+  it('use the cleaner: channels', () => {
+    expect(IPC.cleanerScan).toBe('cleaner:scan')
+    expect(IPC.cleanerApply).toBe('cleaner:apply')
   })
 })

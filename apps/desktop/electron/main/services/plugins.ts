@@ -20,6 +20,7 @@ import {
   runAction,
   runTask,
   type ActionResult,
+  type BaseContext,
   type HostContext,
   type LoadFailure,
   type LogLevel,
@@ -28,6 +29,7 @@ import {
   type SettingDef,
 } from '@diskpush/plugin-api'
 import { toServerRef } from '@diskpush/ssh-core'
+import { cleanerPlugin } from '@diskpush/plugin-cleaner'
 import { dbBackupPlugin } from '@diskpush/plugin-dbbackup'
 import { mediaAnalyzerPlugin } from '@diskpush/plugin-mediaanalyzer'
 import { ExternalUrlSchema, IPC, type PluginActionRequest } from '../../shared/contract.js'
@@ -36,7 +38,7 @@ import { isLocalConnectionId } from './local-session.js'
 import { store } from './store.js'
 
 /** The same built-in list as the CLI's (apps/cli/src/plugins.ts). */
-const BUILTIN_PLUGINS = [mediaAnalyzerPlugin, dbBackupPlugin]
+const BUILTIN_PLUGINS = [mediaAnalyzerPlugin, dbBackupPlugin, cleanerPlugin]
 
 let loaded: Promise<{ registry: PluginRegistry; failures: LoadFailure[] }> | null = null
 
@@ -136,6 +138,25 @@ const servers: ServerDirectory = {
   },
   knownHostsFiles: [join(homedir(), '.ssh', 'known_hosts'), knownHostsPath()],
   sshConfigFile: process.env.DISKPUSH_SSH_CONFIG ?? null,
+}
+
+/**
+ * A plugin's full context for host-owned screens (the Cleaner tab) that call
+ * a built-in plugin's core directly instead of through an action. Progress
+ * goes out on `plugins:progress` under `jobId` when there is a window to send it to.
+ */
+export async function pluginHostContext(pluginId: string, jobId: string, sender: WebContents | null, signal: AbortSignal): Promise<BaseContext> {
+  const { registry } = await pluginRegistry()
+  return {
+    settings: registry.settingsFor(pluginId),
+    secrets: registry.secretsFor(pluginId),
+    progress: sender ? sink(jobId, sender) : { start() {}, update() {}, log() {} },
+    openUrl,
+    signal,
+    surface: 'desktop',
+    env: process.env,
+    servers,
+  }
 }
 
 /** Starts `work` under a fresh AbortController, reports its outcome, and returns at once. */

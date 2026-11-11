@@ -149,12 +149,27 @@ async function ask(question: string): Promise<string | null> {
 export function findPluginCall(
   argv: readonly string[],
   registry: Pick<PluginRegistry, 'has'>,
-): { pluginId: string; args: string[] } | null {
+): { pluginId: string; args: string[]; defaultCommand?: string } | null {
   const at = argv.findIndex((token) => !token.startsWith('-'))
   if (at === -1) return null
-  const head = argv[at]!
+  const word = argv[at]!
+  const alias = PLUGIN_ALIASES[word]
+  const head = alias?.pluginId ?? word
   if (!registry.has(head)) return null
-  return { pluginId: head, args: [...argv.slice(0, at), ...argv.slice(at + 1)] }
+  return {
+    pluginId: head,
+    args: [...argv.slice(0, at), ...argv.slice(at + 1)],
+    ...(alias?.defaultCommand ? { defaultCommand: alias.defaultCommand } : {}),
+  }
+}
+
+/**
+ * Short names for built-in plugins. `diskpush clean` is the cleaner, and
+ * `diskpush clean [TARGET] [--apply]` with no command means `run`. The alias
+ * words are reserved plugin ids, so an external plugin cannot take them.
+ */
+export const PLUGIN_ALIASES: Record<string, { pluginId: string; defaultCommand?: string }> = {
+  clean: { pluginId: 'cleaner', defaultCommand: 'run' },
 }
 
 /** Global flags the CLI owns; everything else belongs to the plugin. */
@@ -176,9 +191,16 @@ export async function runPluginCommand(
   argv: readonly string[],
   output: Output,
   servers?: ServerDirectory,
+  defaultCommand?: string,
 ): Promise<number> {
   const plugin = await registry.require(pluginId)
-  const args = stripGlobalFlags(argv)
+  let args = stripGlobalFlags(argv)
+  // An alias with a default command: `diskpush clean web-1 --apply` is `diskpush cleaner run web-1 --apply`.
+  if (defaultCommand) {
+    const first = args[0]
+    const isHelp = first === 'help' || first === '--help' || first === '-h'
+    if (!isHelp && (first === undefined || !(plugin.commands ?? []).some((command) => command.name === first))) args = [defaultCommand, ...args]
+  }
   const [name, ...rest] = args
   if (!name || name === 'help' || name === '--help' || name === '-h') {
     process.stdout.write(pluginUsage(plugin))

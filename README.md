@@ -116,6 +116,10 @@ diskpush dbbackup discover --save            # every database on every server yo
 diskpush dbbackup add shop --kind postgres --push backup@nas:/srv/db
 diskpush dbbackup run --tags nightly
 diskpush dbbackup restore shop --to-env STAGING_DATABASE_URL
+
+# Disk full? See what fills and grows it, then free space safely (dry run unless --apply)
+diskpush clean report web-1                 # biggest dirs, live writers, growth, ranked plan with reasons
+diskpush clean web-1 --apply                # caches, docker build cache, idle build output, stale partials
 ```
 
 ## Safety
@@ -155,6 +159,7 @@ to make that flag hard to trigger by accident.
 | [docs/file-browser.md](docs/file-browser.md) | Why browsing is SFTP and transfers are rsync |
 | [docs/profiles.md](docs/profiles.md) | Saved, repeatable directory pairs |
 | [docs/fleet.md](docs/fleet.md) | Running one command, or an upgrade, across many servers |
+| [docs/cleaner.md](docs/cleaner.md) | Free disk space safely: the analysis, the three classes, the guards, MCP |
 | [docs/s3.md](docs/s3.md) | S3-compatible buckets: saving, credentials, how transfers behave |
 | [docs/plugins.md](docs/plugins.md) | Plugins, MediaAnalyzer, database backups, writing one, and the security model |
 | [docs/threatcrush-scan.md](docs/threatcrush-scan.md) | What the ThreatCrush badge enforces, and every finding below it |
@@ -178,6 +183,7 @@ packages/database   the local store shared by desktop and CLI
 packages/plugin-api the plugin contract, registry and external loader
 packages/plugin-mediaanalyzer  the built-in MediaAnalyzer plugin
 packages/plugin-dbbackup       the built-in database backup plugin (Postgres, Supabase, MySQL, SQLite)
+packages/plugin-cleaner        the built-in Cleaner plugin (free disk space safely, local or over ssh)
 ```
 
 `rsync-core` deliberately has no dependency on Electron or on the CLI, so the

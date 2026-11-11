@@ -1,5 +1,9 @@
 'use client'
 
+import type { ApplyResult as CleanerApplyResult, Item as CleanerItem, Report as CleanerReport, Target as CleanerTarget } from '@diskpush/plugin-cleaner'
+
+export type { CleanerApplyResult, CleanerItem, CleanerReport, CleanerTarget }
+
 /**
  * The typed view of what `preload` exposed.
  *
@@ -421,6 +425,12 @@ type Api = {
     getSettings(pluginId: string): Promise<IpcResult<PluginSettingsState>>
     setSettings(pluginId: string, values: Record<string, string | boolean | null>): Promise<IpcResult<boolean>>
     setEnabled(pluginId: string, enabled: boolean): Promise<IpcResult<boolean>>
+  }
+  cleaner: {
+    targets(): Promise<IpcResult<CleanerTarget[]>>
+    scan(jobId: string, target: string, only?: string[], idleDays?: number): Promise<IpcResult<{ reportId: string; report: CleanerReport }>>
+    apply(jobId: string, reportId: string, ids: string[]): Promise<IpcResult<CleanerApplyResult>>
+    cancel(jobId: string): Promise<IpcResult<boolean>>
   }
   events: {
     onTransfer(listener: (payload: { jobId: string; event: TransferEvent }) => void): () => void

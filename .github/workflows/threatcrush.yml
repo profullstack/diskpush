@@ -30,6 +30,10 @@ jobs:
       - name: Scan the dbbackup plugin
         run: threatcrush scan packages/plugin-dbbackup --deps --fail-on critical,high,medium
 
+      # The cleaner deletes files and runs shell on servers: the same bar.
+      - name: Scan the cleaner plugin
+        run: threatcrush scan packages/plugin-cleaner --deps --fail-on critical,high,medium
+
       # The S3 engine signs requests and holds credentials: the same bar.
       - name: Scan the S3 engine
         run: threatcrush scan packages/s3-core --deps --fail-on critical,high,medium

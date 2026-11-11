@@ -24,12 +24,13 @@ import {
   type SettingsBackend,
 } from '@diskpush/plugin-api'
 import { toServerRef } from '@diskpush/ssh-core'
+import { cleanerPlugin } from '@diskpush/plugin-cleaner'
 import { dbBackupPlugin } from '@diskpush/plugin-dbbackup'
 import { mediaAnalyzerPlugin } from '@diskpush/plugin-mediaanalyzer'
 import { sshConfigHosts } from './resolve.js'
 
 /** Plugins that ship with DiskPush. */
-export const BUILTIN_PLUGINS = [mediaAnalyzerPlugin, dbBackupPlugin]
+export const BUILTIN_PLUGINS = [mediaAnalyzerPlugin, dbBackupPlugin, cleanerPlugin]
 
 export type LoadedRegistry = { registry: PluginRegistry; failures: LoadFailure[] }
 

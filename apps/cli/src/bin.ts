@@ -41,7 +41,7 @@ async function runPlugin(argv: readonly string[]): Promise<number | null> {
     })
     for (const { name, error } of failures) output.warn(`plugin ${name} did not load: ${error}`)
     if (await autoUpdate(call.pluginId, output) === 'updated') reexec()
-    return await runPluginCommand(registry, call.pluginId, call.args, output, serverDirectory(store))
+    return await runPluginCommand(registry, call.pluginId, call.args, output, serverDirectory(store), call.defaultCommand)
   } catch (error) {
     if (error instanceof PluginError) {
       process.stderr.write(`${error.message}\n`)
