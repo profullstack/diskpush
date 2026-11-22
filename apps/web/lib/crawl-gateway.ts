@@ -1,6 +1,9 @@
 import { createGateway } from "@profullstack/x402-gateway";
 import { x402Proxy } from "@profullstack/x402-gateway/next";
 
+/** Who CoinPay sees calling: every fleet app shares one host and one IP. */
+const COINPAY_UA = `diskpush.com${process.env.npm_package_version ? `/${process.env.npm_package_version}` : ""} (+https://diskpush.com)`;
+
 /**
  * Sells crawl access to AI training crawlers (GPTBot, ClaudeBot, CCBot,
  * meta-externalagent, Bytespider, Applebot-Extended, ...) by the day over
@@ -19,6 +22,9 @@ export const gateway = createGateway({
   siteUrl: env("SITE_URL") || env("NEXT_PUBLIC_SITE_URL") || "https://diskpush.com",
   siteName: "DiskPush",
   coinpay: { apiKey: env("COINPAY_X402_KEY") },
+  // x402-gateway <0.18 has no user-agent option; name this site to CoinPay through its fetch.
+  fetch: ((url: RequestInfo | URL, init: RequestInit = {}) =>
+    fetch(url, { ...init, headers: { ...(init.headers as Record<string, string> | undefined), "user-agent": COINPAY_UA } })) as typeof fetch,
   payTo: env("CRAWL_PAY_TO"),
   contact: "mailto:support@diskpush.com",
 });
