@@ -7,15 +7,23 @@
 // policy without 'unsafe-inline' in those two places blanks the page. Scripts
 // are otherwise same-origin only, which is the part that actually limits an
 // injection, and `object-src 'none'` plus `frame-ancestors 'none'` close the
-// two classic bypasses.
+// two classic bypasses. The one third-party script origin besides the WebMCP
+// embed is crawlproof.com, our own analytics and ad server.
 const csp = [
   "default-src 'self'",
-  "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net",
+  // crawlproof.com serves stats.js (analytics) and ad.js. Without it here the
+  // browser refuses both tags in the layout and the site records no traffic.
+  "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://crawlproof.com",
   "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data: https://built.indie.pit.world https://pwamart.com",
+  // Ad creatives render in a srcdoc frame, which inherits this policy, and
+  // their images come from whatever host the advertiser used. Images cannot
+  // run script, so any https origin is allowed.
+  "img-src 'self' data: https:",
+  "media-src 'self' https://crawlproof.com https://supabase.crawlproof.com",
   "font-src 'self' data:",
-  // The download page reads release metadata from the GitHub API.
-  "connect-src 'self' https://api.github.com",
+  // The download page reads release metadata from the GitHub API; stats.js
+  // and ad.js post page views and ad requests back to crawlproof.com.
+  "connect-src 'self' https://api.github.com https://crawlproof.com",
   "object-src 'none'",
   "base-uri 'self'",
   "form-action 'self'",
